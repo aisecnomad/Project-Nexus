@@ -22,7 +22,7 @@ Each finding becomes one entry. Its `bom-ref` is the finding id, or a stable
 | Agent frameworks, coding agents, protocols and platforms a finding uses | `components[]` of type `framework`, shared across findings (`shadowscan:framework:<signature>`) |
 | Model providers | `services[]`, shared (`shadowscan:provider:<signature>`); no `trustZone`, because a provider id names local runtimes as well as hosted APIs |
 | Concrete model ids | `components[]` of type `machine-learning-model`, shared (`shadowscan:model:<digest>`) |
-| MCP servers listed by an MCP configuration | `services[]` in group `mcp-server` (`shadowscan:mcp:<digest>`), with HTTP endpoints and the `shadowscan:mcp:transport`, `command`, `file`, `disabled` and `risks` properties, and, when [MCP registry snapshots](../connectors/code.md#mcp-registry-provenance) matched the server, `registry-name`, `registry-version` (the registry's latest version), `registry-status` and `registry-source` (how it matched, `(ambiguous)` when several names list it) |
+| MCP servers listed by an MCP configuration | `services[]` in group `mcp-server` (`shadowscan:mcp:<digest>`), with HTTP endpoints and the `shadowscan:mcp:transport`, `command`, `file`, `disabled` and `risks` properties, and, when [MCP registry snapshots](../connectors/code.md#mcp-registry-provenance) matched the server, `registry-name`, `registry-version` (the registry's latest version), `registry-status` and `registry-source` (how it matched: `package`, `remote`, or `name` for a manifest's own name, which is a hint only; `(ambiguous)` when several names list it) |
 | What a finding uses | `dependencies[]` from the finding to the shared entries |
 
 Framework and provider names, vendors and categories come from the signature

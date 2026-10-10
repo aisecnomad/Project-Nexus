@@ -13,19 +13,27 @@ SHA-256 of its bytes::
      "servers": [<a ServerResponse of GET /v0.1/servers>, ...]}
 
 The producer keeps of each listed server version only what matching reads (name, version,
-packages, remote URLs and the official status, latest flag and publication time); a full
-official listing is otherwise about three times larger. Other fields are accepted and
-ignored. Every scan reads each snapshot again without following links, checks the pinned
-digest, decodes strict JSON and validates every entry; nothing is fetched during a scan. Any
-failure leaves that registry unused and the scan incomplete.
+packages with their registry, remote URLs and the official status, latest flag and
+publication time); a full official listing is otherwise about three times larger. Other
+fields are accepted and ignored. Every scan reads each snapshot again without following
+links, checks the pinned digest, decodes strict JSON and validates every entry's structure,
+name, version and status; nothing is fetched during a scan. Any failure leaves that registry
+unused and the scan incomplete. A package or remote URL that nothing configured could match
+(a URL that is templated, carries user information or does not parse; a package on another
+registry than its type's public one) is not indexed, and its entry is otherwise kept.
 
 After correlation the engine matches every MCP server that a finding lists
 (``metadata.servers``, or the ``metadata.server`` URL of an MCP tool finding) against each
-loaded registry: by the package its launch names (registry type and normalized identifier),
-then by remote URL (scheme and host lowercased, default port, query, fragment and trailing
-``/`` dropped; templated URLs never match), then, for an MCP server manifest only, by its
-registry name. An identifiable server gets ``registry``: one entry per registry that lists it,
-sorted by registry id::
+loaded registry, by what the client fetches or connects to: for a command, the package its
+launch names (registry type and normalized identifier); for a remote transport, its URL
+(scheme and host lowercased, default port, query, fragment and trailing ``/`` dropped); for
+an MCP server manifest (a ``server.json`` document), every package and remote it declares,
+which one registry name must list together. One identity is chosen and never falls back to
+another. A server that has none (a local path, a shell command line, a source-changing
+launcher option, an unknown transport with both a command and a URL, a URL with user
+information) is unidentified; a manifest's own name then gives provenance hints only. An
+identified or named server gets ``registry``: one entry per registry that lists it, sorted
+by registry id::
 
     {"registry": "official", "name": "io.github.acme/tool", "namespace": "io.github.acme",
      "match": "package", "configured_version": "1.2.0", "version_published": true,
@@ -34,11 +42,12 @@ sorted by registry id::
 
 A package or URL that several registry names list is ``ambiguous``: the first name is shown and
 nothing about versions or status is claimed. The finding gets ``metadata.mcp_registry``
-(``registries`` loaded, ``approved_checked``, ``not_in_approved``) and review tags with
-zero-weight evidence, which never lower risk. A registry marked ``approved`` is the
+(``registries`` loaded, ``approved_checked``, ``not_in_approved``, ``unidentified``) and review
+tags with zero-weight evidence, which never lower risk. A registry marked ``approved`` is the
 organisation's approved MCP catalog: when one is configured and every approved registry
-loaded, ``not_in_approved`` counts the enabled, identifiable servers that no approved registry
-lists, or lists only as deleted, and scoring adds the governance factor
+loaded, ``not_in_approved`` counts the enabled servers that no approved registry lists by their
+identity, or lists only as deleted, unidentified servers included (an allowlist cannot vouch
+for what it cannot identify), and scoring adds the governance factor
 ``mcp-not-in-approved-registry``. Disabled servers are matched but add no tags and no count.
 A server is ``mcp-unpublished`` only when every configured registry loaded. The pass first
 removes what an earlier pass wrote, so it can run again on the same findings.
@@ -48,6 +57,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import ipaddress
 import json
 import os
 import re
@@ -79,13 +89,13 @@ SERVER_KEY = "registry"
 # Where an MCP tool finding, which lists no servers, keeps its server's registry entries.
 MATCHES_KEY = "matches"
 EVIDENCE_PREFIX = "mcp-registry:"
-MANIFEST_CLIENT = "MCP server manifest"
 TAG_PUBLISHED = "mcp-registry-published"
 TAG_UNPUBLISHED = "mcp-unpublished"
 TAG_DEPRECATED = "mcp-registry-deprecated"
 TAG_DELETED = "mcp-registry-deleted"
 TAG_VERSION_UNPUBLISHED = "mcp-registry-version-unpublished"
 TAG_OUTDATED = "mcp-registry-outdated"
+TAG_UNIDENTIFIED = "mcp-registry-unidentified"
 REGISTRY_TAGS = (
     TAG_PUBLISHED,
     TAG_UNPUBLISHED,
@@ -93,6 +103,7 @@ REGISTRY_TAGS = (
     TAG_DELETED,
     TAG_VERSION_UNPUBLISHED,
     TAG_OUTDATED,
+    TAG_UNIDENTIFIED,
 )
 GOVERNANCE_FACTOR = "mcp-not-in-approved-registry"
 
@@ -103,6 +114,7 @@ _DESCRIPTIONS = {
     TAG_DELETED: "{count} MCP server(s) marked deleted in an MCP registry",
     TAG_VERSION_UNPUBLISHED: "{count} MCP server(s) pin a version their registry entry does not list",
     TAG_OUTDATED: "{count} MCP server(s) use a version or endpoint other than the registry's latest",
+    TAG_UNIDENTIFIED: "{count} enabled MCP server(s) whose package or endpoint could not be identified",
 }
 _SNAPSHOT_FIELDS = frozenset({"schema", "registry", "api", "fetched_at", "complete", "servers"})
 _SERVER_NAME = re.compile(r"[a-zA-Z0-9.-]+/[a-zA-Z0-9._-]+\Z")
@@ -110,13 +122,19 @@ _MAX_NAME = 200
 _MAX_VERSION = 255
 _MAX_TIMESTAMP = 64
 _MAX_TEXT = 2048
-_MAX_ENTRY_ITEMS = 64
 _MAX_CURSOR = 1024
 # What a snapshot keeps of each listed server version: the fields matching reads.
 _SERVER_FIELDS = ("name", "version")
-_PACKAGE_FIELDS = ("registryType", "identifier", "version")
+_PACKAGE_FIELDS = ("registryType", "identifier", "version", "registryBaseUrl")
 _REMOTE_FIELDS = ("type", "url")
 _STATUS_FIELDS = ("status", "isLatest", "publishedAt")
+_URL_PARTS = re.compile(r"([A-Za-z][A-Za-z0-9+.-]*)://([^/?#]*)([^?#]*)")
+# A host as written: no user information, escape, bracket, port separator, space or control.
+_URL_HOST = re.compile(r"[^\x00-\x20\x7f\\/@\[\]:?#%]+")
+_PORT = re.compile(r"[0-9]{1,5}")
+# Transport values that start a command, and those that connect to a URL (letters only, lowercased).
+_STDIO_TRANSPORTS = frozenset({"stdio", "local"})
+_REMOTE_TRANSPORTS = frozenset({"http", "https", "sse", "streamablehttp", "remote", "ws", "wss", "websocket"})
 
 
 class SnapshotError(ValueError):
@@ -191,15 +209,20 @@ class LoadedRegistries:
 
 @dataclass(frozen=True, slots=True)
 class _Identity:
-    """What a configured server can be matched by."""
+    """What a configured server is matched by.
 
-    package: PackageRef | None
-    remotes: frozenset[str]
-    name: str | None
+    ``packages`` and ``remotes`` are what the client fetches or connects to: one package for a
+    command, one URL for a remote transport, every package and remote of a server manifest.
+    ``name`` is a manifest's own registry name: provenance hints, never approved membership.
+    """
+
+    packages: tuple[PackageRef, ...] = ()
+    remotes: tuple[str, ...] = ()
+    name: str | None = None
 
     @property
     def known(self) -> bool:
-        return self.package is not None or bool(self.remotes) or self.name is not None
+        return bool(self.packages or self.remotes)
 
 
 # ---------------------------------------------------------------- snapshots
@@ -335,37 +358,46 @@ def _entry(item: Any, where: str) -> _Entry:
     )
 
 
+def _optional_string(value: Any) -> TypeGuard[str | None]:
+    return value is None or isinstance(value, str)
+
+
 def _packages(value: Any, where: str) -> tuple[PackageRef, ...]:
+    """The packages a launch can be matched to; the structure is checked, the values are not limited.
+
+    A package that names nothing a launch fetches, or that lives on another registry than its
+    type's public one (``registryBaseUrl``), is left out: no configured launch can match it.
+    """
     if value is None:
         return ()
-    if not isinstance(value, list) or len(value) > _MAX_ENTRY_ITEMS:
+    if not isinstance(value, list):
         raise SnapshotError(f"{where} has an invalid packages list")
     refs: list[PackageRef] = []
     for package in value:
-        kind = package.get("registryType") if isinstance(package, dict) else None
-        identifier = package.get("identifier") if isinstance(package, dict) else None
-        version = package.get("version") if isinstance(package, dict) else None
-        if (
-            not _text(kind)
-            or not _text(identifier)
-            or (version is not None and not _text(version, _MAX_VERSION))
-        ):
+        if not isinstance(package, dict):
             raise SnapshotError(f"{where} has an invalid package")
-        ref = registry_package(kind, identifier, version)
+        kind, identifier = package.get("registryType"), package.get("identifier")
+        version, base = package.get("version"), package.get("registryBaseUrl")
+        if not isinstance(kind, str) or not isinstance(identifier, str):
+            raise SnapshotError(f"{where} has an invalid package")
+        if not _optional_string(version) or not _optional_string(base):
+            raise SnapshotError(f"{where} has an invalid package")
+        ref = registry_package(kind, identifier, version if version and version.strip() else None, base)
         if ref is not None:
             refs.append(ref)
     return tuple(refs)
 
 
 def _remotes(value: Any, where: str) -> frozenset[str]:
+    """The remote URLs a configured URL can be matched to; one that cannot be compared is left out."""
     if value is None:
         return frozenset()
-    if not isinstance(value, list) or len(value) > _MAX_ENTRY_ITEMS:
+    if not isinstance(value, list):
         raise SnapshotError(f"{where} has an invalid remotes list")
     urls: set[str] = set()
     for remote in value:
         url = remote.get("url") if isinstance(remote, dict) else None
-        if not _text(url):
+        if not isinstance(url, str):
             raise SnapshotError(f"{where} has an invalid remote")
         normalized = normalize_remote(url)
         if normalized is not None:
@@ -374,43 +406,99 @@ def _remotes(value: Any, where: str) -> frozenset[str]:
 
 
 def normalize_remote(url: Any) -> str | None:
-    """A comparable form of an MCP endpoint URL; None for a template or a URL that is not HTTP(S).
+    """A comparable form of an MCP endpoint URL; None when the URL cannot be compared.
 
-    The scheme and host are lowercased, a default port, user information, the query, the
-    fragment and a trailing ``/`` are dropped; the path is compared as written.
+    The scheme and host are lowercased; a default port, the query, the fragment and a trailing
+    ``/`` are dropped; the path is compared as written. A template, a URL that is not HTTP(S)
+    and a URL with user information give None. Configuration parsing redacts user information,
+    and what it hid can name another host to the client (``https://evil.example\\@host/`` reaches
+    ``evil.example``), so such a URL never matches a listed endpoint.
     """
     if not isinstance(url, str) or "{" in url or "}" in url:
         return None
-    try:
-        parts = urlsplit(url.strip())
-        port = parts.port
-    except ValueError:
+    parts = _URL_PARTS.match(url.strip())
+    if parts is None or parts.group(1).lower() not in {"http", "https"}:
         return None
-    scheme, host = parts.scheme.lower(), parts.hostname
-    if scheme not in {"http", "https"} or not host:
+    scheme, (host, port) = parts.group(1).lower(), _host_port(parts.group(2))
+    if host is None:
         return None
-    if ":" in host:
-        host = f"[{host}]"
     netloc = host if port is None or port == (443 if scheme == "https" else 80) else f"{host}:{port}"
-    return f"{scheme}://{netloc}{parts.path.rstrip('/')}"
+    return f"{scheme}://{netloc}{parts.group(3).rstrip('/')}"
+
+
+def _host_port(authority: str) -> tuple[str | None, int | None]:
+    """The lowercased host and the port of a URL authority; no host when it is not a plain one."""
+    if authority.startswith("["):
+        end = authority.find("]")
+        try:
+            ipaddress.IPv6Address(authority[1:end] if end > 0 else "")
+        except ValueError:
+            return None, None
+        host, rest = f"[{authority[1:end].lower()}]", authority[end + 1 :]
+        if rest and not rest.startswith(":"):
+            return None, None
+        port = rest[1:]
+    else:
+        host, _, port = authority.partition(":")
+        if not _URL_HOST.fullmatch(host):
+            return None, None
+        host = host.lower()
+    if not port:
+        return host, None
+    if not _PORT.fullmatch(port) or int(port) > 65535:
+        return None, None
+    return host, int(port)
 
 
 # ---------------------------------------------------------------- matching
 
 
-def _identity(server: dict[str, Any], *, manifest: bool) -> _Identity:
-    raw_urls = server.get("urls")
-    urls = [url for url in raw_urls if isinstance(url, str)] if isinstance(raw_urls, list) else []
-    if isinstance(server.get("url"), str):
-        urls.append(server["url"])
+def _identity(server: dict[str, Any]) -> _Identity:
+    """What a parsed server record is matched by: what its client fetches or connects to."""
+    declared = server.get("packages")
+    if isinstance(declared, list):
+        return _manifest_identity(server, declared)
+    command, url = server.get("command"), server.get("url")
+    has_command = isinstance(command, str) and bool(command.strip())
+    has_url = isinstance(url, str) and bool(url.strip())
+    transport = server.get("transport")
+    kind = re.sub(r"[^a-z]", "", transport.lower()) if isinstance(transport, str) else ""
+    if kind in _STDIO_TRANSPORTS or (kind not in _REMOTE_TRANSPORTS and not has_url):
+        # A command's URL fields are not where the client connects: the package is the identity.
+        package = server_package(server) if has_command else None
+        return _Identity(packages=(package,) if package is not None else ())
+    if kind in _REMOTE_TRANSPORTS or not has_command:
+        remote = normalize_remote(url)
+        return _Identity(remotes=(remote,) if remote is not None else ())
+    # An unknown transport with both a command and a URL: which one the client uses is not known.
+    return _Identity()
+
+
+def _manifest_identity(server: dict[str, Any], declared: list[Any]) -> _Identity:
+    """Every package and remote an MCP server manifest declares; none when one cannot be compared."""
     name = server.get("name")
-    if not (manifest and isinstance(name, str) and len(name) <= _MAX_NAME and _SERVER_NAME.match(name)):
-        name = None
-    return _Identity(
-        package=server_package(server),
-        remotes=frozenset(filter(None, map(normalize_remote, urls))),
-        name=name,
-    )
+    named = name if isinstance(name, str) and len(name) <= _MAX_NAME and _SERVER_NAME.match(name) else None
+    packages: list[PackageRef] = []
+    for package in declared:
+        ref = _manifest_package(package) if isinstance(package, dict) else None
+        if ref is None:
+            return _Identity(name=named)
+        packages.append(ref)
+    raw_urls = server.get("urls")
+    remotes = [normalize_remote(url) for url in raw_urls] if isinstance(raw_urls, list) else []
+    if any(remote is None for remote in remotes):
+        return _Identity(name=named)
+    return _Identity(tuple(packages), tuple(dict.fromkeys(filter(None, remotes))), named)
+
+
+def _manifest_package(package: dict[str, Any]) -> PackageRef | None:
+    kind, identifier = package.get("registry_type"), package.get("identifier")
+    version, base = package.get("version"), package.get("registry_base_url")
+    if not isinstance(kind, str) or not isinstance(identifier, str):
+        return None
+    if not _optional_string(version) or not _optional_string(base):
+        return None
+    return registry_package(kind, identifier, version or None, base)
 
 
 def _package_version(entry: _Entry, key: tuple[str, str]) -> str | None:
@@ -428,18 +516,21 @@ def _is_among(entry: _Entry | None, entries: list[_Entry]) -> bool:
 
 
 def _match(identity: _Identity, snapshot: RegistrySnapshot) -> tuple[dict[str, Any], bool] | None:
-    """The registry entry for one server and whether the registry lists it other than as deleted."""
-    package = identity.package
-    names: set[str] = set()
-    how = ""
-    if package is not None:
-        names, how = set(snapshot.by_package.get((package.registry_type, package.identifier), ())), "package"
-    if not names and identity.remotes:
-        names, how = {name for url in identity.remotes for name in snapshot.by_remote.get(url, ())}, "remote"
-    if not names and identity.name is not None and identity.name in snapshot.by_name:
+    """The registry entry for one server and whether the registry lists it, other than as deleted,
+    by its identity; a name match lists nothing."""
+    package = identity.packages[0] if identity.packages else None
+    if identity.known:
+        # One registry name must list every package and remote the server is identified by.
+        listing = [snapshot.by_package.get((p.registry_type, p.identifier), set()) for p in identity.packages]
+        listing += [snapshot.by_remote.get(url, set()) for url in identity.remotes]
+        names, how = set.intersection(*(set(names) for names in listing)), "package" if package else "remote"
+    elif identity.name is not None and identity.name in snapshot.by_name:
         names, how = {identity.name}, "name"
+    else:
+        return None
     if not names:
         return None
+    remotes = frozenset(identity.remotes)
     ordered = sorted(names)
     name = ordered[0]
     block: dict[str, Any] = {
@@ -457,7 +548,7 @@ def _match(identity: _Identity, snapshot: RegistrySnapshot) -> tuple[dict[str, A
     }
     if block["ambiguous"]:
         listed = any(entry.status != "deleted" for other in ordered for entry in snapshot.by_name[other])
-        return block, listed
+        return block, listed and how != "name"
     entries = snapshot.by_name[name]
     latest = snapshot.latest.get(name)
     if how == "package" and package is not None:
@@ -480,7 +571,7 @@ def _match(identity: _Identity, snapshot: RegistrySnapshot) -> tuple[dict[str, A
             block["is_latest"] = package.version == latest_version
         block["latest_version"] = latest_version
     elif how == "remote":
-        carrying = [entry for entry in entries if entry.remotes & identity.remotes]
+        carrying = [entry for entry in entries if entry.remotes & remotes]
         selected = latest if latest is not None and _is_among(latest, carrying) else _newest(carrying)
         if latest is not None:
             block["is_latest"] = _is_among(latest, carrying)
@@ -490,7 +581,7 @@ def _match(identity: _Identity, snapshot: RegistrySnapshot) -> tuple[dict[str, A
         block["latest_version"] = latest.version if latest is not None else None
     block["status"] = selected.status
     block["published_at"] = selected.published_at
-    return block, selected.status != "deleted"
+    return block, selected.status != "deleted" and how != "name"
 
 
 def _lists(entry: _Entry, key: tuple[str, str]) -> bool:
@@ -536,16 +627,15 @@ def _targets(finding: Finding) -> list[tuple[dict[str, Any] | None, _Identity, b
     metadata = finding.metadata
     servers = metadata.get("servers")
     if isinstance(servers, list):
-        manifest = metadata.get("client") == MANIFEST_CLIENT
         return [
-            (server, _identity(server, manifest=manifest), bool(server.get("disabled")))
+            (server, _identity(server), bool(server.get("disabled")))
             for server in servers
             if isinstance(server, dict)
         ]
     server, tool = metadata.get("server"), metadata.get("tool")
     if isinstance(server, str) and isinstance(tool, str):
         remote = normalize_remote(server)
-        return [(None, _Identity(None, frozenset({remote}) if remote else frozenset(), None), False)]
+        return [(None, _Identity(remotes=(remote,) if remote else ()), False)]
     return None
 
 
@@ -570,36 +660,43 @@ def _enrich(finding: Finding, registries: LoadedRegistries) -> None:
     if targets is None:
         return
     tally: dict[str, int] = {}
-    not_in_approved = 0
+    not_in_approved = unidentified = 0
     matches: list[dict[str, Any]] | None = None
     for server, identity, disabled in targets:
-        if not identity.known or not registries.snapshots:
+        if not registries.snapshots:
             continue
         blocks: list[dict[str, Any]] = []
         in_approved = False
-        for snapshot in registries.snapshots:
-            matched = _match(identity, snapshot)
-            if matched is not None:
-                blocks.append(matched[0])
-                in_approved = in_approved or (matched[1] and snapshot.source.approved)
-        if server is not None:
-            server[SERVER_KEY] = blocks
-        else:
-            matches = blocks
+        if identity.known or identity.name is not None:
+            for snapshot in registries.snapshots:
+                matched = _match(identity, snapshot)
+                if matched is not None:
+                    blocks.append(matched[0])
+                    in_approved = in_approved or (matched[1] and snapshot.source.approved)
+            if server is not None:
+                server[SERVER_KEY] = blocks
+            else:
+                matches = blocks
         if disabled:
             continue
-        tags = _server_tags(blocks)
-        if not registries.complete:
-            # A registry that failed to load may list the server.
-            tags.discard(TAG_UNPUBLISHED)
+        if identity.known:
+            tags = _server_tags(blocks)
+            if not registries.complete:
+                # A registry that failed to load may list the server.
+                tags.discard(TAG_UNPUBLISHED)
+        else:
+            unidentified += 1
+            tags = (_server_tags(blocks) if blocks else set()) | {TAG_UNIDENTIFIED}
         for tag in tags:
             tally[tag] = tally.get(tag, 0) + 1
+        # An unidentified server is never in an approved catalog: an allowlist cannot vouch for it.
         if registries.approved_checked and not in_approved:
             not_in_approved += 1
     block: dict[str, Any] = {
         "registries": [snapshot.summary() for snapshot in registries.snapshots],
         "approved_checked": registries.approved_checked,
         "not_in_approved": not_in_approved,
+        "unidentified": unidentified,
     }
     if matches is not None:
         block[MATCHES_KEY] = matches

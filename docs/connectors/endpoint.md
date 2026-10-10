@@ -169,7 +169,8 @@ tool names across servers. Tool definitions are fingerprinted for downstream
 comparison, but baseline/rug-pull detection is not yet implemented. No tool is
 invoked. With `options.mcp_registries`, a tool finding whose server is an
 HTTP(S) URL is matched against the pinned MCP Registry snapshots by that URL
-(`metadata.mcp_registry.matches`); a bare server name identifies nothing.
+(`metadata.mcp_registry.matches`); a bare server name identifies nothing and
+is counted as `unidentified`, so an approved registry never vouches for it.
 
 OTLP analysis selects only service, agent, provider, model, and operation
 attributes; prompt and completion content is not copied into findings.

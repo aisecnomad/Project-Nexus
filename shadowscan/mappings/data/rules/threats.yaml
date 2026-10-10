@@ -188,7 +188,7 @@ rules:
       - mitre-atlas-2026.09:AML.T0010.005
     rationale: >-
       An MCP server that no configured MCP registry lists, or that its registry
-      marks deleted, comes from a source nobody vetted through that registry.
+      marks deleted, has no registry provenance to review.
 
   - id: hidden-instructions
     when: {tags_any: [hidden-instructions, invisible-text]}

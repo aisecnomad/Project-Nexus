@@ -74,7 +74,7 @@ include:
 | `shadow` | Not in the sanctioned inventory (only when an inventory is supplied) | 25 |
 | `registered` | Matched to exactly one inventory entry | −10 |
 | `no-owner` | No identifiable owner | 10 |
-| `mcp-not-in-approved-registry` | An enabled, identifiable MCP server that no approved MCP registry lists, or lists only as deleted (only when `options.mcp_registries` has an approved registry and every approved registry loaded) | 15 |
+| `mcp-not-in-approved-registry` | An enabled MCP server that no approved MCP registry lists by what its client fetches or connects to, lists only as deleted, or that has no such identity (only when `options.mcp_registries` has an approved registry and every approved registry loaded) | 15 |
 | `tag:plaintext-credential` | Plaintext credential exposed | 25 |
 | `tag:public-network` | Public network access enabled | 5 |
 | `tag:public-ingress` | Publicly reachable ingress | 10 |
@@ -101,7 +101,7 @@ include:
 | `tag:autonomy-understated` | The matched inventory entry declares an autonomy level below the observed floor ([autonomy tiers](autonomy.md)) | 10 |
 | `autonomy:L0` … `autonomy:L5` | Observed autonomy floor; weighted only through `options.risk_weights.autonomy` | 0 |
 | `tag:disabled` / `tag:inactive` / `tag:suspended` | Resource is not active | −10 |
-| `tag:mcp-registry-published` / `tag:mcp-unpublished` / `tag:mcp-registry-deprecated` / `tag:mcp-registry-deleted` / `tag:mcp-registry-version-unpublished` / `tag:mcp-registry-outdated` | MCP registry review hints from `options.mcp_registries` ([MCP registry provenance](../connectors/code.md#mcp-registry-provenance)) | 0 |
+| `tag:mcp-registry-published` / `tag:mcp-unpublished` / `tag:mcp-registry-deprecated` / `tag:mcp-registry-deleted` / `tag:mcp-registry-version-unpublished` / `tag:mcp-registry-outdated` / `tag:mcp-registry-unidentified` | MCP registry review hints from `options.mcp_registries` ([MCP registry provenance](../connectors/code.md#mcp-registry-provenance)) | 0 |
 
 The `kind` base weight is 30 for `secret`; 15 for `agent` and `mcp-server`;
 10 for `agent-config`, `workflow`, `bot-app`, `oauth-grant`,

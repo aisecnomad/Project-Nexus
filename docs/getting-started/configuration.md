@@ -102,10 +102,11 @@ directly. The listing is complete or nothing is written: a failed or refused
 request, an invalid page, a repeated cursor, more than `--max-pages` pages
 (default 5,000 pages of 100 versions), more than 500,000 versions or 256 MiB
 exits with code 3. A snapshot keeps only what matching reads from each version:
-its name and version, its packages (registry type, identifier and version), its
-remote URLs, and the registry's status, latest flag and publication time. A
-full official listing (about 145,000 versions in October 2026) is about 45 MB
-and takes the scan a few seconds and a few hundred MiB of memory to load.
+its name and version, its packages (registry type, identifier, version and
+registry base URL), its remote URLs, and the registry's status, latest flag and
+publication time. A full official listing (about 145,000 versions in October
+2026) is roughly 50 MB and takes the scan a few seconds and a few hundred MiB
+of memory to load.
 
 ```yaml
 options:
@@ -125,8 +126,13 @@ rejected before anything is scanned. Every scan reads each snapshot again
 without following symbolic links and checks its pin. A snapshot that is
 missing, changed, larger than 256 MiB, not strict JSON, not `complete`, of
 another schema or API version, or that has an invalid entry (an unknown status,
-a repeated name and version, an invalid name) is not used, and the scan is
-incomplete (`engine.mcp-registry`, exit 3). The ids, pins and approval flags
+a repeated name and version, an invalid name or version, a package or remote of
+the wrong shape) is not used, and the scan is incomplete (`engine.mcp-registry`,
+exit 3). A package or remote URL that nothing configured could match (a URL
+that is templated, carries user information or does not parse, however long; a
+package on another registry than its type's public one) is left out of the
+index without rejecting the snapshot, so one publisher's entry cannot block
+every snapshot. The ids, pins and approval flags
 are part of the [collection scope](../scanning.md#comparing-reports) fingerprint when configured,
 so a baseline taken with other snapshots is not comparable. See
 [MCP registry provenance](../connectors/code.md#mcp-registry-provenance) for

@@ -25,7 +25,11 @@ registry can still be compromised.
 :func:`server_package` reads the same launch to name the package a server is
 fetched from (registry type, normalized identifier and exact version), which
 MCP registry snapshots are matched against; :func:`registry_package`
-normalizes a registry's own package listing the same way.
+normalizes a registry's own package listing the same way. A launch names a
+package only when nothing in it can change what is fetched or run: another
+registry, index, configuration file, cache or container host (as an option or
+an environment variable), an extra package, a command line or entrypoint, an
+option the parser does not know, or a Git, URL, path or alias source.
 """
 
 from __future__ import annotations
@@ -64,15 +68,61 @@ _SHELLS = {
 }
 _SHELL_FLAGS = {"-c", "/c", "/k", "-command", "-encodedcommand", "-enc"}
 # npx / bunx / dlx options that consume the next argument.
-_NODE_VALUE_FLAGS = {"-p", "--package", "--registry", "--cache", "--userconfig", "-c", "--call"}
-_UV_VALUE_FLAGS = {"--from", "--with", "-w", "--python", "-p", "--index", "--index-url", "--extra-index-url"}
-_PIPX_VALUE_FLAGS = {"--spec", "--python", "--pip-args", "--index-url"}
+_NODE_VALUE_FLAGS = {"-p", "--package", "--registry", "--cache", "--userconfig", "-c", "--call", "--loglevel"}
+_UV_VALUE_FLAGS = {
+    "--from", "--with", "-w", "--with-editable", "--with-requirements", "--python", "-p", "--index",
+    "--index-url", "-i", "--default-index", "--extra-index-url", "--find-links", "-f", "--cache-dir",
+    "--config-file", "--constraints", "-c", "--overrides",
+}  # fmt: skip
+_PIPX_VALUE_FLAGS = {"--spec", "--python", "--pip-args", "--index-url", "-i"}
+# Options that leave which package a launch fetches, and from where, as written; any other
+# option before the package (another registry or index, a configuration file or cache, an
+# extra package, a command line) can change what runs, so the launch names no package.
+_NODE_PLAIN_FLAGS = frozenset({
+    "-y", "--yes", "-q", "--quiet", "-s", "--silent", "--prefer-online", "--ignore-existing", "--bun",
+    "--loglevel",
+})  # fmt: skip
+_UV_PLAIN_FLAGS = frozenset(
+    {"-q", "--quiet", "-v", "--verbose", "--isolated", "-n", "--no-cache", "--no-progress"}
+)
+_PIPX_PLAIN_FLAGS = frozenset({"-q", "--quiet", "-v", "--verbose", "--no-cache"})
+# An interpreter request such as 3.12 or cpython@3.12; a path would run that file.
+_PYTHON_FLAGS = frozenset({"--python", "-p"})
+_PYTHON_REQUEST = re.compile(r"[A-Za-z0-9.+@=<>~_-]+\Z")
 _DOCKER_VALUE_FLAGS = {
     "-e", "--env", "--env-file", "-v", "--volume", "--mount", "--name", "-p", "--publish", "--network",
     "--net", "-w", "--workdir", "-u", "--user", "--entrypoint", "--platform", "-l", "--label", "--cpus",
     "-m", "--memory", "--add-host", "--cap-add", "--cap-drop", "--device", "--pull", "--restart",
     "--hostname", "-h", "--dns", "--ipc", "--pid", "--runtime", "--security-opt", "--tmpfs", "--ulimit",
+    "--gpus", "-a", "--attach", "--log-driver", "--log-opt", "--shm-size", "--group-add", "--stop-signal",
+    "--stop-timeout", "--health-cmd", "--health-interval", "--health-retries", "--health-start-period",
+    "--health-timeout", "--cgroupns", "--cgroup-parent", "--isolation", "--expose", "--label-file",
+    "--mac-address", "--ip", "--ip6", "--userns", "--uts", "--annotation", "--blkio-weight", "--cidfile",
+    "--cpu-period", "--cpu-quota", "-c", "--cpu-shares", "--cpuset-cpus", "--cpuset-mems",
+    "--device-cgroup-rule", "--dns-option", "--dns-search", "--domainname", "--link", "--memory-reservation",
+    "--memory-swap", "--memory-swappiness", "--network-alias", "--net-alias", "--oom-score-adj",
+    "--pids-limit", "--storage-opt", "--sysctl", "--volume-driver", "--volumes-from", "--detach-keys",
+    "--secret", "--pod", "--arch", "--os", "--variant", "--tz", "--umask", "--unsetenv", "--authfile",
+    "--creds", "--uidmap", "--gidmap", "--requires",
 }  # fmt: skip
+# docker / podman run options that take no value.
+_DOCKER_FLAGS = frozenset({
+    "-i", "--interactive", "-t", "--tty", "-d", "--detach", "--rm", "--init", "--privileged", "-P",
+    "--publish-all", "--read-only", "--no-healthcheck", "--oom-kill-disable", "--disable-content-trust",
+    "-q", "--quiet", "--sig-proxy", "--replace", "--env-host", "--http-proxy", "--read-only-tmpfs",
+    "--no-hosts", "--rmi", "--tls-verify",
+})  # fmt: skip
+_DOCKER_FLAG_CLUSTER = re.compile(r"-[itdPq]{2,}\Z")
+# Environment variables that point a launcher at another registry, index, configuration, cache
+# or container host.
+_SOURCE_ENV = re.compile(
+    r"(?i)npm_config_\w+|uv_\w*index\w*|uv_(?:find_links|config_file|cache_dir|tool_dir)|pipx?_\w+"
+    r"|docker_host|docker_config|container_host|containers_conf|registries_conf"
+)
+# cmd.exe switches that change nothing about the command it runs, and the characters that make
+# its command line more than one plain command.
+_CMD_SWITCHES = frozenset({"/d", "/s", "/q"})
+_CMD_METACHARACTERS = re.compile(r'[&|<>^()"]')
 _BROAD_ROOTS = {"/", "~", "~/", "$HOME", "${HOME}", "%USERPROFILE%", "/home", "/Users", "/root"}
 _DRIVE_ROOT = re.compile(r"^[A-Za-z]:[\\/]?$")
 _HOME_DIR = re.compile(r"^(?:/home/[^/]+|/Users/[^/]+|[A-Za-z]:[\\/]Users[\\/][^\\/]+)[\\/]?$")
@@ -80,6 +130,22 @@ _MOVING_TAGS = frozenset({"latest", "main", "master", "edge", "nightly"})
 # A spec that names a path, a URL, a Git source or an npm alias is not a registry package.
 _NOT_REGISTRY = (".", "/", "~", "file:", "git+", "git:", "github:", "npm:", "http:", "https:")
 _NPM_NAME = re.compile(r"(?:@[a-z0-9._~-]+/)?[a-z0-9._~-]+\Z")
+# What may follow 'name@' for a registry lookup: a version, range or dist-tag. An alias
+# ('npm:other@1.0.0'), a Git, GitHub, URL or file source fetches something else under the name.
+_NPM_SELECTOR = re.compile(r"[A-Za-z0-9.^~<>=|*+ _-]*\Z")
+# The public registry each package type's launchers fetch from when nothing names another.
+_DEFAULT_REGISTRIES = {
+    "npm": frozenset({"https://registry.npmjs.org"}),
+    "pypi": frozenset({"https://pypi.org", "https://pypi.org/simple"}),
+}
+_DOCKER_HUB_ORIGINS = frozenset(
+    {
+        "https://docker.io",
+        "https://index.docker.io",
+        "https://registry-1.docker.io",
+        "https://registry.hub.docker.com",
+    }
+)
 _PY_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 _PY_SEPARATORS = re.compile(r"[-_.]+")
 _DOCKER_HUB_HOSTS = frozenset({"docker.io", "index.docker.io", "registry-1.docker.io"})
@@ -157,14 +223,17 @@ def record_server_risks(finding: Finding, server: dict[str, Any], location: str)
 def server_package(server: dict[str, Any]) -> PackageRef | None:
     """The registry package a parsed server record launches, or None when it launches none.
 
-    Only the launchers :func:`assess_server` recognizes count. A shell command line, a
-    local path, a URL or Git source, an npm alias and a GitHub shorthand name no package.
+    Only the launchers :func:`assess_server` recognizes count, also as ``npx.cmd`` or
+    ``uvx.exe`` and inside ``cmd /c``. A shell command line, a local path, a URL or Git
+    source, an npm alias, a GitHub shorthand, and a launch with an option or environment
+    variable that can change what is fetched or run name no package.
     """
     argv = _argv(server)
-    if argv is None or (_basename(argv[0]) in _SHELLS and any(a.lower() in _SHELL_FLAGS for a in argv[1:])):
+    argv = _cmd_wrapped(argv) if argv is not None else None
+    if argv is None or _shell_command(argv) or _env_changes_source(server.get("env_names")):
         return None
-    registry, spec, _ = _launch(argv)
-    if registry is None or not spec:
+    registry, spec, _, plain = _launch(argv)
+    if registry is None or not spec or not plain:
         return None
     if registry == "npm":
         parsed = _npm_ref(spec)
@@ -175,12 +244,16 @@ def server_package(server: dict[str, Any]) -> PackageRef | None:
     return PackageRef(registry, parsed[0], parsed[1]) if parsed is not None else None
 
 
-def registry_package(registry_type: str, identifier: str, version: str | None = None) -> PackageRef | None:
+def registry_package(
+    registry_type: str, identifier: str, version: str | None = None, registry_base_url: str | None = None
+) -> PackageRef | None:
     """Normalize a package as an MCP registry lists it, comparably with :func:`server_package`.
 
     An OCI identifier carries its tag, which is the version unless ``version`` is given.
     Other registry types keep their lowercased identifier. None when the identifier does
-    not name a registry package.
+    not name a registry package, or when ``registry_base_url`` names a registry other than
+    the public one a launch fetches from by default (for OCI, the image's own host): a
+    launch cannot show that it fetches from there.
     """
     kind = registry_type.strip().lower()
     name = identifier.strip()
@@ -188,14 +261,24 @@ def registry_package(registry_type: str, identifier: str, version: str | None = 
         return None
     if kind == "oci":
         parsed = _oci_ref(name)
-        return PackageRef(kind, parsed[0], version or parsed[1]) if parsed is not None else None
-    if kind == "npm":
+        ref = PackageRef(kind, parsed[0], version or parsed[1]) if parsed is not None else None
+    elif kind == "npm":
         npm = _npm_ref(name)
-        return PackageRef(kind, npm[0], version) if npm is not None else None
-    if kind == "pypi":
+        ref = PackageRef(kind, npm[0], version) if npm is not None else None
+    elif kind == "pypi":
         pypi = _pypi_ref(name)
-        return PackageRef(kind, pypi[0], version) if pypi is not None else None
-    return PackageRef(kind, name.lower(), version)
+        ref = PackageRef(kind, pypi[0], version) if pypi is not None else None
+    else:
+        ref = PackageRef(kind, name.lower(), version)
+    if ref is None or registry_base_url is None:
+        return ref
+    origin = registry_base_url.strip().rstrip("/").lower()
+    if kind == "oci":
+        host = ref.identifier.split("/", 1)[0]
+        default = _DOCKER_HUB_ORIGINS if host == "docker.io" else frozenset({f"https://{host}"})
+    else:
+        default = _DEFAULT_REGISTRIES.get(kind, frozenset({origin}))
+    return ref if origin in default else None
 
 
 def _argv(server: dict[str, Any]) -> list[str] | None:
@@ -208,15 +291,47 @@ def _argv(server: dict[str, Any]) -> list[str] | None:
     return command.split() + args if " " in command.strip() and not args else [command, *args]
 
 
+def _cmd_wrapped(argv: list[str]) -> list[str] | None:
+    """The command ``cmd /c`` runs, or ``argv`` itself; None when cmd runs more than one plain command."""
+    if _basename(argv[0]) != "cmd":
+        return argv
+    i = 1
+    while i < len(argv) and argv[i].lower() in _CMD_SWITCHES:
+        i += 1
+    if i >= len(argv) or argv[i].lower() not in {"/c", "/k"}:
+        return argv
+    inner = argv[i + 1 :]
+    if len(inner) == 1 and " " in inner[0].strip():
+        inner = inner[0].split()
+    if not inner or any(_CMD_METACHARACTERS.search(arg) for arg in inner):
+        return None
+    return inner
+
+
+def _shell_command(argv: list[str]) -> bool:
+    return _basename(argv[0]) in _SHELLS and any(a.lower() in _SHELL_FLAGS for a in argv[1:])
+
+
+def _env_changes_source(names: Any) -> bool:
+    return isinstance(names, list) and any(
+        isinstance(name, str) and _SOURCE_ENV.fullmatch(name) for name in names
+    )
+
+
+def _npm_split(spec: str) -> tuple[str, str]:
+    """A spec's package name and what follows its ``@`` (empty when nothing does)."""
+    at = spec.find("@", 1)  # past a scope's leading '@'
+    return (spec, "") if at < 0 else (spec[:at], spec[at + 1 :])
+
+
 def _npm_ref(spec: str) -> tuple[str, str | None] | None:
     if spec.startswith(_NOT_REGISTRY):
         return None
-    name = _package_name(spec).lower()
-    if not _NPM_NAME.match(name):
+    name, selector = _npm_split(spec)
+    name = name.lower()
+    if not _NPM_NAME.match(name) or not _NPM_SELECTOR.match(selector):
         return None
-    body = spec[1:] if spec.startswith("@") else spec
-    version = body.rsplit("@", 1)[1] if "@" in body else ""
-    return name, version.removeprefix("v") if _EXACT_SEMVER.match(version) else None
+    return name, selector.removeprefix("v") if _EXACT_SEMVER.match(selector) else None
 
 
 def _pypi_ref(spec: str) -> tuple[str, str | None] | None:
@@ -254,8 +369,10 @@ def _oci_ref(image: str) -> tuple[str, str | None] | None:
     return "/".join([host, *path]).lower(), tag if tag and tag not in _MOVING_TAGS else None
 
 
-def _launch(argv: list[str]) -> tuple[str | None, str | None, list[str]]:
-    """The registry a launcher fetches from, the package or image it names, and the arguments after it.
+def _launch(argv: list[str]) -> tuple[str | None, str | None, list[str], bool]:
+    """The registry a launcher fetches from, the package or image it names, the arguments after
+    it, and whether the launch is plain: no option before the package can change what is fetched
+    or run.
 
     The registry is ``npm``, ``pypi`` or ``oci``, or None when ``argv`` does not start a
     package launcher; the arguments are then everything after the executable.
@@ -268,26 +385,25 @@ def _launch(argv: list[str]) -> tuple[str | None, str | None, list[str]]:
         or (exe == "bun" and rest[:1] == ["x"])
     ):
         tail = rest[1:] if exe in {"pnpm", "yarn", "bun"} else rest
-        package, positional = _node_package(tail)
-        return "npm", package, positional
+        package, positional, plain = _node_package(tail)
+        return "npm", package, positional, plain
     if exe == "uvx" or (exe == "uv" and rest[:2] == ["tool", "run"]):
         tail = rest[2:] if exe == "uv" else rest
-        package, positional = _python_package(tail, _UV_VALUE_FLAGS, "--from")
-        return "pypi", package, positional
+        package, positional, plain = _python_package(tail, _UV_VALUE_FLAGS, "--from", _UV_PLAIN_FLAGS)
+        return "pypi", package, positional, plain
     if exe == "pipx" and rest[:1] == ["run"]:
-        package, positional = _python_package(rest[1:], _PIPX_VALUE_FLAGS, "--spec")
-        return "pypi", package, positional
+        package, positional, plain = _python_package(rest[1:], _PIPX_VALUE_FLAGS, "--spec", _PIPX_PLAIN_FLAGS)
+        return "pypi", package, positional, plain
     if exe in {"docker", "podman"} and rest[:1] == ["run"]:
-        image, positional = _docker_image(rest[1:])
-        return "oci", image, positional
-    return None, None, rest
+        image, positional, plain = _docker_image(rest[1:])
+        return "oci", image, positional, plain
+    return None, None, rest, False
 
 
 def _launcher_risks(argv: list[str]) -> list[McpRisk]:
-    exe = _basename(argv[0])
-    if exe in _SHELLS and any(a.lower() in _SHELL_FLAGS for a in argv[1:]):
-        return [McpRisk("mcp-shell-command", exe)]
-    registry, package, rest = _launch(argv)
+    if _shell_command(argv):
+        return [McpRisk("mcp-shell-command", re.split(r"[\\/]", argv[0].strip())[-1].lower())]
+    registry, package, rest, _ = _launch(argv)
     risks: list[McpRisk] = []
     if registry == "oci":
         if package is not None and _image_unpinned(package):
@@ -302,28 +418,46 @@ def _launcher_risks(argv: list[str]) -> list[McpRisk]:
     return risks
 
 
-def _node_package(args: list[str]) -> tuple[str | None, list[str]]:
+def _node_package(args: list[str]) -> tuple[str | None, list[str], bool]:
+    """The package an npm launcher fetches, the arguments after its command, and whether it is plain.
+
+    With ``-p``/``--package`` the command is looked up among that package's programs and then
+    on the PATH, so the launch is plain only for one package whose own name is the command.
+    """
     package = None
+    packages = 0
+    plain = True
     i = 0
     while i < len(args):
         arg = args[i]
         if arg in {"-p", "--package"} and i + 1 < len(args):
             package = args[i + 1]
+            packages += 1
             i += 2
             continue
         if arg.startswith("--package="):
             package = arg.split("=", 1)[1]
+            packages += 1
         elif arg in _NODE_VALUE_FLAGS:
+            plain = plain and arg in _NODE_PLAIN_FLAGS
             i += 2
             continue
         elif not arg.startswith("-"):
-            return package or arg, args[i + 1 :]
+            if package is None:
+                return arg, args[i + 1 :], plain
+            command = _npm_split(package)[0].rsplit("/", 1)[-1]
+            return package, args[i + 1 :], plain and packages == 1 and arg == command
+        else:
+            plain = plain and arg.partition("=")[0] in _NODE_PLAIN_FLAGS
         i += 1
-    return package, []
+    return package, [], False
 
 
-def _python_package(args: list[str], value_flags: set[str], spec_flag: str) -> tuple[str | None, list[str]]:
+def _python_package(
+    args: list[str], value_flags: set[str], spec_flag: str, plain_flags: frozenset[str]
+) -> tuple[str | None, list[str], bool]:
     spec = None
+    plain = True
     i = 0
     while i < len(args):
         arg = args[i]
@@ -334,35 +468,66 @@ def _python_package(args: list[str], value_flags: set[str], spec_flag: str) -> t
         if arg.startswith(spec_flag + "="):
             spec = arg.split("=", 1)[1]
         elif arg in value_flags:
+            value = args[i + 1] if i + 1 < len(args) else ""
+            plain = plain and arg in _PYTHON_FLAGS and bool(_PYTHON_REQUEST.match(value))
             i += 2
             continue
         elif not arg.startswith("-"):
-            return spec or arg, args[i + 1 :]
+            return spec or arg, args[i + 1 :], plain
+        else:
+            flag, equals, value = arg.partition("=")
+            plain = plain and (
+                (flag in plain_flags and not equals)
+                or (flag in _PYTHON_FLAGS and bool(equals) and bool(_PYTHON_REQUEST.match(value)))
+            )
         i += 1
-    return spec, []
+    return spec, [], plain
 
 
-def _docker_image(args: list[str]) -> tuple[str | None, list[str]]:
+def _docker_image(args: list[str]) -> tuple[str | None, list[str], bool]:
+    """The image ``docker run`` starts, the arguments after it, and whether the launch is plain.
+
+    An option this parser does not know may take a value, which would then be read as the
+    image, so it leaves the launch not plain; ``--entrypoint`` replaces what the image runs.
+    """
+    plain = True
     i = 0
     while i < len(args):
         arg = args[i]
         if arg in _DOCKER_VALUE_FLAGS:
+            plain = plain and arg != "--entrypoint"
             i += 2
             continue
         if not arg.startswith("-"):
-            return arg, args[i + 1 :]
+            return arg, args[i + 1 :], plain
+        flag = arg.partition("=")[0]
+        known = (
+            arg in _DOCKER_FLAGS
+            or bool(_DOCKER_FLAG_CLUSTER.match(arg))
+            or (
+                "=" in arg
+                and flag.startswith("--")
+                and (flag in _DOCKER_VALUE_FLAGS or flag in _DOCKER_FLAGS)
+            )
+            or (not arg.startswith("--") and len(arg) > 2 and arg[:2] in _DOCKER_VALUE_FLAGS)
+        )
+        plain = plain and known and flag != "--entrypoint"
         i += 1
-    return None, []
+    return None, [], plain
 
 
 def _npm_pinned(spec: str) -> bool:
-    if spec.startswith((".", "/", "file:", "git+", "http:", "https:")):
-        return True  # a local path or explicit URL is not a registry lookup
-    body = spec[1:] if spec.startswith("@") else spec
-    if "@" not in body:
-        return False
-    version = body.rsplit("@", 1)[1]
-    return bool(_EXACT_SEMVER.match(version))
+    while True:
+        if spec.startswith((".", "/", "file:", "git+", "http:", "https:")):
+            return True  # a local path or explicit URL is not a registry lookup
+        if spec.startswith("npm:"):
+            spec = spec[4:]  # an alias is as pinned as the package it names
+            continue
+        selector = _npm_split(spec)[1]
+        if selector.startswith("npm:"):
+            spec = selector[4:]
+            continue
+        return bool(_EXACT_SEMVER.match(selector))
 
 
 def _python_pinned(spec: str) -> bool:
@@ -416,7 +581,10 @@ def _host(url: str) -> str:
 
 
 def _basename(command: str) -> str:
-    return re.split(r"[\\/]", command.strip())[-1].lower()
+    """The program a command names, lowercased and without a Windows ``.exe``/``.cmd``/``.bat`` suffix."""
+    name = re.split(r"[\\/]", command.strip())[-1].lower()
+    stem, dot, suffix = name.rpartition(".")
+    return stem if dot and stem and suffix in {"exe", "cmd", "bat"} else name
 
 
 def _unique(risks: list[McpRisk]) -> list[McpRisk]:

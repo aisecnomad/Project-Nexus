@@ -970,6 +970,16 @@ def _valid_server(server: Any) -> bool:
         for k in _SERVER_STRING_LISTS
     ):
         return False
+    # Only a registry manifest's record has packages: objects of optional strings.
+    packages = server.get("packages")
+    if packages is not None and not (
+        isinstance(packages, list)
+        and all(
+            isinstance(package, dict) and all(v is None or isinstance(v, str) for v in package.values())
+            for package in packages
+        )
+    ):
+        return False
     return all(server.get(k) is None or isinstance(server[k], bool) for k in ("disabled", "secrets_inline"))
 
 

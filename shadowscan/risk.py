@@ -157,6 +157,7 @@ TAG_WEIGHTS: dict[str, tuple[int, str]] = {
     "mcp-registry-deleted": (0, "MCP server is marked deleted in an MCP registry"),
     "mcp-registry-version-unpublished": (0, "MCP server pins a version its registry entry does not list"),
     "mcp-registry-outdated": (0, "MCP server uses a version or endpoint other than the registry's latest"),
+    "mcp-registry-unidentified": (0, "MCP server's package or endpoint could not be identified"),
 }
 
 PROVIDER_WEIGHTS: dict[str, tuple[int, str]] = {
@@ -474,12 +475,15 @@ def _governance_factors(finding: Finding, inventory_present: bool, policy: RiskP
         and registry.get("approved_checked") is True
     ):
         missing = _as_int(registry.get("not_in_approved"))
+        # Unidentified servers are among the missing: an approved catalog cannot vouch for them.
+        unidentified = min(_as_int(registry.get("unidentified")), missing)
         w = policy.governance["mcp-not-in-approved-registry"] * governance_scale
         if missing > 0 and w:
+            note = f" ({unidentified} could not be identified)" if unidentified > 0 else ""
             factors.append(
                 RiskFactor(
                     "mcp-not-in-approved-registry",
-                    f"{missing} enabled MCP server(s) not listed in an approved MCP registry",
+                    f"{missing} enabled MCP server(s) not listed in an approved MCP registry{note}",
                     w,
                 )
             )
