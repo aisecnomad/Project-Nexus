@@ -5,6 +5,59 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## Unreleased
 
+### Drift classes, baseline pinning and weekly drift templates
+
+- `shadowscan diff` labels every changed field with a drift class
+  (`inventory`, `capability`, `autonomy`, `governance`, `coverage`) and
+  whether it is adverse. Each `changed` entry gains `drift`, and the
+  document gains `drift_summary`, `adverse` and `baseline` (`sha256`,
+  `pinned`, `age_days`). Existing keys, `changed_fields` names and the text
+  header line are unchanged; text output adds a `drift:` line and appends
+  the classes to each changed line.
+- `diff` now also compares `metadata.autonomy` (floor, ceiling, oversight,
+  initiation), an MCP tool's `metadata.tool_definition_sha256` and
+  `metadata.registry_reconciliation.status`. A change to one of them alone now
+  reports the finding as changed. Reading a report (for `diff`, `merge` and
+  `inventory stubs`) now rejects a finding whose metadata is not an object,
+  or whose value at one of these paths is malformed.
+- Adverse drift: new findings and changed kinds; added permissions,
+  capabilities, frameworks, model providers, models and tags (MCP registry
+  status tags included); a removed mitigating tag (`disabled`, `inactive`,
+  `suspended`, `expired`, `asks-user`, the `*-code-only` and `docs-only`
+  scope tags, `pending-request`, `managed-secret`, `mcp-registry-published`),
+  whose addition is not adverse; a changed or lost tool definition digest; a higher
+  autonomy floor or ceiling, oversight moving towards `bypassed` and
+  initiation moving away from `human`; a lost owner, a finding becoming
+  shadow, a lost or changed registry match, a reconciliation status becoming
+  `observed-not-registered` or leaving `registered-and-observed`, and an
+  added `autonomy-understated` tag. Risk changes stay unclassified.
+- Add `diff --fail-on-drift CLASSES` (exit 2 on adverse drift in a listed
+  class; an unknown class exits 1; an incomplete comparison still exits 3,
+  so `coverage` never yields 2), `--baseline-sha256 HEX` (refuse, exit 1, a
+  baseline whose raw file bytes have another SHA-256, before parsing or
+  printing it) and `--max-baseline-age-days N` (an expired, undatable or
+  future baseline, or one that started after the current scan, makes the
+  comparison incomplete, exit 3; the limit is at most 36500 days).
+  `--fail-on-new` is unchanged.
+- A fleet report's `started_at` is now the earliest source start time
+  compared as instants, not as text. When any source lacks a valid
+  timezone-aware start time, the fleet's `started_at` is `null` instead of
+  the merge time, so an age limit cannot pass an undated fleet baseline.
+- Add `read_policy_bytes` and `load_report_with_digest` so the pinned digest
+  and the parsed report come from one bounded, link-refusing read.
+- Add the weekly `examples/github-action-drift.yml` workflow and
+  `examples/k8s-drift-cronjob.yaml` CronJob. The workflow has no pull request
+  trigger, top-level `contents: read`, `id-token: write` on its one job, a
+  named environment, pinned actions and `persist-credentials: false` on both
+  checkouts. It writes only counts per drift class to the job summary and
+  keeps reports as 14-day artifacts. Both templates fail with the scan's own
+  exit code 2 (`options.fail_on`) or 3 when the comparison exits 0. Repository policy tests check both
+  templates. Add the scheduled drift detection page, which covers the record
+  and replay pitfalls.
+- Add authored regression tests for each drift class and the baseline
+  lifecycle. They use synthetic reports and do not establish live tenant
+  acceptance or measured precision of the drift classes.
+
 ### Threat and control references
 
 - Replace `metadata.compliance` with `metadata.threats` and

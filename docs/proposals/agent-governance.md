@@ -281,6 +281,15 @@ Scope:
 
 ## 2. Scheduled drift detection (DRIFT)
 
+Status: DRIFT-0 to DRIFT-4 are implemented, unreleased: attested live scope
+for `cloud.aws`, `cloud.azure`, `cloud.gcp` and app-only `identity.entra`
+(DRIFT-1, below), `--fail-on-drift`, `--baseline-sha256`,
+`--max-baseline-age-days` and the weekly workflow and CronJob templates;
+DRIFT-0 is documented. See
+[Scheduled drift detection](../operations/drift.md). The tests use synthetic
+reports, not live tenants. The rest of this section records the proposal as
+drafted.
+
 ### Problem
 
 Security teams want a scheduled job, typically weekly, that answers what
@@ -329,7 +338,10 @@ makes the scan incomplete. Two scans compare only when their scope digests
 match. Third-party plugins stay non-comparable.
 
 Status: DRIFT-1 is implemented, unreleased, for `cloud.aws`, `cloud.azure`,
-`cloud.gcp` and `identity.entra`; other live connectors stay non-comparable.
+`cloud.gcp` and app-only `identity.entra`; delegated Entra scans and other
+live connectors stay non-comparable. GCP discovery mode attests the discovered
+project set rather than the mode alone, so lost visibility never resolves
+findings.
 DRIFT-0's replay path and its pitfalls are documented with it in
 [live collection scope](../scanning.md#live-collection-scope). It was tested
 with mocked transports only, not against a live account or tenant.

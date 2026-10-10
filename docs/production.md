@@ -986,6 +986,28 @@ Read them when you have baselines, reports or inventories produced
 by an earlier candidate build; a deployment that starts from a reviewed
 revision and a fresh baseline does not need them.
 
+### October 10 drift classes and baseline lifecycle (unreleased)
+
+This candidate adds drift classes, baseline pinning and expiry to
+`shadowscan diff`, and the weekly [drift templates](operations/drift.md). It
+does not change the published 0.1.2 artifact, create a release, or establish
+live tenant acceptance. The class rules and fixtures are synthetic and
+author-written.
+
+| Area | Changed behavior | Migration check |
+| --- | --- | --- |
+| Comparison fields | `diff` also compares `metadata.autonomy` floor, ceiling, oversight and initiation, `metadata.tool_definition_sha256` and `metadata.registry_reconciliation.status`. A finding whose only difference is one of these is now `changed`. Finding identity and the scope fingerprint are unchanged. | Expect `changed` entries that earlier builds did not report, for example an MCP tool whose definition changed. Consumers that count `changed` should not treat the increase as a regression in the scanner. |
+| Report import | Reading a report for `diff`, `merge` or `inventory stubs` rejects (exit 1) a finding whose `metadata` is not an object, or whose value at one of those paths is malformed. | Regenerate edited or hand-built reports; reports this scanner wrote are unaffected. |
+| JSON output | Each change carries `drift`; the document carries `drift_summary`, `adverse` and `baseline` (`sha256`, `pinned`, `age_days`). Existing keys and `changed_fields` names are unchanged. | Consumers that require an exact key set must accept the new keys. |
+| Gating | `--fail-on-drift CLASSES` exits 2 on adverse drift in a listed class. An incomplete comparison still exits 3, and `coverage` never yields 2. `--fail-on-new` is unchanged. | Start with `inventory,capability,autonomy,governance`, and review which changes the [class table](operations/drift.md#drift-classes) treats as adverse before gating on it. |
+| Baseline lifecycle | `--baseline-sha256` refuses (exit 1) a baseline whose raw bytes differ from the pinned digest. `--max-baseline-age-days` makes an expired or undatable baseline, or one that started after the current scan, incomplete (exit 3). | Store baselines in a private baseline repository, accept drift by reviewed pull request, and pin `sha256sum baseline.json`. Disable line-ending conversion for the baseline file. A replayed report is dated by the replay, not by the collection. |
+| Mitigating tags | Removing `disabled`, `inactive`, `suspended`, `expired`, `asks-user`, a `*-code-only` or `docs-only` scope tag, `pending-request`, `managed-secret` or `mcp-registry-published` is adverse capability drift; adding one is not. | Expect exit 2 from `--fail-on-drift capability` when an agent is enabled again or an app is restored, and none when one is disabled. |
+| Fleet start time | A fleet's `started_at` is the earliest source start compared as instants. Any source without a valid timezone-aware start makes it `null` instead of the merge time. | A fleet baseline with an undated source makes `--max-baseline-age-days` exit 3. Regenerate its sources, or merge only dated reports. |
+
+A pinned digest shows only that the baseline file is the reviewed one. The
+drift classes record what changed between two reports. They do not prove that
+a change is malicious or benign, and they are not a measured detector.
+
 ### October 10 threat and control references (unreleased)
 
 This source candidate changes the report schema. It does not change the

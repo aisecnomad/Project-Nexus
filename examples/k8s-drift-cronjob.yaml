@@ -1,0 +1,131 @@
+# Weekly ShadowScan drift CronJob: scans with a reviewed configuration,
+# compares the report with a reviewed, pinned baseline and fails the Job on
+# adverse drift or a scan that reached the configuration's options.fail_on
+# level (exit 2), or an incomplete scan or comparison (exit 3). See
+# docs/operations/drift.md. Replace the image digest, the service account
+# binding and the baseline digest before rollout.
+# Live collection needs egress to the provider APIs: route it through the
+# cluster's approved egress path. A standard NetworkPolicy cannot filter
+# destinations by DNS name, and ShadowScan's HTTP client refuses proxies.
+# Never mount live credentials into a Job that also mounts untrusted
+# repositories.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: shadowscan-drift
+spec:
+  schedule: "23 4 * * 1"
+  timeZone: "Etc/UTC"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 3600
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: shadowscan
+            shadowscan-mode: drift
+        spec:
+          restartPolicy: Never
+          # Bind this account to read-only cloud roles through the platform's
+          # workload identity, which projects its own audience-scoped token.
+          # The Kubernetes API token stays unmounted.
+          serviceAccountName: shadowscan-drift
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            fsGroup: 65532
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: shadowscan
+              image: registry.example.com/shadowscan@sha256:REPLACE_WITH_APPROVED_64_HEX_DIGEST
+              imagePullPolicy: IfNotPresent
+              env:
+                - name: SHADOWSCAN_BASELINE_SHA256
+                  valueFrom:
+                    configMapKeyRef:
+                      name: shadowscan-drift-pin
+                      key: baseline-sha256
+              # The report and the comparison go to /output, never to the log:
+              # they hold findings and account identifiers.
+              command: ["/bin/sh", "-c"]
+              args:
+                - |
+                  set -eu
+                  umask 077
+                  scan_status=0
+                  shadowscan -q scan -c /config/shadowscan.yaml --format json \
+                    -o /output/current.json --job-deadline-seconds 2700 || scan_status=$?
+                  echo "scan exit code: $scan_status"
+                  case "$scan_status" in
+                    0|2|3) ;;
+                    *) exit "$scan_status" ;;
+                  esac
+                  [ -f /output/current.json ] || exit 3
+                  status=0
+                  shadowscan diff /baseline/baseline.json /output/current.json --json \
+                    --fail-on-drift inventory,capability,autonomy,governance \
+                    --baseline-sha256 "$SHADOWSCAN_BASELINE_SHA256" \
+                    --max-baseline-age-days 35 > /output/drift.json || status=$?
+                  echo "diff exit code: $status"
+                  # A scan that failed its own gate (options.fail_on reached, exit 2,
+                  # or incomplete, exit 3) fails the Job even when the comparison
+                  # found nothing to report: it cannot see the scan's exit code.
+                  if [ "$status" -eq 0 ] && [ "$scan_status" -ne 0 ]; then
+                    status="$scan_status"
+                  fi
+                  # Upload /output/current.json and /output/drift.json to a private,
+                  # access-controlled report store here, then keep the exit code.
+                  exit "$status"
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              resources:
+                requests:
+                  cpu: "250m"
+                  memory: 512Mi
+                  ephemeral-storage: 1Gi
+                limits:
+                  cpu: "1"
+                  memory: 1Gi
+                  ephemeral-storage: 4Gi
+              # ConfigMap and Secret volumes present each key as a chain of symbolic
+              # links, which ShadowScan refuses to follow; subPath mounts the file itself.
+              volumeMounts:
+                - name: config
+                  mountPath: /config/shadowscan.yaml
+                  subPath: shadowscan.yaml
+                  readOnly: true
+                - name: baseline
+                  mountPath: /baseline/baseline.json
+                  subPath: baseline.json
+                  readOnly: true
+                - name: output
+                  mountPath: /output
+                - name: tmp
+                  mountPath: /tmp
+          volumes:
+            # The reviewed scan configuration (no credentials in it).
+            - name: config
+              configMap:
+                name: shadowscan-drift-config
+            # The reviewed baseline report. A Secret holds at most 1 MiB; mount a
+            # read-only volume from the private baseline store for larger estates.
+            - name: baseline
+              secret:
+                secretName: shadowscan-drift-baseline
+            - name: output
+              emptyDir:
+                sizeLimit: 256Mi
+            - name: tmp
+              emptyDir:
+                sizeLimit: 2Gi

@@ -46,6 +46,29 @@ and the provider confirmed the account, tenant, projects or subscriptions (see
 comparison exits 3. A comparison involving any other live API connector or a
 third-party connector always exits 3, even for identical reports.
 
+## Scheduled drift detection
+
+For a weekly drift gate, compare each new scan with a reviewed baseline:
+
+```bash
+shadowscan diff baseline.json current.json --json \
+  --fail-on-drift inventory,capability,autonomy,governance \
+  --baseline-sha256 "$SHADOWSCAN_BASELINE_SHA256" --max-baseline-age-days 35 > drift.json
+```
+
+`--fail-on-drift` exits 2 when a complete comparison has adverse drift in a
+listed class: `inventory`, `capability`, `autonomy`, `governance` or
+`coverage`. Coverage drift is an incomplete comparison, which always exits 3.
+`--baseline-sha256` refuses a baseline whose file bytes differ from the
+reviewed digest (exit 1). `--max-baseline-age-days` makes the comparison
+incomplete (exit 3) when the baseline is too old or cannot be dated.
+
+The [weekly drift workflow](https://github.com/aisecnomad/Project-Nexus/blob/main/examples/github-action-drift.yml)
+and [Kubernetes CronJob](https://github.com/aisecnomad/Project-Nexus/blob/main/examples/k8s-drift-cronjob.yaml)
+templates run this on a schedule. They never run for pull requests and never
+print findings to logs. [Scheduled drift detection](drift.md) covers the drift
+classes, the baseline review process and the record-and-replay alternative.
+
 ## Container-based scanning
 
 For isolated scanning of untrusted repositories, set the repository variable
