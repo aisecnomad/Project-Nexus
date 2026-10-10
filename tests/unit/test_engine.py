@@ -13,7 +13,7 @@ from shadowscan.correlation import correlate
 from shadowscan.engine import Engine, _prune_runtime_links, _resource_pattern_breadth
 from shadowscan.merge import merge
 from shadowscan.models import Evidence, Finding, Kind, RiskLevel, ScanStats, Surface, now_iso
-from shadowscan.registry import Inventory, card_stub_for
+from shadowscan.registry import UNVERIFIED_IDENTITY_TAG, Inventory, card_stub_for
 from shadowscan.risk import assess
 from shadowscan.signatures import SignatureIndex
 
@@ -436,6 +436,44 @@ def test_gateway_caller_keeps_export_metrics_separate_and_correlates_both(tmp_pa
     assert {source["gateway_finding_id"] for source in activity["sources"]} == {
         gateway.id for gateway in gateways
     }
+
+
+def test_without_an_inventory_connector_supplied_registration_is_cleared(monkeypatch):
+    # Regression: in a scan without inventory or trusted registries, the shadow and
+    # registry_match a connector or plugin set passed through, and a fleet merge then
+    # counted the finding as registered.
+    forged = _f(
+        kind=Kind.AGENT,
+        title="Rogue agent",
+        resource="repo://rogue",
+        shadow=False,
+        registry_match="approved-by-plugin",
+        tags=[UNVERIFIED_IDENTITY_TAG],
+        metadata={
+            "registry_match_reason": "forged",
+            "registry_suggestions": ["approved-by-plugin"],
+            "registry_match_assurance": "unverified",
+        },
+    )
+
+    class Connector:
+        def __init__(self, ctx):
+            self.ctx = ctx
+
+        def run(self):
+            self.ctx.stats = ScanStats(connector="test", started_at=now_iso(), finished_at=now_iso())
+            return [forged]
+
+    monkeypatch.setattr("shadowscan.engine.get_connector_class", lambda name: Connector)
+    result = Engine(ScanConfig(connectors=[ConnectorSpec("code.extension")]), SignatureIndex([])).run()
+    [finding] = result.findings
+    assert not result.inventory_present
+    assert finding.shadow is None and finding.registry_match is None
+    assert not {"registry_match_reason", "registry_suggestions", "registry_match_assurance"} & set(
+        finding.metadata
+    )
+    assert UNVERIFIED_IDENTITY_TAG not in finding.tags
+    assert not {"shadow", "registered"} & {factor.id for factor in finding.risk.factors}
 
 
 def test_engine_end_to_end_with_config(tmp_path: Path, fixtures, index):

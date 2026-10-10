@@ -35,14 +35,24 @@ summarizes each release for people who install and operate ShadowScan.
   Shadow status now merges in three states, whatever the order of the
   sources: `true` when any source found the finding unregistered, `false` when
   a source matched it to the inventory that scan was given, and `null` when no
-  source that reported it had an inventory. A registered finding keeps the
-  first non-empty `registry_match` of a source that matched it; a shadow or
-  unassessed finding has none. The merged report carries `inventory_present`
+  source that reported it had an inventory. A shadow or unassessed finding has
+  no `registry_match`. The merged report carries `inventory_present`
   (true when any source had an inventory, even an empty one), and a source
   whose `inventory_present` is not a boolean is refused (exit 1).
   The terminal table, Markdown and HTML reports label such a finding
   `unassessed` and count them in the summary when the merged report has an
   inventory, instead of leaving a blank cell that reads as registered.
+- Registration claims need an inventory. A scan without an inventory or
+  trusted registries passed through the `shadow` and `registry_match` a
+  connector or plugin set, and `merge` then counted such a finding as
+  registered. The engine now clears that match state (`shadow` and
+  `registry_match` become `null`), and `merge` reads registration only from
+  sources whose `inventory_present` is true and treats `shadow: false` without
+  a `registry_match` as unassessed. Sources that matched a finding to
+  different agents make it ambiguous, as two matching inventory entries are in
+  one scan (`shadow: true`, `registry_match_reason:
+  ambiguous-resource-approval`, the candidates in `registry_suggestions`),
+  instead of the first source's match winning.
 - LLM triage is bounded. `options.llm_triage.budget_seconds` (default 300,
   1 to 3600) limits one triage run, and the HTTP client's retries,
   `Retry-After` waits, connection set-up and response reads stop at the same
@@ -140,8 +150,7 @@ summarizes each release for people who install and operate ShadowScan.
 - Only a built-in connector that declares the new `emits_registry_records`
   engine hook may emit records. The engine drops `registry_record` from other
   connectors' findings, including cached ones and those of a plugin that
-  declares the hook, and notes the drop in their stats. Records replayed from
-  an offline export count like live records.
+  declares the hook, and notes the drop in their stats.
 - The engine writes `metadata.registry_reconciliation`:
   `registered-and-observed` and `registered-not-observed` or `not-comparable`
   on records, and `registered-and-observed` or `observed-not-registered` on
@@ -175,6 +184,34 @@ summarizes each release for people who install and operate ShadowScan.
   cannot be trusted.
 - A connector that emits records also declares the registry types it reads
   (`registry_record_types` engine hook); records of other types are removed.
+- Records replayed from an offline export no longer approve. They counted for
+  `trusted_registries` exactly like live records, so a forged export line (an
+  approved, auto-detected record with `DETECTED_FROM` provenance naming any
+  runtime) sanctioned that runtime. The engine now records which findings came
+  from a job with `input`, so a connector cannot present them as live; such
+  records still reconcile, and approve only for a trusted entry that sets the
+  new boolean `allow_offline_records: true`. A replayed record that would
+  otherwise approve is counted in an advisory `engine.inventory` warning, and
+  a record read both live and from an export in one scan counts as replayed.
+- An approved record of a trusted registry registers its own finding through
+  an inventory entry for exactly that finding, matched with the loaded
+  inventory. It was registered before inventory matching, so a card that also
+  approved the record finding was not ambiguous, contrary to the documented
+  rule; it now is, and the record finding is held to the same fail-closed
+  identity rules (a redacted resource is not registered).
+  `TrustedApprovals.approve_record` is removed; `candidates()` offers that
+  entry to the record finding alone.
+- `min_confidence` no longer removes registry record findings. Their evidence
+  has a fixed weight of 0.5, so a threshold above 0.5 dropped every record
+  from the report while the approvals they conferred stayed in force.
+- Only `approved`, `registered` and `pending` records register what they bind.
+  A `draft`, `rejected`, `deprecated`, `blocked` or `unknown` record bound to a
+  running agent made it `registered-and-observed`, hiding
+  `observed-not-registered` and the `registry-gap` control rule; such a record
+  is now `not-comparable` (`reason: record-status`) and its bound agent counts
+  as unregistered. AWS registries report absence only for the resource types
+  their records can bind (AgentCore runtimes and gateways), so a Bedrock agent
+  in an account with a bound runtime is no longer `observed-not-registered`.
 - The records in the tests are synthetic; nothing was validated against a live
   registry.
 
@@ -505,6 +542,14 @@ summarizes each release for people who install and operate ShadowScan.
   admit what every source's block admits (highest floor and ceiling,
   `bypassed` over `unknown` over `gated`); it rejects a source whose block is
   malformed.
+- `merge` applies the combination rules across sources. Bounds widened one by
+  one skipped them, so approval bypassed in one source and a schedule trigger
+  in another merged to L4; the merged finding is now classified with the
+  widest oversight and initiation any source recorded and reaches L5
+  (`self-initiated`), with the matching basis entries. A registered merged
+  finding keeps the lowest level any source declares for its agent instead of
+  the first source's, so `autonomy-understated` no longer depends on the order
+  of the reports.
 - An L2 ceiling rests on recorded approval settings: it is configuration
   evidence, not proof of how a run behaves.
 - The rules and fixtures are synthetic and author-written; they do not

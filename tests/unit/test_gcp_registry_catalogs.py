@@ -743,12 +743,15 @@ def test_fixture_gemini_enterprise_agents(index):
         for record in records.values()
     )
     assert status(agents["negotiator"]) == "registered-and-observed"
-    assert status(findings[f"projects/{P}/locations/global/agents/abc"]) == "registered-and-observed"
+    # Only the draft helpdesk record binds this Dialogflow agent, and a draft registers nothing:
+    # the complete Agent Registry listing of its project does not hold it.
+    assert status(agents["helpdesk"]) == "not-comparable"
+    assert status(findings[f"projects/{P}/locations/global/agents/abc"]) == "observed-not-registered"
     forecaster = agents["forecaster"]
     assert forecaster.metadata[RECONCILIATION_KEY] == {
         "status": "not-comparable",
         "observed": [],
-        "reason": "binding-not-in-scope",
+        "reason": "record-status",
     }
     assert records["forecaster"]["bindings"][0]["coverage"] == "out-of-scope"
     # The associated registry was listed completely and does not hold these agents.
@@ -903,8 +906,9 @@ def test_records_the_offline_loader_drops_taint_every_completeness_claim(index, 
     assert record["listing_complete"] is False
     assert [binding["coverage"] for binding in record["bindings"]] == ["unknown"]
     statuses = {status(finding) for finding in findings.values() if RECONCILIATION_KEY in finding.metadata}
-    # Exact matches still reconcile; no claim rests on completeness.
-    assert statuses == {"not-comparable", "registered-and-observed"}
+    # No claim rests on completeness. (The only exact match left binds a draft, which registers
+    # nothing.)
+    assert statuses == {"not-comparable"}
     assert all(
         finding.metadata["catalog_presence"]["agent_registry"] != "absent"
         for finding in findings.values()
@@ -951,8 +955,13 @@ def test_registry_names_of_another_project_are_rejected(index, tmp_path, foreign
             "registry": "google-agent-registry",
             "id": "projects/victim/locations/global",
             "allow_registered_only": True,
+            "allow_offline_records": True,
         },
-        {"registry": "gemini-enterprise", "id": VICTIM_ENGINE.replace("999", "victim", 1)},
+        {
+            "registry": "gemini-enterprise",
+            "id": VICTIM_ENGINE.replace("999", "victim", 1),
+            "allow_offline_records": True,
+        },
     ]
     path = write_records(tmp_path, [*fixture_records(), *victim, foreign])
     result = scan(index, path, trusted_registries=trusted)
@@ -1124,9 +1133,9 @@ def test_replayed_tools_and_skills_keep_only_bounded_names_and_boolean_hints(ind
 
 
 def test_trusted_gemini_enterprise_approval_sanctions_the_bound_engine(index):
-    result = scan(
-        index, REGISTRY_FIXTURE, trusted_registries=[{"registry": "gemini-enterprise", "id": GE_ID}]
-    )
+    # The fixture is an offline replay, whose records approve only for an entry that opts in.
+    trusted = {"registry": "gemini-enterprise", "id": GE_ID, "allow_offline_records": True}
+    result = scan(index, REGISTRY_FIXTURE, trusted_registries=[trusted])
     findings = by_resource(result.findings)
     engine = findings[RE_OK]
     assert engine.shadow is False
@@ -1137,7 +1146,7 @@ def test_trusted_gemini_enterprise_approval_sanctions_the_bound_engine(index):
 
 
 def test_agent_registry_records_approve_only_with_allow_registered_only(index):
-    trusted = {"registry": "google-agent-registry", "id": AR_ID}
+    trusted = {"registry": "google-agent-registry", "id": AR_ID, "allow_offline_records": True}
     result = scan(index, REGISTRY_FIXTURE, trusted_registries=[trusted])
     findings = by_resource(result.findings)
     assert findings[RE_OK].shadow is True

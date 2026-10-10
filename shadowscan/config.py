@@ -693,8 +693,8 @@ def validate_plugins(value: Any) -> list[str]:
     return list(dict.fromkeys(name.strip() for name in value))
 
 
-_TRUSTED_REGISTRY_FIELDS = {"registry", "id", "allow_auto_approved", "allow_registered_only"}
-_TRUSTED_REGISTRY_FLAGS = ("allow_auto_approved", "allow_registered_only")
+_TRUSTED_REGISTRY_FLAGS = ("allow_auto_approved", "allow_registered_only", "allow_offline_records")
+_TRUSTED_REGISTRY_FIELDS = {"registry", "id", *_TRUSTED_REGISTRY_FLAGS}
 _WILDCARDS = frozenset("*?[")
 
 
@@ -704,9 +704,9 @@ def validate_trusted_registries(value: Any) -> list[TrustedRegistry]:
     Each entry is a mapping (or a :class:`TrustedRegistry`) with ``registry``, a known registry
     type that can be trusted, and ``id``, the registry's exact identity: no wildcard characters,
     no surrounding whitespace or control characters, and nothing redaction would change, since a
-    redacted id can never equal a record's. The optional ``allow_auto_approved`` and
-    ``allow_registered_only`` must be YAML booleans. Duplicate registries and more than 64 entries
-    are rejected. Messages never include the values.
+    redacted id can never equal a record's. The optional ``allow_auto_approved``,
+    ``allow_registered_only`` and ``allow_offline_records`` must be YAML booleans. Duplicate
+    registries and more than 64 entries are rejected. Messages never include the values.
     """
     location = "options.trusted_registries"
     if not isinstance(value, list):
@@ -720,8 +720,7 @@ def validate_trusted_registries(value: Any) -> list[TrustedRegistry]:
             item = {
                 "registry": item.registry,
                 "id": item.id,
-                "allow_auto_approved": item.allow_auto_approved,
-                "allow_registered_only": item.allow_registered_only,
+                **{name: getattr(item, name) for name in _TRUSTED_REGISTRY_FLAGS},
             }
         if not isinstance(item, Mapping):
             raise ConfigValidationError(f"{where} must be a mapping with registry and id")
