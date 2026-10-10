@@ -107,7 +107,13 @@ summarizes each release for people who install and operate ShadowScan.
   source that reported it had an inventory. A shadow or unassessed finding has
   no `registry_match`. The merged report carries `inventory_present`
   (true when any source had an inventory, even an empty one), and a source
-  whose `inventory_present` is not a boolean is refused (exit 1).
+  whose `inventory_present` is not a boolean is refused (exit 1). A source
+  without `inventory_present` (reports from the v0.1.x releases, which share
+  the finding identity schema) is refused (exit 1) when it records any
+  registration (`shadow`, `registry_match` or a nonzero `inventory_size`):
+  reading the missing key as "no inventory" silently turned its shadow
+  verdicts into `unassessed` and lowered the fleet's shadow count. Rescan
+  such sources before merging.
   The terminal table, Markdown and HTML reports label such a finding
   `unassessed` and count them in the summary when the merged report has an
   inventory, instead of leaving a blank cell that reads as registered.

@@ -1029,7 +1029,7 @@ new full commit SHA before deploying it.
 
 | Area | Changed behavior | Migration check |
 | --- | --- | --- |
-| Fleet merge | A merged finding is `shadow: true` only when a source found it unregistered, `false` when a source matched it to its inventory, and `null` when no source that reported it had an inventory. Earlier candidates reported every finding of inventory-less sources as shadow. The merged report carries `inventory_present`; a non-boolean value in a source is refused. | Re-merge fleet reports built from scans without an inventory before alerting on `shadow: true` or comparing shadow counts. Supply an inventory to the source scans when registration status is required. |
+| Fleet merge | A merged finding is `shadow: true` only when a source found it unregistered, `false` when a source matched it to its inventory, and `null` when no source that reported it had an inventory. Earlier candidates reported every finding of inventory-less sources as shadow. The merged report carries `inventory_present`; a non-boolean value in a source is refused. A source without `inventory_present` (v0.1.x reports) is refused when it records any registration (`shadow`, `registry_match` or a nonzero `inventory_size`), instead of having its shadow verdicts dropped to `null`. | Re-merge fleet reports built from scans without an inventory before alerting on `shadow: true` or comparing shadow counts. Supply an inventory to the source scans when registration status is required. Rescan v0.1.x endpoints with this version before merging their reports. |
 | Registration claims | A scan without an inventory or trusted registries now clears the `shadow`, `registry_match` and match metadata a connector or plugin set, instead of passing them through. A merge reads `shadow` and `registry_match` only from sources whose `inventory_present` is true, treats `shadow: false` without a match as unassessed, and makes a finding that sources matched to different agents ambiguous (`shadow: true`, `registry_match_reason: ambiguous-resource-approval`) instead of keeping the first source's match. | Expect `shadow: null` where only inventory-less sources claimed a registration, and `shadow: true` for findings that different source inventories registered to different agents; give each object one agent id across the fleet's inventories. |
 | LLM triage | One triage run is limited by `options.llm_triage.budget_seconds` (default 300) and stops after three consecutive failed requests; findings it does not reach are recorded as `status: skipped`. Under a CLI job deadline, triage ends 10% of the deadline before it (5 to 60 s) or is skipped, so it no longer uses up the time reserved for writing the report. A reply longer than 16 KiB is refused unread (`status: unparseable`; the response body is capped at 64 KiB), and an unexpected request error is recorded as `status: failed`. | Raise `budget_seconds` together with `max_findings` if later findings are now skipped. Triage remains advisory and never changes risk, shadow status, completeness or `--fail-on`. |
 | Container CI | The CI container job pulls the Dockerfile's digest-pinned base image through the `mirror.gcr.io` Docker Hub cache. | None for deployments: the image content is fixed by the digest. See [the worker image notes](#install-from-a-reviewed-revision). |
@@ -1054,8 +1054,12 @@ installing a candidate; see [threat and control mappings](concepts/mappings.md).
 
 This candidate adds the vendor
 [registry record contract, reconciliation statuses and trusted registries](inventory.md#vendor-registries-as-inventory-sources).
-No built-in connector reads a vendor registry yet, so existing scans emit no
-records. It does not change the published 0.1.2 artifact, create a release, or
+Default scans emit no records: every built-in registry reader is opt-in.
+`cloud.aws` reads registries when `services` includes `registry` (and
+`registry_arns` for other accounts' registries), `cloud.gcp` with
+`agent_registry` or `gemini_enterprise`, and `identity.entra` with
+`include_agent_registry`; the trust and offline-replay rows below apply to
+those records (see the AWS, Google and Agent 365 sections that follow). It does not change the published 0.1.2 artifact, create a release, or
 establish live tenant acceptance; the tests use synthetic records.
 
 | Area | Changed behavior | Migration check |
