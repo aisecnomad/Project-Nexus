@@ -492,6 +492,28 @@ def test_code_connector_local_settings_that_bypass_approval_win(run_connector, t
     assert autonomy["oversight"] == "bypassed" and autonomy["ceiling"] == 5
 
 
+def test_code_connector_unparseable_sibling_settings_keep_the_gate_partial(run_connector, tmp_path):
+    # Regression: an unparseable settings.local.json (it could set bypassPermissions) left the
+    # readable settings.json to record an every-action gate.
+    write(tmp_path, ".claude/settings.json", json.dumps({"permissions": {"defaultMode": "default"}}))
+    write(tmp_path, ".claude/settings.local.json", '{"permissions": {"defaultMode": "bypassPermissions"')
+    findings, _ = run_connector("code.filesystem", path=str(tmp_path), label="home", use_git=False)
+    [claude] = [f for f in findings if f.kind == Kind.AGENT_CONFIG]
+    gate = claude.metadata["approval_gate"]
+    assert gate["scope"] == "some-actions"
+    assert {
+        "setting": "settings-file",
+        "value": "unreadable",
+        "file": ".claude/settings.local.json",
+    }.items() <= next(s for s in gate["settings"] if s["setting"] == "settings-file").items()
+
+
+def test_an_unreadable_settings_file_alone_records_no_gate(run_connector, tmp_path):
+    write(tmp_path, ".claude/settings.json", "{not json")
+    findings, _ = run_connector("code.filesystem", path=str(tmp_path), label="home", use_git=False)
+    assert not [f for f in findings if "approval_gate" in f.metadata]
+
+
 # ------------------------------------------------------- endpoint connector
 
 
@@ -516,6 +538,36 @@ def test_endpoint_inventory_records_approval_and_replays_it(run_connector, tmp_p
     assert {k: f.metadata.get("approval_gate") for k, f in again.items()} == {
         k: f.metadata.get("approval_gate") for k, f in live.items()
     }
+
+
+@pytest.mark.parametrize("damage", ["invalid", "symlink", "oversize"])
+def test_endpoint_unreadable_sibling_settings_keep_the_gate_partial_live_and_on_replay(
+    run_connector, tmp_path, damage
+):
+    # Regression: settings.local.json that could not be read (it could set bypassPermissions)
+    # left settings.json to record an every-action gate.
+    home = tmp_path / "dana"
+    write(home, ".claude/settings.json", json.dumps({"permissions": {"defaultMode": "default"}}))
+    local = home / ".claude" / "settings.local.json"
+    if damage == "invalid":
+        local.write_text('{"permissions": {"defaultMode": "bypassPermissions"')
+    elif damage == "symlink":
+        outside = tmp_path / "elsewhere.json"
+        outside.write_text(json.dumps({"permissions": {"defaultMode": "bypassPermissions"}}))
+        local.symlink_to(outside)
+    else:
+        local.write_text(" " * (1024 * 1024 + 1))
+    target = tmp_path / "export.jsonl"
+    findings, ctx = run_connector(
+        "endpoint.inventory", path=str(home), label="laptop", _dump_path=str(target)
+    )
+    assert ctx.stats.incomplete
+    [claude] = [f for f in findings if "approval_gate" in f.metadata]
+    assert claude.metadata["approval_gate"]["scope"] == "some-actions"
+    replayed, replay_ctx = run_connector("endpoint.inventory", input=str(target), label="laptop")
+    assert not any("dropped" in w for w in replay_ctx.stats.warnings)
+    [again] = [f for f in replayed if "approval_gate" in f.metadata]
+    assert again.metadata["approval_gate"] == claude.metadata["approval_gate"]
 
 
 def _replay(run_connector, tmp_path, record):
@@ -627,6 +679,20 @@ DISABLED = {"name": "b", "requireConfirmation": "DISABLED"}
         ),
         ([_group(functions=[ENABLED]), _group(schema=False)], "some-actions"),
         ([_group(functions=[ENABLED]), _group(functions=["x", 3])], "some-actions"),
+        # Regression: unreadable entries next to confirmed ones were dropped and the gate read
+        # as every-action; an unreadable entry could be an unconfirmed function.
+        ([_group(functions=[ENABLED, "delete_all_customers", None])], "some-actions"),
+        (
+            [_group(functions=[ENABLED]), {"actionGroupState": "ENABLED", "functionSchema": "junk"}],
+            "some-actions",
+        ),
+        (
+            [
+                _group(functions=[ENABLED]),
+                {"actionGroupState": "ENABLED", "functionSchema": {"functions": 3}},
+            ],
+            "some-actions",
+        ),
         ([_group(functions=[DISABLED])], None),
         ([_group(schema=False), "junk"], None),
         ([], None),
@@ -662,6 +728,32 @@ def test_bedrock_agent_with_every_function_confirmed_is_supervised(run_connector
         {"setting": "functionSchema.functions.requireConfirmation", "value": "ENABLED for 1 of 1 function(s)"}
     ]
     assert interval(agent) == (2, 2, "gated", "unknown")
+
+
+def test_bedrock_malformed_function_entries_make_the_scan_incomplete(run_connector, tmp_path):
+    source = tmp_path / "aws.jsonl"
+    record = {
+        "_kind": "bedrock-agent",
+        "_region": "us-east-1",
+        "agentId": "AGENTX",
+        "agentArn": "arn:aws:bedrock:us-east-1:111111111111:agent/AGENTX",
+        "agentName": "refunds",
+        "agentStatus": "PREPARED",
+        "_action_groups": [
+            {
+                "actionGroupName": "refund",
+                "actionGroupState": "ENABLED",
+                "actionGroupExecutor": {"lambda": "arn:aws:lambda:us-east-1:111111111111:function:refund"},
+                "functionSchema": {"functions": [ENABLED, "delete_all_customers", None]},
+            }
+        ],
+    }
+    source.write_text(json.dumps(record) + "\n")
+    [agent], ctx = run_connector("cloud.aws", input=str(source))
+    assert ctx.stats.incomplete
+    assert "cloud.aws: Bedrock action group has malformed function entries" in ctx.stats.warnings
+    assert agent.metadata["approval_gate"]["scope"] == "some-actions"
+    assert interval(agent)[1] > 2
 
 
 # ---------------------------------------------- triggers recorded by connectors

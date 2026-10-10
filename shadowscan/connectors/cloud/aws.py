@@ -1118,6 +1118,8 @@ class AwsConnector(BaseConnector):
         f.owner = first_tag(rec.get("tags"), "owner", "Owner")
         name_hint(self.index, f, rec.get("agentName"), rec.get("description"))
         f.metadata.update(_bedrock_agent_metadata(rec, details, ags, kbs))
+        if _bedrock_malformed_functions(ags):
+            self.ctx.warn("cloud.aws: Bedrock action group has malformed function entries")
         gate = _bedrock_approval_gate(ags)
         if gate is not None:
             f.metadata["approval_gate"] = gate
@@ -2189,6 +2191,31 @@ def _cloudtrail_record(ev: dict[str, Any], region: str) -> dict[str, Any] | None
     }
 
 
+def _bedrock_malformed_functions(ags: list[Any]) -> int:
+    """Function entries of enabled action groups that are not objects, or a non-list ``functions``.
+
+    Such an entry cannot be read, so it could be an unconfirmed function: it keeps the gate
+    partial and makes the scan incomplete.
+    """
+    malformed = 0
+    for ag in ags:
+        if (
+            not isinstance(ag, dict)
+            or ag.get("actionGroupState") == "DISABLED"
+            or ag.get("parentActionSignature") == "AMAZON.UserInput"
+        ):
+            continue
+        schema = ag.get("functionSchema")
+        if schema is None:
+            continue
+        functions = schema.get("functions") if isinstance(schema, dict) else None
+        if not isinstance(functions, list):
+            malformed += 1
+            continue
+        malformed += sum(1 for fn in functions if not isinstance(fn, dict))
+    return malformed
+
+
 def _bedrock_approval_gate(ags: list[Any]) -> dict[str, Any] | None:
     """Positive approval gating from action group function ``requireConfirmation`` settings.
 
@@ -2204,7 +2231,7 @@ def _bedrock_approval_gate(ags: list[Any]) -> dict[str, Any] | None:
         and ag.get("actionGroupState") != "DISABLED"
         and ag.get("parentActionSignature") != "AMAZON.UserInput"
     ]
-    every = bool(acting)
+    every = bool(acting) and not _bedrock_malformed_functions(ags)
     confirmed = total = 0
     for ag in acting:
         schema = ag.get("functionSchema")

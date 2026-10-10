@@ -498,6 +498,43 @@ def test_malformed_replayed_entries_are_dropped_with_a_warning(run_connector, tm
 
 
 @pytest.mark.parametrize(
+    ("damage", "same_group"),
+    [({"entry_count": "x"}, True), ({"version": 5}, True), ({"client": ["claude-code"]}, False)],
+)
+def test_replay_that_skips_a_malformed_settings_record_never_claims_every_action(
+    run_connector, tmp_path, damage, same_group
+):
+    # Regression: a whole agent_config record of the same client (here a settings file that
+    # bypasses approval) was skipped as malformed, and the client's remaining every-action
+    # entry still recorded an every-action gate. A skipped record whose client cannot be
+    # read leaves every client's gate partial.
+    base = {"device": "lap", "home": "dana", "record_type": "agent_config", "client": "claude-code"}
+    gate = {
+        "client": "claude-code",
+        "setting": "permissions.defaultMode",
+        "value": "default",
+        "scope": "every-action",
+        "file": "~/.claude/settings.json",
+    }
+    valid = {**base, "product": "Claude Code", "location": "~/.claude/settings.json", "approval": [gate]}
+    bypass = {
+        "id": "posture-permissions-bypassed",
+        "client": "claude-code",
+        "setting": "permissions.defaultMode",
+        "value": "bypassPermissions",
+    }
+    skipped = {**base, "location": "~/.claude/settings.local.json", "posture": [bypass], **damage}
+    path = tmp_path / "records.jsonl"
+    path.write_text("\n".join(json.dumps(r) for r in (valid, skipped)))
+    findings, ctx = run_connector("endpoint.inventory", input=str(path))
+    assert ctx.stats.incomplete
+    assert any("skipped a malformed endpoint record" in w for w in ctx.stats.warnings)
+    [agent] = [f for f in findings if "approval_gate" in f.metadata]
+    assert agent.metadata["approval_gate"]["scope"] == "some-actions"
+    assert same_group or agent.metadata["client"] == "Claude Code"
+
+
+@pytest.mark.parametrize(
     "lost",
     [
         {"approval": ["junk"]},

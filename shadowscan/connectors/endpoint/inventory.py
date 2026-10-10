@@ -65,8 +65,10 @@ from shadowscan.connectors.mcp_risk import record_server_risks
 from shadowscan.connectors.posture import (
     POSTURE_DESCRIPTIONS,
     approval_settings,
+    posture_client,
     record_approval,
     record_posture,
+    unreadable_settings,
     valid_approval,
 )
 from shadowscan.connectors.posture import assess as assess_posture
@@ -115,6 +117,7 @@ class _Home:
     fd: int
     entries: int = 0
     exhausted: bool = False
+    gaps: set[str] = field(default_factory=set)  # relative paths that could not be read
 
 
 @dataclass
@@ -211,10 +214,24 @@ class EndpointInventoryConnector(BaseConnector):
 
     def _home_records(self, home: _Home) -> Iterator[dict[str, Any]]:
         base = {"device": self.label, "home": home.ref}
-        for loc in CONFIG_LOCATIONS:
-            record = self._config_record(home, loc)
-            if record is not None:
-                yield {**base, **record}
+        configs = [
+            {**base, **record}
+            for record in (self._config_record(home, loc) for loc in CONFIG_LOCATIONS)
+            if record is not None
+        ]
+        # A settings file that could not be read may loosen its client's approval gate: each of
+        # the client's records carries an entry that keeps the gate partial, also on replay.
+        unread = {
+            client: f"~/{rel}"
+            for rel in sorted(home.gaps)
+            if (client := posture_client(rel)) is not None and client != "openclaw"
+        }
+        for record in configs:
+            client = record.get("client")
+            if isinstance(client, str) and client in unread:
+                entry = {**unreadable_settings(client).as_dict(), "file": unread[client]}
+                record["approval"] = [*record.get("approval", []), entry]
+        yield from configs
         for rec in self._ide_extensions(home):
             yield {**base, **rec}
         for rec in self._browser_extensions(home):
@@ -234,6 +251,7 @@ class EndpointInventoryConnector(BaseConnector):
 
     # ------------------------------------------------------- safe file access
     def _gap(self, home: _Home, rel: str, reason: str) -> None:
+        home.gaps.add(rel)
         self.ctx.warn(f"endpoint.inventory: ~{home.ref}/{rel} not read: {reason}")
 
     def _open_dir(self, home: _Home, rel: str) -> int | None:
@@ -539,6 +557,9 @@ class EndpointInventoryConnector(BaseConnector):
         groups: dict[tuple[str, ...], _Group] = {}
         history: list[dict[str, Any]] = []
         unknown = 0
+        # (device, home, client) groups that lost a whole malformed agent_config record; None
+        # stands for a record whose group could not be read, which leaves every group partial.
+        lost_gates: set[tuple[str, str, str] | None] = set()
         for raw in records:
             self.ctx.examined()
             rec = self._normalize(raw)
@@ -546,7 +567,9 @@ class EndpointInventoryConnector(BaseConnector):
                 unknown += 1
                 continue
             if rec.get("ignored"):
-                continue  # an inventory row for a product that is not an AI tool
+                if rec.get("malformed") and rec.get("record_type") == "agent_config":
+                    lost_gates.add(rec.get("gate_group"))
+                continue  # a malformed record, or an inventory row for a product that is not an AI tool
             kind = rec["record_type"]
             if kind == "shell_history":
                 history.append(rec)
@@ -575,7 +598,8 @@ class EndpointInventoryConnector(BaseConnector):
         for key, group in groups.items():
             kind = key[0]
             if kind == "agent_config":
-                findings += self._client_findings(group.records)
+                lost = None in lost_gates or (key[1], key[2], key[3]) in lost_gates
+                findings += self._client_findings(group.records, gate_complete=not lost)
             elif kind == "ide_extension":
                 findings.append(self._extension_finding(group.records))
             elif kind == "browser_extension":
@@ -596,7 +620,12 @@ class EndpointInventoryConnector(BaseConnector):
                 required=_OWN_REQUIRED[str(raw["record_type"])],
             ) or not all(isinstance(raw.get(k, 0), int) for k in ("count", "model_count", "entry_count")):
                 self.ctx.warn("endpoint.inventory: skipped a malformed endpoint record")
-                return {"record_type": raw["record_type"], "ignored": True}
+                skipped = {"record_type": raw["record_type"], "ignored": True, "malformed": True}
+                if raw["record_type"] == "agent_config":
+                    # The skipped settings file could have loosened its client's approval gate.
+                    who = (raw.get("device", self.label), raw.get("home", "unknown"), raw.get("client"))
+                    skipped["gate_group"] = who if all(isinstance(v, str) for v in who) else None
+                return skipped
             rec = dict(raw)
             rec.setdefault("device", self.label)
             rec.setdefault("home", "unknown")
@@ -715,7 +744,7 @@ class EndpointInventoryConnector(BaseConnector):
         for capability in sig.capabilities:
             f.add_capability(capability)
 
-    def _client_findings(self, records: list[dict[str, Any]]) -> list[Finding]:
+    def _client_findings(self, records: list[dict[str, Any]], *, gate_complete: bool = True) -> list[Finding]:
         first = records[0]
         client, product = str(first.get("client")), str(first.get("product") or first.get("client"))
         signature = next((r.get("signature") for r in records if r.get("signature")), None)
@@ -741,7 +770,7 @@ class EndpointInventoryConnector(BaseConnector):
         record_approval(
             f,
             [a for r in records for a in r.get("approval") or [] if isinstance(a, dict)],
-            complete=not any(r.get(_GATE_INCOMPLETE) for r in records),
+            complete=gate_complete and not any(r.get(_GATE_INCOMPLETE) for r in records),
         )
         f.kind = kind
         out.append(finalize(f, self.index))

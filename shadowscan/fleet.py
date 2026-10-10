@@ -12,8 +12,8 @@ Findings from different machines keep their own resources because the endpoint
 label prefixes every resource. A finding is shadow when any source that reported
 it found it unregistered, registered when one matched it to that source's
 inventory, and unassessed when none of the sources that reported it was given
-an inventory (``--inventory`` or the configuration's ``inventory:`` key), even
-if other sources were.
+an inventory (``--inventory``, the configuration's ``inventory:`` key or
+``options.trusted_registries``), even if other sources were.
 
 The merged report is comparable with ``shadowscan diff`` only when every
 source is complete and carries a comparable collection scope; its fingerprint

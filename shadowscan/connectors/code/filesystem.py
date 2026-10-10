@@ -175,11 +175,15 @@ from shadowscan.connectors.common import (
 from shadowscan.connectors.mcp_risk import record_server_risks
 from shadowscan.connectors.posture import (
     CLIENT_SIGNATURES,
+    approval_scopes,
     approval_settings,
+    posture_client,
     record_approval,
     record_posture,
+    unreadable_settings,
 )
 from shadowscan.connectors.posture import assess as assess_posture
+from shadowscan.connectors.posture import parseable as posture_parseable
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.signatures import Match, Signature
 from shadowscan.signatures.loader import builtin_signature_dir
@@ -3263,7 +3267,14 @@ class FilesystemConnector(BaseConnector):
                 entry = {**issue.as_dict(), "file": file.rel}
                 if entry not in file.proj.posture.setdefault(sig_id, []):
                     file.proj.posture[sig_id].append(entry)
-        for setting in approval_settings(file.rel, file.text) or []:
+        settings = approval_settings(file.rel, file.text) or []
+        client = posture_client(file.rel)
+        if client is not None and not posture_parseable(file.rel, file.text):
+            unread = unreadable_settings(client)
+            # An unparseable settings file may loosen the client's gate (openclaw has none).
+            if approval_scopes(client, unread.setting, unread.value):
+                settings.append(unread)
+        for setting in settings:
             sig_id = CLIENT_SIGNATURES[setting.client]
             approval = {**setting.as_dict(), "file": file.rel}
             if approval not in file.proj.approvals.setdefault(sig_id, []):

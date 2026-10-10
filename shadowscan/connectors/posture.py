@@ -94,6 +94,7 @@ _SOME = frozenset({"some-actions"})
 _UNREADABLE = {"unreadable": _SOME}
 # Every (client, setting) an approval reader reports, each value it reports for it and the scopes
 # that value can carry. Replayed exports are held to it (:func:`valid_approval`).
+UNREADABLE_SETTINGS = "settings-file"
 _APPROVAL_VALUES: dict[tuple[str, str], dict[str, frozenset[str]]] = {
     ("claude-code", "permissions.defaultMode"): {"default": _EVERY, "plan": _EVERY, "acceptEdits": _SOME},
     ("claude-code", "permissions.allow"): {"rules": _SOME, **_UNREADABLE},
@@ -111,6 +112,9 @@ _APPROVAL_VALUES: dict[tuple[str, str], dict[str, frozenset[str]]] = {
         "on-failure": _SOME,
     },
     ("goose", "GOOSE_MODE"): {"approve": _EVERY, "smart_approve": _SOME},
+    # A settings file of the client that could not be read (invalid syntax, a symbolic link,
+    # over the size limit): whatever it sets is unknown, so it may loosen the gate.
+    **{(client, UNREADABLE_SETTINGS): _UNREADABLE for client in ("claude-code", "codex", "goose")},
 }
 # Settings that let some actions run without a prompt but do not themselves configure approval:
 # they make a gate partial and never record one on their own.
@@ -126,6 +130,7 @@ _LOOSENING = frozenset(
             "hooks",
         )
     }
+    | {(client, UNREADABLE_SETTINGS) for client in ("claude-code", "codex", "goose")}
 )
 # Claude Code hook events whose hooks can allow a tool call without a prompt.
 _ALLOWING_HOOKS = ("PreToolUse", "PermissionRequest")
@@ -210,7 +215,8 @@ def valid_approval(item: Any, *, client: Any, file: Any) -> bool:
     It must hold exactly ``client``, ``setting``, ``value``, ``scope`` and ``file``, as
     :func:`approval_settings` and its callers write them: a combination of setting, value and
     scope a reader can produce, the given ``client`` and ``file`` of the record it came with, and
-    a ``file`` that is a settings file of that client.
+    a ``file`` that is a settings file of that client. An :func:`unreadable_settings` entry names
+    the unread file, which may be another settings file of the same client.
     """
     if not isinstance(item, dict) or set(item) != {"client", "setting", "value", "scope", "file"}:
         return False
@@ -218,10 +224,19 @@ def valid_approval(item: Any, *, client: Any, file: Any) -> bool:
         return False
     return (
         item["client"] == client
-        and item["file"] == file
+        and (item["file"] == file or item["setting"] == UNREADABLE_SETTINGS)
         and posture_client(item["file"]) == client
         and item["scope"] in approval_scopes(client, item["setting"], item["value"])
     )
+
+
+def unreadable_settings(client: str) -> ApprovalSetting:
+    """The approval entry for a settings file of ``client`` that could not be read.
+
+    It never records a gate on its own (see :func:`record_approval`), and next to a readable
+    setting it keeps the gate at ``some-actions``: the unread file could loosen it.
+    """
+    return ApprovalSetting(client, UNREADABLE_SETTINGS, "unreadable", "some-actions")
 
 
 def approval_settings(rel: str, text: str) -> list[ApprovalSetting] | None:

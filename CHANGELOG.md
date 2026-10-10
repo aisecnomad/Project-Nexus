@@ -27,6 +27,21 @@ summarizes each release for people who install and operate ShadowScan.
   deadline. Triage is skipped instead.
 - The autonomy guide states the merge rule for declared levels as the code
   applies it: a source scanned without an inventory does not count either way.
+- The fleet guide says that a scan configured with `options.trusted_registries`
+  counts as having an inventory: it reports unmatched findings as unregistered
+  even when no registry produced records, and that wins in a merge.
+- A Bedrock action group with malformed function entries no longer records an
+  every-action approval gate from the readable ones, and the scan is marked
+  incomplete with a warning. `shadowscan merge` ignores an unreadable
+  `approval_gate.scope` instead of raising.
+- Endpoint replay that skips a whole malformed settings record of a client
+  keeps that client's gate at `some-actions` (all clients' gates when the
+  skipped record's client cannot be read).
+- A settings file that could not be read (invalid syntax, a symbolic link or
+  over the size limit for `endpoint.inventory`; invalid syntax for
+  `code.filesystem`) adds a `settings-file = unreadable` approval entry for its
+  client. It records no gate on its own and keeps a gate from the client's
+  readable settings at `some-actions`, live and on replay.
 
 ### Operational controls guide
 

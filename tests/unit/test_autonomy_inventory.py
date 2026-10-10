@@ -497,6 +497,16 @@ def test_fleet_merge_rejects_malformed_autonomy(tmp_path, index, damage):
         merge_reports([("broken.json", report)])
 
 
+@pytest.mark.parametrize("scope", [["every-action"], {"every-action": 1}, 3])
+def test_fleet_merge_ignores_an_unreadable_approval_gate_scope(tmp_path, index, scope):
+    # Regression: an unhashable scope reached a set lookup in autonomy and raised TypeError.
+    report = _report(tmp_path, index)
+    report["findings"][0]["metadata"]["approval_gate"] = {"scope": scope, "settings": []}
+    [agent] = merge_reports([("odd.json", report)]).findings
+    assert valid_autonomy(agent.metadata["autonomy"])
+    assert agent.metadata["autonomy"]["oversight"] != "gated"
+
+
 def test_fleet_merge_classifies_findings_of_reports_without_autonomy(tmp_path, index):
     report = _report(tmp_path, index)
     del report["findings"][0]["metadata"]["autonomy"]

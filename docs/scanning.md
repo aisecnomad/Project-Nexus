@@ -778,11 +778,16 @@ its file name when the reports share a directory.
 Whatever the order of the sources, a merged finding is `shadow: true` when
 any source that reported it found it unregistered, `false` when one matched
 it to the inventory that scan was given, and `null` when none of the sources
-that reported it was given an inventory (by `--inventory` or the
-configuration's `inventory:` key). Scans made without an inventory never make
-a finding look unregistered: in a mixed fleet, a finding seen only on
-machines scanned without one stays `null` although the merged
-`inventory_present` is true. A registered finding keeps the first
+that reported it was given an inventory (by `--inventory`, the
+configuration's `inventory:` key, or `options.trusted_registries`). Scans made
+without any of these never make a finding look unregistered: in a mixed fleet,
+a finding seen only on machines scanned without one stays `null` although the
+merged `inventory_present` is true. A scan configured with
+`options.trusted_registries` reconciles its findings even when no registry
+produced records, so it reports every unmatched finding as unregistered, and
+in a merge that wins over another source's match. Give such scans the same
+inventory files as the rest of the fleet, or leave the trusted registries out
+until a connector supplies their records. A registered finding keeps the first
 `registry_match` named by a source that matched it, in the order given. The
 merged `inventory_present` is true when any source had an inventory, even an
 empty one, and `inventory_size` is the largest source inventory.

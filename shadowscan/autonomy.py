@@ -168,7 +168,8 @@ def _approval_scope(finding: Finding) -> str | None:
     """``every-action`` or ``some-actions`` when a connector recorded positive approval gating."""
     gate = finding.metadata.get("approval_gate")
     scope = gate.get("scope") if isinstance(gate, dict) else None
-    return scope if scope in {"every-action", "some-actions"} else None
+    # The value comes from a report: a list or object must not reach the set lookup.
+    return scope if isinstance(scope, str) and scope in {"every-action", "some-actions"} else None
 
 
 def _trigger_initiation(finding: Finding) -> str | None:
