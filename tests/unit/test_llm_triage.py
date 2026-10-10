@@ -3,10 +3,18 @@
 from __future__ import annotations
 
 import json
+import time
+from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
+import requests
+import responses
 
+import shadowscan.triage as triage_module
+import shadowscan.utils.http as http_module
 from shadowscan.config import ConfigValidationError, ScanConfig
+from shadowscan.connectors import get_connector_class
 from shadowscan.engine import Engine
 from shadowscan.models import Evidence, Finding, Kind, Risk, RiskLevel, Surface
 from shadowscan.triage import (
@@ -17,7 +25,7 @@ from shadowscan.triage import (
     parse_reply,
     select,
 )
-from shadowscan.utils.http import HttpError
+from shadowscan.utils.http import HttpClient, HttpError
 
 TOKEN = "sk-ant-api03-" + "B" * 93 + "AA"
 
@@ -88,11 +96,26 @@ def test_disabled_by_default():
         {"enabled": True, "model": "m", "min_level": "severe"},
         {"enabled": True, "model": "m", "timeout_seconds": 0},
         {"enabled": True, "model": "m", "colour": "blue"},
+        {"enabled": True, "model": "m", "budget_seconds": True},
+        {"enabled": True, "model": "m", "budget_seconds": 0},
+        {"enabled": True, "model": "m", "budget_seconds": -30},
+        {"enabled": True, "model": "m", "budget_seconds": float("nan")},
+        {"enabled": True, "model": "m", "budget_seconds": float("inf")},
+        {"enabled": True, "model": "m", "budget_seconds": 3601},
+        {"enabled": True, "model": "m", "budget_seconds": "60"},
     ],
 )
 def test_invalid_settings_are_refused(options):
     with pytest.raises(TriageConfigError):
         TriageSettings.from_options(options)
+
+
+def test_budget_seconds_defaults_to_five_minutes_and_accepts_the_range():
+    assert TriageSettings().budget_seconds == 300.0
+    assert TriageSettings.from_options({"enabled": True, "model": "m"}).budget_seconds == 300.0
+    for value in (1, 2.5, 3600):
+        settings = TriageSettings.from_options({"enabled": True, "model": "m", "budget_seconds": value})
+        assert settings.budget_seconds == float(value)
 
 
 def test_settings_reach_scan_config(tmp_path):
@@ -335,3 +358,255 @@ def test_any_triage_exception_keeps_the_report(monkeypatch, index, tmp_path):
     assert result.findings and result.complete
     entry = next(s for s in result.stats if s.connector == "engine.llm-triage")
     assert entry.warnings == ["llm triage failed (TypeError)"]
+
+
+def _repo_spec(tmp_path, **triage):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "requirements.txt").write_text("langgraph==0.2.0\n")
+    return {
+        "connectors": [{"name": "code.filesystem", "path": str(repo), "use_git": False}],
+        "options": {"llm_triage": {"enabled": True, "model": "m", "min_level": "info", **triage}},
+    }
+
+
+class SlowClient(FakeClient):
+    """A FakeClient whose every reply takes ``step`` seconds of the patched clock."""
+
+    def __init__(self, replies, clock, step):
+        super().__init__(replies)
+        self.clock, self.step = clock, step
+
+    def post_json(self, path, *, json):
+        self.clock[0] += self.step
+        return super().post_json(path, json=json)
+
+
+@pytest.mark.parametrize(
+    ("options", "deadline", "sent", "reason"),
+    [
+        ({}, None, 3, "budget_seconds (300 s) exhausted"),
+        ({"budget_seconds": 120}, None, 2, "budget_seconds (120 s) exhausted"),
+        ({}, 1150.0, 2, "deadline reached"),
+        ({"budget_seconds": 120}, 5000.0, 2, "budget_seconds (120 s) exhausted"),
+    ],
+)
+def test_budget_and_deadline_stop_requests_and_skip_the_rest(monkeypatch, options, deadline, sent, reason):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    clock = [1000.0]
+    monkeypatch.setattr(triage_module, "_monotonic", lambda: clock[0])
+    settings = TriageSettings.from_options({"enabled": True, "model": "m", **options})
+    findings = [_finding(str(i), 90 - i, RiskLevel.HIGH) for i in range(5)]
+    client = SlowClient([_anthropic('{"verdict": "uncertain"}')] * 5, clock, step=100)
+    triage = Triage(settings, client=client)
+    warnings = triage.run(findings) if deadline is None else triage.run(findings, deadline=deadline)
+    assert len(client.requests) == sent
+    assert [f.metadata["llm_triage"]["status"] for f in findings] == ["ok"] * sent + ["skipped"] * (5 - sent)
+    assert findings[-1].metadata["llm_triage"] == {"status": "skipped", "advisory": True}
+    assert warnings == [f"llm triage stopped: {reason}; {5 - sent} finding(s) not triaged"]
+    # Advisory: a skipped finding keeps its kind, risk and shadow status.
+    assert (findings[-1].kind, findings[-1].risk.score, findings[-1].shadow) == (Kind.AGENT, 86, None)
+
+
+def test_three_consecutive_failed_requests_stop_the_run(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    settings = TriageSettings.from_options({"enabled": True, "model": "m"})
+    findings = [_finding(str(i), 90 - i, RiskLevel.HIGH) for i in range(8)]
+    ok = _anthropic('{"verdict": "uncertain"}')
+    client = FakeClient(
+        [
+            TimeoutError("HTTP retry abandoned: connector deadline exceeded"),
+            OSError(f"connection reset; {TOKEN}"),
+            ok,  # a reply in between resets the count
+            HttpError(503, "https://api.anthropic.com/v1/messages"),
+            TimeoutError("HTTP response not read: connector deadline exceeded"),
+            ValueError("HTTP request exceeds the acquisition deadline"),
+            ok,
+            ok,
+        ]
+    )
+    warnings = Triage(settings, client=client).run(findings)
+    assert len(client.requests) == 6
+    statuses = [f.metadata["llm_triage"]["status"] for f in findings]
+    assert statuses == ["failed", "failed", "ok", "failed", "failed", "failed", "skipped", "skipped"]
+    assert warnings == [
+        "llm triage request failed (TimeoutError); later failures counted",
+        "llm triage stopped: 3 consecutive failed requests; 2 finding(s) not triaged",
+        "llm triage: 5 finding(s) without a usable verdict",
+    ]
+    assert TOKEN not in json.dumps(warnings)
+
+
+def test_unparseable_replies_do_not_open_the_breaker(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    settings = TriageSettings.from_options({"enabled": True, "model": "m"})
+    findings = [_finding(str(i), 90 - i, RiskLevel.HIGH) for i in range(4)]
+    client = FakeClient([_anthropic("no verdict")] * 4)
+    warnings = Triage(settings, client=client).run(findings)
+    assert len(client.requests) == 4
+    assert warnings == ["llm triage: 4 finding(s) without a usable verdict"]
+
+
+def _http_response(data, status=200, headers=None):
+    result = requests.Response()
+    result.status_code = status
+    result._content = json.dumps(data).encode()
+    result._content_consumed = True
+    result.headers.update(headers or {})
+    return result
+
+
+def test_run_bounds_a_real_http_client_and_restores_its_deadline(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    # The client checks its deadline on the real clock, so the run's clock starts there.
+    clock = [time.monotonic()]
+    monkeypatch.setattr(triage_module, "_monotonic", lambda: clock[0])
+    settings = TriageSettings.from_options({"enabled": True, "model": "m", "budget_seconds": 30})
+    seen = []
+
+    def answer(method, url, **kwargs):
+        # Retries, Retry-After waits and body reads all honour this attribute.
+        seen.append(http.deadline)
+        return _http_response(_anthropic('{"verdict": "uncertain"}'))
+
+    session = Mock(headers={})
+    session.request.side_effect = answer
+    http = HttpClient("https://api.anthropic.com", session=session)
+    finding = _finding("a", 80, RiskLevel.HIGH)
+    triage = Triage(settings, client=http)
+
+    triage.run([finding])
+    assert seen == [clock[0] + 30] and http.deadline is None
+    assert finding.metadata["llm_triage"]["status"] == "ok"
+
+    # Past the first run's stop time, a second run on the same client gets a budget of its own.
+    clock[0] += 31
+    triage.run([finding])
+    assert seen[-1] == clock[0] + 30 and http.deadline is None
+    assert finding.metadata["llm_triage"]["status"] == "ok"
+
+    soon = clock[0] + 10
+    triage.run([finding], deadline=soon)
+    assert seen[-1] == soon and http.deadline is None
+
+    earlier = clock[0] + 5
+    http.deadline = earlier
+    Triage(settings, client=http).run([finding], deadline=earlier + 10)
+    assert seen[-1] == earlier and http.deadline == earlier
+    assert len(seen) == 4
+
+
+@responses.activate
+def test_rate_limited_endpoint_cannot_hold_triage_past_its_budget(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    responses.post("https://api.anthropic.com/v1/messages", status=429, headers={"Retry-After": "120"})
+
+    def no_long_wait(seconds):
+        pytest.fail(f"triage waited {seconds:.0f} s for a retry past its budget")
+
+    # Without the budget in the client this would sleep 120 s per retry. Only the
+    # HTTP module's reference to the time module is replaced, not the module.
+    clock = SimpleNamespace(monotonic=time.monotonic, time=time.time, sleep=no_long_wait)
+    monkeypatch.setattr(http_module, "time", clock)
+    settings = TriageSettings.from_options({"enabled": True, "model": "m", "budget_seconds": 10})
+    findings = [_finding(str(i), 90 - i, RiskLevel.HIGH) for i in range(5)]
+    started = time.monotonic()
+    warnings = Triage(settings).run(findings)
+    assert time.monotonic() - started < 5
+    assert len(responses.calls) == 3
+    statuses = [f.metadata["llm_triage"]["status"] for f in findings]
+    assert statuses == ["failed"] * 3 + ["skipped"] * 2
+    assert warnings[:2] == [
+        "llm triage request failed (TimeoutError); later failures counted",
+        "llm triage stopped: 3 consecutive failed requests; 2 finding(s) not triaged",
+    ]
+
+
+def test_engine_skips_triage_too_close_to_the_job_deadline(monkeypatch, index, tmp_path):
+    import shadowscan.engine as engine_module
+
+    monkeypatch.setattr(engine_module, "Triage", Mock(side_effect=AssertionError("triage must not start")))
+    engine = Engine(ScanConfig.from_dict(_repo_spec(tmp_path)), index)
+    result = engine.run(job_deadline=time.monotonic() + 1)
+    assert result.findings and result.complete
+    assert all(f.metadata["llm_triage"] == {"status": "skipped", "advisory": True} for f in result.findings)
+    entry = next(s for s in result.stats if s.connector == "engine.llm-triage")
+    assert entry.warnings == [
+        f"llm triage skipped: too close to the job deadline; {len(result.findings)} finding(s) not triaged"
+    ]
+    assert not entry.incomplete
+
+
+def test_engine_does_not_warn_about_a_skip_that_selected_nothing(monkeypatch, index, tmp_path):
+    import shadowscan.engine as engine_module
+
+    monkeypatch.setattr(engine_module, "Triage", Mock(side_effect=AssertionError("triage must not start")))
+    engine = Engine(ScanConfig.from_dict(_repo_spec(tmp_path, min_level="critical")), index)
+    result = engine.run(job_deadline=time.monotonic() + 1)
+    assert result.findings and result.complete
+    assert not any(f.risk.level == RiskLevel.CRITICAL for f in result.findings)
+    assert not any("llm_triage" in f.metadata for f in result.findings)
+    entry = next(s for s in result.stats if s.connector == "engine.llm-triage")
+    assert entry.warnings == [] and not entry.incomplete
+
+
+@pytest.mark.parametrize(
+    ("job_deadline", "error"),
+    [(True, TypeError), ("12345.0", TypeError), (float("nan"), ValueError), (float("inf"), ValueError)],
+)
+def test_engine_refuses_an_invalid_job_deadline_before_any_connector_runs(
+    monkeypatch, index, tmp_path, job_deadline, error
+):
+    collect = Mock(return_value=[])
+    monkeypatch.setattr(get_connector_class("code.filesystem"), "collect", collect)
+    engine = Engine(ScanConfig.from_dict(_repo_spec(tmp_path)), index)
+    with pytest.raises(error) as raised:
+        engine.run(job_deadline=job_deadline)
+    # The message names the parameter, never the value.
+    assert str(raised.value) == "job_deadline must be None or a finite time.monotonic() value"
+    collect.assert_not_called()
+
+
+@pytest.mark.parametrize("offset", [None, 3600.5])
+def test_engine_accepts_no_job_deadline_or_a_finite_one(monkeypatch, index, tmp_path, offset):
+    deadlines = []
+
+    class Recorder:
+        def __init__(self, settings, index=None, **kwargs):
+            pass
+
+        def run(self, findings, *, deadline=None):
+            deadlines.append(deadline)
+            return []
+
+    import shadowscan.engine as engine_module
+
+    monkeypatch.setattr(engine_module, "Triage", Recorder)
+    job_deadline = None if offset is None else time.monotonic() + offset
+    result = Engine(ScanConfig.from_dict(_repo_spec(tmp_path)), index).run(job_deadline=job_deadline)
+    assert result.findings and result.complete
+    assert deadlines == [None if job_deadline is None else pytest.approx(job_deadline - 5.0)]
+
+
+@pytest.mark.parametrize(("configured", "reserve"), [(None, 5.0), (20, 5.0), (300, 30.0), (3600, 60.0)])
+def test_engine_ends_triage_a_reserve_before_the_job_deadline(
+    monkeypatch, index, tmp_path, configured, reserve
+):
+    deadlines = []
+
+    class Recorder:
+        def __init__(self, settings, index=None, **kwargs):
+            pass
+
+        def run(self, findings, *, deadline=None):
+            deadlines.append(deadline)
+            return []
+
+    import shadowscan.engine as engine_module
+
+    monkeypatch.setattr(engine_module, "Triage", Recorder)
+    spec = _repo_spec(tmp_path)
+    spec["options"]["job_deadline_seconds"] = configured
+    job_deadline = time.monotonic() + 3600
+    result = Engine(ScanConfig.from_dict(spec), index).run(job_deadline=job_deadline)
+    assert result.complete and deadlines == [pytest.approx(job_deadline - reserve)]

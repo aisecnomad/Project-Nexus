@@ -207,8 +207,9 @@ def _run_and_emit(
     if watchdog is None and cfg.job_deadline_seconds is not None:
         watchdog = arm_job_deadline(cfg.job_deadline_seconds)
     owned_deadline = ctx is None or ctx.meta.get(_JOB_DEADLINE_CONTEXT_KEY) is None
+    job_deadline = watchdog.expires_at if watchdog is not None else None
     try:
-        _run_and_emit_with_deadline(cfg, fmt, output, verbose, max_rows, only, extra_stats)
+        _run_and_emit_with_deadline(cfg, fmt, output, verbose, max_rows, only, extra_stats, job_deadline)
     finally:
         if watchdog is not None and owned_deadline:
             watchdog.cancel()
@@ -222,8 +223,12 @@ def _run_and_emit_with_deadline(
     max_rows: int | None,
     only: list[str] | None = None,
     extra_stats: list[ScanStats] | None = None,
+    job_deadline: float | None = None,
 ) -> None:
-    """Run the scan and emit its report; ``extra_stats`` (command-level diagnostics) join its stats."""
+    """Run the scan and emit its report; ``extra_stats`` (command-level diagnostics) join its stats.
+
+    ``job_deadline`` is the armed watchdog's ``time.monotonic()`` expiry, if any.
+    """
 
     def progress(cid: str, msg: str) -> None:
         err_console.print(Text(terminal_text(f"{cid}: {msg}"), style="dim"))
@@ -235,7 +240,8 @@ def _run_and_emit_with_deadline(
         # Connectors run on worker threads, which cannot install signal
         # handlers: a termination signal must stop live clones from here.
         with terminate_clones_on_signal():
-            result = engine.run(only=only)
+            # The engine ends LLM triage early enough to emit the report before the watchdog fires.
+            result = engine.run(only=only, job_deadline=job_deadline)
     except SetupError as exc:
         # SetupError messages are credential-free by contract (shadowscan.errors).
         raise click.ClickException(str(exc)) from None
