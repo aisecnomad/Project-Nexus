@@ -440,6 +440,27 @@ summarizes each release for people who install and operate ShadowScan.
   since an HTTP client can read another host from it
   (`http://remote.example\@localhost/` reaches `remote.example`); its evidence
   then names no host.
+- Identity and transport checks no longer read only the sanitized record.
+  Parsing redacts every `env` value of a file wherever it appears and keeps
+  twelve arguments, which could hide the `NODE_OPTIONS` or `PATH` name, the
+  `cmd /c` operator or `%VAR%`, or the `docker run -e` value that leaves a
+  launch unidentified, and let the approved catalog vouch for it. The parser
+  now decides on the configured values and marks a server whose record would
+  name a different package `launch_unidentified: true`, and a plaintext URL
+  that redaction hid `plaintext_transport: true` (it keeps the
+  `mcp-insecure-transport` tag and the `mcp-plain-http` factor); neither
+  marker holds a value. A record with a redacted env name, `docker run -e`
+  value, or `cmd /c` or batch-file argument names no package.
+- A launcher under `/proc` or `/dev` (`/proc/self/cwd/npx`) counts as a
+  relative path, and `PREFIX` and `DESTDIR`, under which npm reads its global
+  npmrc and so its registry, leave a launch unidentified.
+- A remote server with `remotes[]` beside its URL is matched by every
+  endpoint it lists, which one registry name must list together; before, only
+  the first URL was compared.
+- `mcp-insecure-transport` and `a2a-plaintext-interface` read a URL as WHATWG
+  URL parsers do: tab, CR and LF removed, leading control characters stripped,
+  and `http:/host`, `http:\\host` or `http:///host` taken as a plaintext
+  remote host (`http:///host` was not flagged before).
 - The tests use a synthetic snapshot shaped like the live registry API. No
   live registry fetch or tenant acceptance is part of the test suite.
 

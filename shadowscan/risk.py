@@ -581,7 +581,11 @@ def _metadata_factors(finding: Finding) -> list[RiskFactor]:
             factors.append(RiskFactor("mcp-auto-approve", "MCP tools auto-approved without confirmation", 10))
         # Every plaintext scheme, loopback included, so each server the zero-weight
         # mcp-insecure-transport tag labels (http or ws to another host) is scored here.
-        if any(_plaintext_scheme(url) for server in servers for url in _mcp_server_urls(server)):
+        # plaintext_transport: the parser saw a plaintext URL that redaction hid from the record.
+        if any(
+            server.get("plaintext_transport") is True or any(map(_plaintext_scheme, _mcp_server_urls(server)))
+            for server in servers
+        ):
             factors.append(RiskFactor("mcp-plain-http", "remote MCP server over plain HTTP", 10))
     if finding.kind == Kind.AGENT_CONFIG:
         definitions = metadata.get("agent_definitions")
