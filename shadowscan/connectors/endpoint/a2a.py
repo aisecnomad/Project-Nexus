@@ -10,9 +10,11 @@ private, loopback and metadata addresses refused unless the scan sets
 (duplicate keys and non-finite numbers refused).
 
 Signatures are verified only against the operator's ``agent_card_jwks_url``
-key set. The payload is the RFC 8785 canonical card without ``signatures``,
-exactly as served: protobuf default values are not removed first, so a card
-served with defaults its signer omitted reports ``invalid``.
+key set. The payload is the RFC 8785 canonical card without ``signatures``.
+Signers disagree on which empty values they drop first, so each signature is
+checked against three forms of the card (see ``signed_payloads``). The forms
+differ only by nulls and empty strings, arrays and objects, so a ``verified``
+card differs from what was signed by nothing else.
 """
 
 from __future__ import annotations
@@ -24,8 +26,9 @@ from jwt.exceptions import InvalidSignatureError
 
 from shadowscan.connectors.base import ConnectorError, _positive_limit
 from shadowscan.utils.http import HttpClient, HttpError
-from shadowscan.utils.jcs import CanonicalizationError, canonicalize
+from shadowscan.utils.jcs import MAX_DEPTH, CanonicalizationError, canonicalize
 from shadowscan.utils.jwks import verify_detached_jws
+from shadowscan.utils.redaction import REDACTED
 
 RECORD_TYPE = "a2a_card"
 WELL_KNOWN_CARD_PATH = "/.well-known/agent-card.json"
@@ -103,32 +106,139 @@ def fetch_card(url: str, *, ca_bundle: str | None = None) -> tuple[str, Any]:
         client.session.close()
 
 
-def signed_payload(card: dict[str, Any]) -> bytes:
-    """The canonical bytes a card signature covers; raises CanonicalizationError."""
-    return canonicalize({key: value for key, value in card.items() if key != "signatures"})
+# A2A 1.0 members the specification keeps when empty (REQUIRED or proto
+# ``optional``, a2a.proto), and the message a member's value or items hold.
+_Fields = tuple[frozenset[str], dict[str, Any]]
+_NO_FIELDS: _Fields = (frozenset(), {})
+_CARD_FIELDS: _Fields = (
+    frozenset(
+        {
+            "name",
+            "description",
+            "supportedInterfaces",
+            "version",
+            "documentationUrl",
+            "capabilities",
+            "defaultInputModes",
+            "defaultOutputModes",
+            "skills",
+            "iconUrl",
+        }
+    ),
+    {
+        "supportedInterfaces": (frozenset({"url", "protocolBinding", "protocolVersion"}), {}),
+        "provider": (frozenset({"url", "organization"}), {}),
+        "skills": (frozenset({"id", "name", "description", "tags"}), {}),
+    },
+)
 
 
-def verify_card(card: dict[str, Any], payload: bytes, keys: dict[str, Any]) -> tuple[str, str | None]:
-    """``("verified", None)`` when one signature verifies with an operator-trusted key, else ``invalid``.
+def signed_payloads(card: dict[str, Any]) -> list[bytes]:
+    """The canonical bytes a card signature may cover, without repeats; raises CanonicalizationError.
 
-    ``card`` must already have a well-formed ``signatures`` array
-    (``a2a_signature_state`` returned ``present-unverified``).
+    In order: the card as served; with every null, empty string, array and
+    object removed recursively (the A2A Python SDK's signer); and with empty
+    members removed except those the A2A 1.0 schema marks REQUIRED or
+    ``optional``, list items kept (the specification's section 8.4.1
+    example). A signer that also drops ``false`` or ``0`` defaults matches
+    none of them.
+    """
+    unsigned = {key: value for key, value in card.items() if key != "signatures"}
+    forms = (unsigned, _without_empty(unsigned, 0), _without_empty_optional(unsigned, _CARD_FIELDS, 0))
+    return list(dict.fromkeys(canonicalize(form) for form in forms))
+
+
+def _empty(value: Any) -> bool:
+    return isinstance(value, (str, list, dict)) and not value
+
+
+def _without_empty(value: Any, depth: int) -> Any:
+    """``value`` without nulls or empty strings, arrays and objects at any depth; None if nothing is left."""
+    if depth > MAX_DEPTH:
+        raise CanonicalizationError("JSON nesting exceeds the canonicalization depth limit")
+    if isinstance(value, dict):
+        members = {key: _without_empty(item, depth + 1) for key, item in value.items()}
+        return {key: item for key, item in members.items() if item is not None} or None
+    if isinstance(value, list):
+        items = [_without_empty(item, depth + 1) for item in value]
+        return [item for item in items if item is not None] or None
+    return None if value == "" else value
+
+
+def _without_empty_optional(value: Any, fields: _Fields, depth: int) -> Any:
+    """``value`` without empty object members, except the members ``fields`` keeps."""
+    if depth > MAX_DEPTH:
+        raise CanonicalizationError("JSON nesting exceeds the canonicalization depth limit")
+    keep, children = fields
+    if isinstance(value, list):
+        return [_without_empty_optional(item, fields, depth + 1) for item in value]
+    if not isinstance(value, dict):
+        return value
+    members = {
+        key: _without_empty_optional(item, children.get(key, _NO_FIELDS), depth + 1)
+        for key, item in value.items()
+    }
+    return {key: item for key, item in members.items() if key in keep or not _empty(item)}
+
+
+def verify_card(card: dict[str, Any], payloads: list[bytes], keys: dict[str, Any]) -> tuple[str, str | None]:
+    """``("verified", None)`` when one signature verifies one payload with an operator-trusted key.
+
+    Otherwise ``invalid``. ``card`` must already have a well-formed
+    ``signatures`` array (``a2a_signature_state`` returned
+    ``present-unverified``); ``payloads`` come from ``signed_payloads``.
     """
     reasons: list[str] = []
     for entry in card["signatures"]:
-        try:
-            verify_detached_jws(entry["protected"], payload, entry["signature"], keys)
-        except Exception as exc:  # noqa: BLE001 - every failure leaves this signature unverified
-            reasons.append(_failure_reason(exc))
-        else:
-            return "verified", None
+        for payload in payloads:
+            try:
+                verify_detached_jws(entry["protected"], payload, entry["signature"], keys)
+            except Exception as exc:  # noqa: BLE001 - every failure leaves this signature unverified
+                reasons.append(_failure_reason(exc))
+                if not isinstance(exc, InvalidSignatureError):
+                    break  # header, key and algorithm failures do not depend on the payload
+            else:
+                return "verified", None
     return "invalid", "; ".join(dict.fromkeys(reasons))
+
+
+def export_card(card: dict[str, Any]) -> dict[str, Any]:
+    """``card`` for ``--dump-records``: userinfo withheld from scheme-less ``host:port`` addresses.
+
+    The shared sanitizer withholds userinfo from URLs with a scheme but does
+    not recognize a gRPC ``user:password@host:port`` address. A replayed card
+    that lost one reports its signature ``present-unverified``.
+    """
+    return {key: _withhold_address_userinfo(value, 0) for key, value in card.items()}
+
+
+def _withhold_address_userinfo(value: Any, depth: int) -> Any:
+    if depth > MAX_DEPTH:
+        return REDACTED
+    if isinstance(value, dict):
+        return {key: _withhold_address_userinfo(item, depth + 1) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_withhold_address_userinfo(item, depth + 1) for item in value]
+    if isinstance(value, str) and "@" in value and "://" not in value:
+        userinfo, _, address = value.rpartition("@")
+        if userinfo and _host_port(address):
+            return f"{REDACTED}@{address}"
+    return value
+
+
+def _host_port(value: str) -> bool:
+    """Whether ``value`` is exactly a ``host:port`` network address."""
+    try:
+        parts = urlsplit("//" + value)
+        return bool(parts.hostname) and parts.port is not None and parts.netloc == value
+    except ValueError:
+        return False
 
 
 def _failure_reason(exc: Exception) -> str:
     """A fixed description: library messages are not copied into findings."""
     if isinstance(exc, InvalidSignatureError):
-        return "signature does not match the canonical card"
+        return "signature matches none of the card's canonical forms"
     if isinstance(exc, CanonicalizationError) or type(exc) is ValueError:
         # Raised by shadowscan's own checks with fixed messages.
         return str(exc)

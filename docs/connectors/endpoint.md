@@ -215,7 +215,10 @@ Options:
 - `ca_bundle`: an optional PEM file trusted instead of the default CA store
   for the card and JWKS endpoints (a private CA). TLS verification stays on.
 - `input`: replays records exported with `--dump-records`; without
-  `agent_card_urls` or `input` the connector has nothing to read.
+  `agent_card_urls` or `input` the connector has nothing to read. A replay
+  never probes, so a job that sets both `input` and `agent_card_urls` is
+  refused when the connector is built (exit 3) instead of leaving the listed
+  agents unchecked. `agent_card_jwks_url` may accompany `input`.
 
 Fetch rules:
 
@@ -241,7 +244,10 @@ fields is reported as an `incomplete-agent-card` framework-usage finding with
 holds the name, description, version, protocol version, skills, capabilities,
 security scheme names, up to 20 interfaces (scheme, host, port and path only)
 and the signature state. Both A2A 1.0 (`supportedInterfaces`) and 0.3 (`url`,
-`preferredTransport`, `additionalInterfaces`) cards are read.
+`preferredTransport`, `additionalInterfaces`) cards are read. A card that
+declares any other `protocolVersion` (not 0.x or 1.x), at the top level or on
+an interface, is still reported, with a warning that makes the scan
+incomplete: its fields were read as 0.3 and 1.0 fields and tags can be missed.
 
 Tags (see [risk](../concepts/risk.md)):
 
@@ -262,23 +268,38 @@ Tags (see [risk](../concepts/risk.md)):
 | `verified` | At least one signature verifies with a key from `agent_card_jwks_url`. |
 | `invalid` | A signature entry is malformed, or none verifies with the operator's keys. `signature_detail` gives the reason. |
 
-Verification follows the A2A specification: an RFC 7515 JWS whose payload is
-the RFC 8785 (JCS) canonical card without its `signatures` member. The
-protected header selects the algorithm (RS256, PS256, ES256 or EdDSA) and the
-key ID; exactly one key of the operator's set must match. Keys or key
+A signature is an RFC 7515 JWS whose payload is the RFC 8785 (JCS) canonical
+card without its `signatures` member. The A2A specification also removes
+default values before canonicalizing, and signers differ on which: each
+signature is checked against three payloads, and one match is enough:
+
+1. the card as served;
+2. the card with every null, empty string, array and object removed, at any
+   depth (what the A2A Python SDK signs);
+3. the card with empty members removed except those the A2A 1.0 schema marks
+   REQUIRED or `optional`, such as an empty `description` (the specification's
+   section 8.4.1 example).
+
+The three differ only by nulls and empty values, so a card served with or
+without them verifies, and any other change does not. A signer that also drops `false` or
+`0` defaults matches none of them, and such a card served with those values
+reports `invalid`.
+
+The protected header selects the algorithm (RS256, PS256, ES256 or EdDSA) and
+the key ID; exactly one key of the operator's set must match. Keys or key
 locations named by the card or its header (`jku`, `jwk`, `x5u`, `x5c`) are
 never fetched or trusted, and critical header extensions and unencoded
-payloads are refused. The card is verified exactly as served: ShadowScan does
-not remove protobuf default values first, so a card served with defaults its
-signer omitted reports `invalid`. A card holding a number with no exact
-canonical form (an integer beyond 2^53) is also `invalid`. `verified` says
-the card was signed by a key you trust and not changed since; it does not
+payloads are refused. A card holding a number with no exact canonical form
+(an integer beyond 2^53) is `invalid`. `verified` says the card was signed by
+a key you trust and, apart from empty values, not changed since; it does not
 check key expiry or revocation beyond the contents of your key set, and it is
 not a review of what the agent does.
 
 Records exported with `--dump-records` carry the card and are re-validated on
-replay; a signature state in an export is never read. Replaying with
+replay; a signature state in an export is never read. The export is sanitized
+like every other, and the userinfo of a scheme-less `user:password@host:port`
+address (a gRPC interface) is also withheld. Replaying with
 `agent_card_jwks_url` verifies again, unless the export's redaction changed
-the card.
+the card (`present-unverified`).
 
 See the [main connector reference](../connectors.md) for shared options and offline safety limits.

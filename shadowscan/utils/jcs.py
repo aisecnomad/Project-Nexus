@@ -16,7 +16,7 @@ import math
 from typing import Any
 
 MAX_EXACT_INTEGER = 2**53
-_MAX_DEPTH = 200
+MAX_DEPTH = 200
 
 
 class CanonicalizationError(ValueError):
@@ -34,7 +34,7 @@ def canonicalize(value: Any) -> bytes:
 
 
 def _write(value: Any, parts: list[str], depth: int) -> None:
-    if depth > _MAX_DEPTH:
+    if depth > MAX_DEPTH:
         raise CanonicalizationError("JSON nesting exceeds the canonicalization depth limit")
     if value is None:
         parts.append("null")

@@ -242,7 +242,9 @@ keep the scan incomplete. A card's `metadata.agent_card` is the projection the
 signature state of `absent`, `present-unverified` or `invalid` (card files are
 never verified). Cards are tagged `no-auth-declared`, `a2a-plaintext-interface`
 (an `http://` or `ws://` interface to a remote host) and
-`a2a-card-signature-invalid` (a malformed signature entry). JSON/YAML descriptions are not
+`a2a-card-signature-invalid` (a malformed signature entry). A card that
+declares a protocol version other than 0.x or 1.x is still reported, with a
+warning that makes the scan incomplete. JSON/YAML descriptions are not
 executed or treated as source; low-code
 matching projects operational fields only. These predicates are not complete
 versioned vendor schema validators.

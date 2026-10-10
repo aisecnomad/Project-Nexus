@@ -118,6 +118,7 @@ from shadowscan.connectors.code.rule_packs import detection_rule_format
 from shadowscan.connectors.code.semantic_config import (
     a2a_card_metadata,
     a2a_card_tags,
+    a2a_unsupported_protocol_version,
     agent_manifest_kind,
     has_template_markers,
     is_agent_config_path,
@@ -3844,6 +3845,11 @@ class FilesystemConnector(BaseConnector):
 
     def _describe_a2a_card(self, f: Finding, rel: str, card: dict[str, Any], shown: dict[str, Any]) -> None:
         """Project the card as every A2A source does; ``shown`` is its whole-document sanitized copy."""
+        if a2a_unsupported_protocol_version(card):
+            self.ctx.warn(
+                f"code.filesystem: {rel}: A2A card declares a protocol version other than 0.x or 1.x; "
+                "its fields were read as A2A 0.3 and 1.0 fields"
+            )
         f.metadata["agent_card"] = agent_card = a2a_card_metadata(card, shown)
         for interface in agent_card["interfaces"]:
             apply_matches(f, self.index.match_domains_in_text(interface["url"]), location=rel)

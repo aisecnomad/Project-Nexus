@@ -20,15 +20,16 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from jwt.algorithms import ECAlgorithm
 from jwt.api_jws import PyJWS
 
-from shadowscan.config import ConfigValidationError, normalize_connector_config
+from shadowscan.config import ConfigValidationError, ConnectorSpec, ScanConfig, normalize_connector_config
 from shadowscan.connectors.base import ConnectorContext, ConnectorError
 from shadowscan.connectors.code.semantic_config import A2A_SIGNATURE_STATES
 from shadowscan.connectors.endpoint import a2a
 from shadowscan.connectors.endpoint import runtime as endpoint_runtime
 from shadowscan.connectors.endpoint.runtime import MCPInventoryConnector
+from shadowscan.engine import Engine
 from shadowscan.models import Kind, ScanStats
 from shadowscan.utils.http import HttpClient, reset_allow_private_origin, set_allow_private_origin
-from shadowscan.utils.jcs import canonicalize
+from shadowscan.utils.jcs import MAX_DEPTH, CanonicalizationError, canonicalize
 from shadowscan.utils.redaction import SanitizationLimitError
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "a2a"
@@ -338,6 +339,7 @@ def test_without_urls_the_connector_still_requires_offline_input() -> None:
         ({"agent_card_urls": [ORIGIN], "max_agent_cards": True}, "max_agent_cards"),
         ({"agent_card_jwks_url": "http://keys.agents.example.com/jwks.json"}, "agent_card_jwks_url must use"),
         ({"agent_card_jwks_url": 42}, "agent_card_jwks_url must be an HTTPS URL"),
+        ({"input": "cards.jsonl", "agent_card_urls": [ORIGIN]}, "never probes agent_card_urls"),
     ],
 )
 def test_invalid_probe_configuration_is_refused_at_construction(config: dict[str, Any], message: str) -> None:
@@ -345,6 +347,21 @@ def test_invalid_probe_configuration_is_refused_at_construction(config: dict[str
         MCPInventoryConnector(ConnectorContext(config=config))
     assert message in str(raised.value)
     assert USERINFO not in str(raised.value)
+
+
+def test_a_scan_that_replays_input_with_agent_card_urls_is_refused_not_silently_unprobed(
+    routes: _Routes,
+) -> None:
+    spec = ConnectorSpec(
+        "endpoint.mcp", {"input": str(FIXTURES / "card_records.jsonl"), "agent_card_urls": [ORIGIN]}
+    )
+    result = Engine(ScanConfig(connectors=[spec])).run()
+    (stats,) = result.stats
+    assert stats.skipped and stats.incomplete and not result.complete
+    assert result.findings == [] and routes.calls == []
+    # Replay with the operator's key set alone stays allowed.
+    findings, ctx = _run(input=str(FIXTURES / "card_records.jsonl"), agent_card_jwks_url=JWKS_URL)
+    assert len(findings) == 3
 
 
 def test_url_list_is_deduplicated_and_never_truncated() -> None:
@@ -489,7 +506,9 @@ def test_tampered_card_fails_verification(signer, trusted_keys) -> None:
     card["skills"][0]["name"] = "Exfiltrate everything"
     (finding,), ctx = _analyze(card, agent_card_jwks_url=JWKS_URL)
     assert finding.metadata["agent_card"]["signature"] == "invalid"
-    assert finding.metadata["agent_card"]["signature_detail"] == "signature does not match the canonical card"
+    assert finding.metadata["agent_card"]["signature_detail"] == (
+        "signature matches none of the card's canonical forms"
+    )
     assert "a2a-card-signature-invalid" in finding.tags
     assert not ctx.stats.incomplete
 
@@ -618,3 +637,174 @@ def test_a_card_the_sanitizer_refuses_is_omitted_and_incomplete(monkeypatch) -> 
 
 def test_every_signature_state_has_evidence_text() -> None:
     assert set(endpoint_runtime._SIGNATURE_EVIDENCE) == set(A2A_SIGNATURE_STATES)
+
+
+# ------------------------------------------------- canonical forms (interop)
+
+
+def _clean_empty_reference(value: Any) -> Any:
+    """The A2A Python SDK's ``_clean_empty``, written out here independently of a2a.py."""
+    if isinstance(value, dict):
+        members = {k: c for k, v in value.items() if (c := _clean_empty_reference(v)) is not None}
+        return members or None
+    if isinstance(value, list):
+        items = [c for v in value if (c := _clean_empty_reference(v)) is not None]
+        return items or None
+    if isinstance(value, str) and not value:
+        return None
+    return value
+
+
+def _sign_bytes(signer: _Signer, payload: bytes) -> dict[str, str]:
+    token = PyJWS().encode(payload, signer.key, algorithm="ES256", headers={"kid": signer.kid, "typ": "JOSE"})
+    protected, _, signature = token.split(".")
+    return {"protected": protected, "signature": signature}
+
+
+def _served_with_empty_values() -> dict[str, Any]:
+    card = copy.deepcopy(CARD_V1)
+    card["description"] = ""
+    card["capabilities"]["extensions"] = []
+    card["skills"][0]["examples"] = []
+    return card
+
+
+def test_a_card_signed_in_the_sdk_form_verifies_when_served_with_empty_values(signer, trusted_keys) -> None:
+    card = _served_with_empty_values()
+    card["signatures"] = [_sign_bytes(signer, canonicalize(_clean_empty_reference(copy.deepcopy(card))))]
+    (finding,), ctx = _analyze(card, agent_card_jwks_url=JWKS_URL)
+    assert finding.metadata["agent_card"]["signature"] == "verified"
+    assert "a2a-card-signature-invalid" not in finding.tags and not ctx.stats.incomplete
+    # Only empty values are ignored: a nonempty addition still fails.
+    card["capabilities"]["extensions"] = [{"uri": "https://ext.agents.example.com/unsigned"}]
+    (tampered,), _ = _analyze(card, agent_card_jwks_url=JWKS_URL)
+    assert tampered.metadata["agent_card"]["signature"] == "invalid"
+
+
+def test_a_card_signed_in_the_specification_form_verifies_when_served_with_empty_values(
+    signer, trusted_keys
+) -> None:
+    card = _served_with_empty_values()
+    # Section 8.4.1: empty members are dropped unless REQUIRED (description is kept).
+    signed = copy.deepcopy(card)
+    del signed["capabilities"]["extensions"], signed["skills"][0]["examples"]
+    payload = canonicalize(signed)
+    assert payload != canonicalize(card) and payload != canonicalize(_clean_empty_reference(card))
+    card["signatures"] = [_sign_bytes(signer, payload)]
+    (finding,), _ = _analyze(card, agent_card_jwks_url=JWKS_URL)
+    assert finding.metadata["agent_card"]["signature"] == "verified"
+
+
+def test_the_specification_default_value_example_is_a_signed_payload() -> None:
+    fragment = {
+        "name": "Example Agent",
+        "description": "",
+        "capabilities": {"streaming": False, "pushNotifications": False, "extensions": []},
+        "skills": [],
+        "signatures": [{"protected": "e30", "signature": "c2ln"}],
+    }
+    payloads = a2a.signed_payloads(fragment)
+    # The canonical output printed in A2A specification section 8.4.1.
+    assert (
+        b'{"capabilities":{"pushNotifications":false,"streaming":false},'
+        b'"description":"","name":"Example Agent","skills":[]}'
+    ) in payloads
+    assert len(payloads) == 3 and all(b"signatures" not in p for p in payloads)
+    assert a2a.signed_payloads({"name": "x", "skills": [{"id": "a"}]}) == [
+        b'{"name":"x","skills":[{"id":"a"}]}'
+    ]
+
+
+def test_payload_forms_refuse_nesting_beyond_the_canonicalization_limit() -> None:
+    deep: Any = "leaf"
+    for _ in range(MAX_DEPTH + 2):
+        deep = [deep]
+    with pytest.raises(CanonicalizationError):
+        a2a.signed_payloads({"name": "x", "deep": deep})
+    with pytest.raises(CanonicalizationError):
+        a2a._without_empty_optional(deep, a2a._NO_FIELDS, 0)
+
+
+# ------------------------------------------------------- protocol versions
+
+
+@pytest.mark.parametrize("version", ["2.0", "9.9-experimental"])
+def test_a_card_declaring_an_unknown_protocol_version_is_kept_and_incomplete(version: str) -> None:
+    card = copy.deepcopy(CARD_V1)
+    card["protocolVersion"] = version
+    for interface in card["supportedInterfaces"]:
+        interface["protocolVersion"] = version
+    (finding,), ctx = _analyze(card)
+    assert finding.kind == Kind.AGENT
+    assert ctx.stats.incomplete and not ctx.stats.errors
+    assert ctx.stats.warnings == [
+        "endpoint.mcp: A2A Agent Card at https://planner.agents.example.com declares a protocol version "
+        "other than 0.x or 1.x; its fields were read as A2A 0.3 and 1.0 fields"
+    ]
+
+
+def test_known_protocol_versions_keep_the_scan_complete() -> None:
+    for card in (CARD_V1, CARD_V03, {**CARD_V03, "protocolVersion": "0.2.5"}):
+        _, ctx = _analyze(copy.deepcopy(card))
+        assert not ctx.stats.incomplete and not ctx.stats.warnings
+
+
+# ----------------------------------------------------------- record export
+
+
+def test_export_withholds_grpc_userinfo_that_live_verification_still_reads(
+    routes: _Routes, signer, trusted_keys, tmp_path: Path
+) -> None:
+    card = copy.deepcopy(CARD_V1)
+    card["supportedInterfaces"].append(
+        {
+            "url": f"{USERINFO}@grpc.agents.example.com:443",
+            "protocolBinding": "GRPC",
+            "protocolVersion": "1.0",
+        }
+    )
+    routes.routes[WELL_KNOWN] = _response(200, _signed(signer, card))
+    dump = tmp_path / "endpoint_mcp.jsonl"
+    (live,), ctx = _run(agent_card_urls=[ORIGIN], agent_card_jwks_url=JWKS_URL, _dump_path=str(dump))
+    assert live.metadata["agent_card"]["signature"] == "verified" and ctx.dump_path == str(dump)
+    exported = dump.read_text(encoding="utf-8")
+    assert USERINFO not in exported and "[REDACTED]@grpc.agents.example.com:443" in exported
+    (replayed,), _ = _run(input=str(dump), agent_card_jwks_url=JWKS_URL)
+    assert replayed.id == live.id
+    assert replayed.metadata["agent_card"]["signature"] == "present-unverified"
+
+
+@pytest.mark.parametrize(
+    ("value", "exported"),
+    [
+        (f"{USERINFO}@grpc.agents.example.com:443", "[REDACTED]@grpc.agents.example.com:443"),
+        ("deploy@grpc.agents.example.com:8443", "[REDACTED]@grpc.agents.example.com:8443"),
+        (f"{USERINFO}@[2001:db8::1]:443", "[REDACTED]@[2001:db8::1]:443"),
+        ("ops@agents.example.com", "ops@agents.example.com"),
+        ("grpc.agents.example.com:443", "grpc.agents.example.com:443"),
+        ("deploy@grpc.agents.example.com:443/path", "deploy@grpc.agents.example.com:443/path"),
+        ("deploy@[2001:db8::1", "deploy@[2001:db8::1"),
+        (f"https://{USERINFO}@agents.example.com/a2a", f"https://{USERINFO}@agents.example.com/a2a"),
+    ],
+)
+def test_export_card_withholds_only_scheme_less_address_userinfo(value: str, exported: str) -> None:
+    card = {"url": value, "supportedInterfaces": [{"url": value}], "provider": {"url": value}, "n": 1}
+    assert a2a.export_card(card) == {
+        "url": exported,
+        "supportedInterfaces": [{"url": exported}],
+        "provider": {"url": exported},
+        "n": 1,
+    }
+
+
+def test_export_card_withholds_nesting_beyond_the_canonicalization_limit() -> None:
+    deep: Any = "leaf"
+    for _ in range(MAX_DEPTH + 2):
+        deep = [deep]
+    exported = a2a.export_card({"deep": deep})
+    assert "leaf" not in json.dumps(exported) and "[REDACTED]" in json.dumps(exported)
+
+
+def test_tool_list_records_are_exported_unchanged() -> None:
+    record = {"server": "https://mcp.agents.example.com", "tools": [{"name": "search"}]}
+    assert MCPInventoryConnector(ConnectorContext())._export_record(record) is record

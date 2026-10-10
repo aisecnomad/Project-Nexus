@@ -52,7 +52,9 @@ lifecycle links do not apply to them. The one live probe among them is opt-in:
 the operator-trusted keys at `agent_card_jwks_url`, and trusts a private CA
 from `ca_bundle` (see the
 [A2A Agent Card probe](connectors/endpoint.md#a2a-agent-card-probe)). It never
-fetches a URL declared inside a card and never contacts an MCP server.
+fetches a URL declared inside a card and never contacts an MCP server. A job
+that sets both `input` and `agent_card_urls` is refused (exit 3), because a
+replay never probes.
 Model metadata is not parsed from GGUF/safetensors files, and MCP fingerprints
 have no rug-pull baseline. When no `input` is set, `endpoint.inventory` reads a
 fixed list of local user-scope locations and `runtime.processes` reads `/proc`
@@ -309,7 +311,9 @@ keep the scan incomplete. A card's `metadata.agent_card` is the projection the
 signature state of `absent`, `present-unverified` or `invalid` (card files are
 never verified). Cards are tagged `no-auth-declared`, `a2a-plaintext-interface`
 (an `http://` or `ws://` interface to a remote host) and
-`a2a-card-signature-invalid` (a malformed signature entry). JSON/YAML descriptions are not
+`a2a-card-signature-invalid` (a malformed signature entry). A card that
+declares a protocol version other than 0.x or 1.x is still reported, with a
+warning that makes the scan incomplete. JSON/YAML descriptions are not
 executed or treated as source; low-code
 matching projects operational fields only. These predicates are not complete
 versioned vendor schema validators.

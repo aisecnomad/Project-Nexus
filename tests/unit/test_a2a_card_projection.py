@@ -19,6 +19,7 @@ from shadowscan.connectors.code.semantic_config import (
     a2a_card_tags,
     a2a_plaintext_interfaces,
     a2a_signature_state,
+    a2a_unsupported_protocol_version,
     bounded_metadata,
     parse_agent_manifest,
     validate_agent_manifest,
@@ -202,3 +203,41 @@ def test_filesystem_tags_a_plaintext_0x_card(tmp_path: Path, run_connector) -> N
     (card,) = [f for f in findings if "agent_card" in f.metadata]
     assert {"no-auth-declared", "a2a-plaintext-interface"} <= set(card.tags)
     assert card.metadata["agent_card"]["signature"] == "absent"
+
+
+@pytest.mark.parametrize(
+    ("card", "unsupported"),
+    [
+        (CARD_V1, False),
+        (CARD_V03, False),
+        ({"protocolVersion": "0.2.5"}, False),
+        ({"protocolVersion": "1.1"}, False),
+        ({"protocolVersion": ""}, False),
+        ({}, False),
+        ({"protocolVersion": "2.0"}, True),
+        ({"protocolVersion": "9.9-experimental"}, True),
+        ({"protocolVersion": "1.0-rc1"}, True),
+        ({"protocolVersion": 1.0}, True),
+        ({"protocol_version": "2"}, True),
+        ({"supportedInterfaces": [{"url": "https://a.example.com", "protocolVersion": "2.0"}]}, True),
+        ({"additionalInterfaces": [{"url": "https://a.example.com", "protocol_version": "3"}]}, True),
+    ],
+)
+def test_protocol_versions_other_than_0x_and_1x_are_unsupported(card: dict, unsupported: bool) -> None:
+    assert a2a_unsupported_protocol_version(card) is unsupported
+
+
+def test_filesystem_card_with_an_unknown_protocol_version_is_kept_and_incomplete(
+    tmp_path: Path, run_connector
+) -> None:
+    card = copy.deepcopy(CARD_V1)
+    card["supportedInterfaces"][0]["protocolVersion"] = "2.0"
+    (tmp_path / "agent-card.json").write_text(json.dumps(card), encoding="utf-8")
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    (found,) = [f for f in findings if "agent_card" in f.metadata]
+    assert found.metadata["agent_card"]["name"] == "Synthetic Route Planner"
+    assert ctx.stats.incomplete
+    assert ctx.stats.warnings == [
+        "code.filesystem: agent-card.json: A2A card declares a protocol version other than 0.x or 1.x; "
+        "its fields were read as A2A 0.3 and 1.0 fields"
+    ]

@@ -20,6 +20,7 @@ from shadowscan.connectors.code.semantic_config import (
     a2a_card_metadata,
     a2a_card_tags,
     a2a_signature_state,
+    a2a_unsupported_protocol_version,
     validate_agent_manifest,
 )
 from shadowscan.connectors.common import apply_matches, failure_summary, finalize
@@ -228,7 +229,7 @@ class MCPInventoryConnector(_EndpointConnector):
         "agent_card_urls": (
             "opt-in live probe: list of HTTPS A2A Agent Card URLs or agent origins; an origin is probed at "
             "/.well-known/agent-card.json (then /.well-known/agent.json on 404); URLs inside a card are "
-            "never fetched"
+            "never fetched; refused together with input"
         ),
         "max_agent_cards": (
             "maximum number of agent_card_urls (default 100); a longer list is refused, never truncated"
@@ -246,6 +247,11 @@ class MCPInventoryConnector(_EndpointConnector):
     def __init__(self, ctx: ConnectorContext) -> None:
         super().__init__(ctx)
         self._card_urls = a2a.agent_card_urls(ctx.get("agent_card_urls"), ctx.get("max_agent_cards"))
+        if self._card_urls and self.offline:
+            # A replay never probes: the listed agents would silently go unchecked.
+            raise ConnectorError(
+                "endpoint.mcp: input replays an export and never probes agent_card_urls; set one or the other"
+            )
         jwks_url = ctx.get("agent_card_jwks_url")
         self._card_jwks_url = None if jwks_url is None else a2a.https_url(jwks_url, "agent_card_jwks_url")
         # The operator's key set, fetched once per run on first use; False after a failed fetch.
@@ -278,6 +284,11 @@ class MCPInventoryConnector(_EndpointConnector):
                 "card_path": urlsplit(card_url).path,
                 "card": card,
             }
+
+    def _export_record(self, record: dict[str, Any]) -> dict[str, Any]:
+        if record.get("record_type") == a2a.RECORD_TYPE and isinstance(record.get("card"), dict):
+            return {**record, "card": a2a.export_card(record["card"])}
+        return record
 
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
         names_by_server: dict[str, set[str]] = defaultdict(set)
@@ -407,6 +418,11 @@ class MCPInventoryConnector(_EndpointConnector):
                 f"endpoint.mcp: A2A Agent Card at {origin} omitted: sanitization safety limit exceeded"
             )
             return None
+        if a2a_unsupported_protocol_version(card):
+            self.ctx.warn(
+                f"endpoint.mcp: A2A Agent Card at {origin} declares a protocol version other than "
+                "0.x or 1.x; its fields were read as A2A 0.3 and 1.0 fields"
+            )
         signature = self._card_signature(card)
         agent_card = a2a_card_metadata(card, shown, signature)
         name = _text(agent_card["name"]) or resource
@@ -466,13 +482,13 @@ class MCPInventoryConnector(_EndpointConnector):
             # replayed card is no longer what was signed.
             return "present-unverified", "the export redacted part of the card; signature not checked"
         try:
-            payload = a2a.signed_payload(card)
+            payloads = a2a.signed_payloads(card)
         except CanonicalizationError as exc:
             return "invalid", str(exc)
         keys = self._trusted_card_keys()
         if keys is None:
             return "present-unverified", "operator-trusted keys unavailable; signature not checked"
-        return a2a.verify_card(card, payload, keys)
+        return a2a.verify_card(card, payloads, keys)
 
     def _trusted_card_keys(self) -> dict[str, Any] | None:
         """Fetch the operator's JWKS once per run; a failure is recorded once and the scan is incomplete."""

@@ -706,7 +706,7 @@ Offline input: JSON / JSONL / YAML export.
 | Key | Description |
 | --- | --- |
 | `input` | Offline MCP list-responses JSON / JSONL export, or A2A card records from --dump-records. |
-| `agent_card_urls` | opt-in live probe: list of HTTPS A2A Agent Card URLs or agent origins; an origin is probed at /.well-known/agent-card.json (then /.well-known/agent.json on 404); URLs inside a card are never fetched |
+| `agent_card_urls` | opt-in live probe: list of HTTPS A2A Agent Card URLs or agent origins; an origin is probed at /.well-known/agent-card.json (then /.well-known/agent.json on 404); URLs inside a card are never fetched; refused together with input |
 | `max_agent_cards` | maximum number of agent\_card\_urls (default 100); a longer list is refused, never truncated |
 | `agent_card_jwks_url` | optional operator-trusted HTTPS JWKS endpoint that verifies Agent Card signatures; keys or key URLs named by a card are never used |
 | `ca_bundle` | optional PEM file trusted instead of the default CA store for Agent Card and JWKS endpoints (private CA) |

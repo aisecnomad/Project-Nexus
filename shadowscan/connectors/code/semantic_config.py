@@ -252,6 +252,7 @@ _CLIP_CHARS = 200
 _MAX_CARD_INTERFACES = 20
 MAX_CARD_SIGNATURES = 10
 _BASE64URL = re.compile(r"[A-Za-z0-9_-]+")
+_KNOWN_PROTOCOL_VERSION = re.compile(r"[01](?:\.[0-9]+){0,2}")
 # ``verified`` and a verification ``invalid`` come only from a check against
 # operator-trusted keys (the endpoint.mcp probe); the projection alone tells
 # absent, present-unverified and structurally invalid signatures apart.
@@ -345,6 +346,23 @@ def a2a_plaintext_interfaces(card: dict[str, Any]) -> bool:
     return any(
         (url := _interface_address(item.get("url"))) is not None and _plaintext_remote(url)
         for item in _declared_interfaces(card)
+    )
+
+
+def a2a_unsupported_protocol_version(card: dict[str, Any]) -> bool:
+    """Whether the card or one of its interfaces declares an A2A version other than 0.x or 1.x.
+
+    The projection reads 0.2/0.3 and 1.x fields; a legacy card may declare
+    no version. Any other declared value, a non-string included, is unknown.
+    """
+    declared = [card.get("protocolVersion", card.get("protocol_version"))]
+    declared += [
+        item.get("protocolVersion", item.get("protocol_version")) for item in _declared_interfaces(card)
+    ]
+    return any(
+        version not in (None, "")
+        and not (isinstance(version, str) and _KNOWN_PROTOCOL_VERSION.fullmatch(version))
+        for version in declared
     )
 
 
