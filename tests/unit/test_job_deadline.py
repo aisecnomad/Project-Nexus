@@ -78,6 +78,47 @@ def test_disarmed_watchdog_cannot_kill_a_reused_process():
     exit_callback.assert_not_called()
 
 
+def test_watchdog_reports_its_monotonic_expiry():
+    before = time.monotonic()
+    watchdog = arm_job_deadline(60, _exit=Mock())
+    try:
+        assert before + 60 <= watchdog.expires_at <= time.monotonic() + 60
+    finally:
+        watchdog.cancel()
+        watchdog.thread.join(timeout=2)
+
+
+@pytest.mark.parametrize(
+    ("yaml_deadline", "option", "armed_with"),
+    [("", [], None), ("  job_deadline_seconds: 60\n", [], 60), ("", ["--job-deadline-seconds", "30"], 30.0)],
+)
+def test_cli_passes_the_watchdog_expiry_to_the_engine(
+    tmp_path, monkeypatch, yaml_deadline, option, armed_with
+):
+    from shadowscan.engine import Engine
+    from shadowscan.models import ScanResult
+
+    received = []
+
+    def run(self, only=None, **kwargs):
+        received.append(kwargs)
+        return ScanResult()
+
+    monkeypatch.setattr(Engine, "run", run)
+    arm = Mock(return_value=Mock(expires_at=12345.0))
+    monkeypatch.setattr("shadowscan.cli.arm_job_deadline", arm)
+    path = tmp_path / "scan.yaml"
+    path.write_text(f"options:\n  min_confidence: 0.3\n{yaml_deadline}connectors: []\n")
+    CliRunner().invoke(main, ["scan", "--config", str(path), "--format", "json", *option])
+    if armed_with is None:
+        arm.assert_not_called()
+        assert received == [{"job_deadline": None}]
+    else:
+        arm.assert_called_once_with(armed_with)
+        arm.return_value.cancel.assert_called_once_with()
+        assert received == [{"job_deadline": 12345.0}]
+
+
 def test_jwt_reuses_watchdog_armed_before_stdin(monkeypatch):
     watchdog = Mock()
     arm = Mock(return_value=watchdog)

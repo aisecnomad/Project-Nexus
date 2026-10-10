@@ -2,7 +2,7 @@
 
 Typing precision: classic-ML tooling is not an LLM provider, a Spring AI builder
 chain that registers tools is an agent, and a project that serves tools over MCP
-is an MCP server implementation rather than LLM usage.
+carries the mcp-server capability and server metadata rather than reading as LLM usage.
 """
 
 from __future__ import annotations
@@ -119,18 +119,20 @@ def test_spring_ai_chat_client_without_tools_stays_llm_usage(tmp_path: Path, run
     assert _project(findings).kind == Kind.FRAMEWORK_USAGE
 
 
-def test_go_mcp_server_is_typed_as_an_mcp_server_implementation(tmp_path: Path, run_connector):
+def test_go_mcp_server_is_reported_as_an_mcp_server(tmp_path: Path, run_connector):
     (tmp_path / "go.mod").write_text(GO_MOD)
     (tmp_path / "main.go").write_text(GO_SERVER)
     findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
     assert not ctx.stats.errors
     project = _project(findings)
-    assert project.kind == Kind.MCP_SERVER
-    assert project.metadata["mcp_server_implementation"] == {"files": ["main.go"]}
-    assert project.title.startswith("MCP server implementation in repository root")
+    assert "mcp-server" in project.capabilities
+    assert [c["file"] for c in project.metadata["mcp_server"]["constructions"]] == ["main.go"]
+    assert project.title.startswith("MCP server in repository root")
     assert "protocol.mcp" in project.frameworks
     assert "code-exec" in project.capabilities
-    # The classification changes; the resource identity does not.
+    # A server implementation keeps its project kind and resource identity;
+    # Kind.MCP_SERVER stays reserved for MCP configuration inventories.
+    assert project.kind != Kind.MCP_SERVER
     assert project.resource_type == "project"
 
 
@@ -143,8 +145,8 @@ def test_mcp_client_code_is_not_a_server_implementation(tmp_path: Path, run_conn
     findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
     assert not ctx.stats.errors
     project = _project(findings)
-    assert project.kind != Kind.MCP_SERVER
-    assert "mcp_server_implementation" not in project.metadata
+    assert "mcp-server" not in project.capabilities
+    assert "mcp_server" not in project.metadata
 
 
 def test_mcp_server_idiom_only_in_tests_does_not_type_the_project(tmp_path: Path, run_connector):
@@ -157,4 +159,5 @@ def test_mcp_server_idiom_only_in_tests_does_not_type_the_project(tmp_path: Path
     findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
     assert not ctx.stats.errors
     project = _project(findings)
-    assert project.kind != Kind.MCP_SERVER
+    assert "mcp-server" not in project.capabilities
+    assert "mcp_server" not in project.metadata

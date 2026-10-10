@@ -398,6 +398,12 @@ def _case_source(value: Any, files: dict[str, str], where: str) -> dict[str, Any
     return source
 
 
+# The phrase every code.filesystem note shares when it names files whose evidence
+# was read but reported nowhere (see FilesystemConnector._note_unanchored and
+# _note_discounted_catalogs). Such a note never marks the scan incomplete.
+_INFORMATIONAL_NOTE = "evidence not reported because"
+
+
 def _scan_case(case: Case, root: Path, index: Any) -> tuple[float, list[dict[str, Any]]]:
     ctx = ConnectorContext(
         config={
@@ -415,8 +421,10 @@ def _scan_case(case: Case, root: Path, index: Any) -> tuple[float, list[dict[str
     findings = FilesystemConnector(ctx).run()
     elapsed = time.perf_counter() - started
     # The default-exclude notice is informational (it never marks a scan
-    # incomplete); every other warning still invalidates the evaluation.
-    warnings = list(ctx.stats.warnings) if ctx.stats else []
+    # incomplete), as is the connector's note that evidence it read establishes
+    # nothing on its own (a catalog, an uncorroborated code pattern, a mention in
+    # test data); every other warning still invalidates the evaluation.
+    warnings = [w for w in (ctx.stats.warnings if ctx.stats else []) if _INFORMATIONAL_NOTE not in w]
     if ctx.stats is None or ctx.stats.incomplete or ctx.stats.skipped or ctx.stats.errors or warnings:
         raise RuntimeError(
             f"{case.id}: scan incomplete: "

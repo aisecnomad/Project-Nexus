@@ -364,3 +364,16 @@ def test_repeated_literal_env_value_is_still_inline() -> None:
     assert not errors
     assert server["secrets_inline"] is True
     assert value not in json.dumps(server)
+
+
+def test_shared_document_equals_a_fresh_parse_and_yaml_is_parsed_again() -> None:
+    document = {"mcpServers": {"files": {"command": "npx", "args": ["-y", "@scope/server"]}}}
+    text = json.dumps(document)
+    assert _parse_mcp_servers(".mcp.json", text, [], document) == _parse_mcp_servers(".mcp.json", text, [])
+    # YAML requires string keys here, which the shared parse does not enforce.
+    errors: list[str] = []
+    yaml_text = "mcpServers:\n  files:\n    command: npx\n  1: nope\n"
+    assert (
+        _parse_mcp_servers("mcp.yaml", yaml_text, errors, {"mcpServers": {"files": {"command": "npx"}}}) == []
+    )
+    assert errors == ["invalid MCP configuration syntax"]

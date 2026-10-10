@@ -59,3 +59,13 @@ def test_statement_cache_keeps_only_short_statements_within_a_text_budget(index,
         index.match_import_statement(f"import module_{number}", "python")
         assert index._statement_chars <= 100
         assert index._statement_chars == sum(len(statement) for statement, _ in index._statement_imports)
+
+
+def test_literal_scan_is_only_used_for_its_own_text(index):
+    scan = index.literal_scan("from openai import OpenAI\n", "python")
+    other = "from crewai import Agent\n"
+    # A scan of another text selects nothing for this one; the pass falls back to its own scan.
+    assert [m.signature_id for m in index.match_imports(other, "python", scan=scan)] == [
+        m.signature_id for m in index.match_imports(other, "python")
+    ]
+    assert "framework.crewai" in {m.signature_id for m in index.match_imports(other, "python", scan=scan)}

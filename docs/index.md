@@ -44,7 +44,8 @@ severity as an enforcement threshold.
   for supported input modes, required SDK extras and permissions.
 - Findings include evidence, risk factors and reconciliation against the
   supplied Agent Cards or other supported inventory formats.
-- Reports support table, JSON, SARIF, CSV, Markdown and HTML formats.
+- Reports support table, JSON, SARIF, CSV, Markdown, HTML, CycloneDX (AI-BOM)
+  and OCSF (Detection Finding events) formats.
 - Incremental scanning can reuse eligible complete results for unchanged local
   inputs; see [scan semantics](scanning.md) for its constraints.
 

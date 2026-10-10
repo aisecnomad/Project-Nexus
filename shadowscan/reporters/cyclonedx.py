@@ -15,7 +15,10 @@ depends on:
 * agent frameworks, coding agents and protocols are ``framework`` components;
 * model providers are ``services``;
 * concrete model ids are ``machine-learning-model`` components;
-* MCP servers listed by an MCP configuration are ``services``.
+* MCP servers listed by an MCP configuration are ``services``;
+* the MCP server a project implements (a finding with the ``mcp-server``
+  capability, from ``metadata.mcp_server`` and ``metadata.mcp_tools``) is a
+  ``service`` in group ``mcp-server`` that the application depends on.
 
 Credential findings (``secret`` and ``token``) are not components: a BOM is an
 inventory, and the JSON or SARIF report is the place to triage credentials.
@@ -25,10 +28,10 @@ ShadowScan's heuristic risk, confidence and shadow status are recorded as
 A BOM never reads as more complete than the scan: ``compositions`` declares
 the inventory ``incomplete`` when any connector failed or stopped early, and
 ``unknown`` otherwise, because a complete scan still covers only the
-configured sources. A finding whose MCP servers, models or server endpoints
-exceed the per-entry bounds, or that lists a malformed server entry, is named
-in a further ``incomplete`` composition. The output is
-deterministic for a given result, and every ``bom-ref`` is unique.
+configured sources. A finding whose MCP servers, models, server endpoints,
+implemented-server tools or files exceed the per-entry bounds, or that lists
+a malformed server entry, is named in a further ``incomplete`` composition.
+The output is deterministic for a given result, and every ``bom-ref`` is unique.
 """
 
 from __future__ import annotations
@@ -51,6 +54,8 @@ _EXCLUDED_KINDS = {Kind.SECRET, Kind.TOKEN}
 _MAX_MCP_SERVERS = 50
 _MAX_MODELS = 20
 _MAX_ENDPOINTS = 5
+_MAX_MCP_TOOLS = 20  # tools of an implemented server
+_MAX_MCP_FILES = 10  # files that construct it
 _SERIAL_NAMESPACE = uuid.UUID("6f1c3c56-2a52-5b8e-9a0e-5c7d4f1e2b10")
 _SERVICE_CONNECTORS = {"endpoint.mcp", "endpoint.ollama"}
 _MODEL_CONNECTORS = {"endpoint.models"}
@@ -225,6 +230,50 @@ class _Bom:
         self.services[ref] = service
         return ref, bool(endpoints_omitted)
 
+    def implemented_mcp_service(self, owner_ref: str, f: Finding) -> tuple[str, bool]:
+        """The service ref for the MCP server ``f`` implements, and whether its lists were capped.
+
+        A project that exposes tools over MCP stays an ``application`` component
+        (its frameworks and providers stay its dependencies); the server it
+        provides is published as a service of its own that it depends on.
+        """
+        ref = f"{_SHARED}mcp-server:{_digest(json.dumps([owner_ref]))}"
+        service: dict[str, Any] = {
+            "bom-ref": ref,
+            "name": f.title or f.resource or "implemented MCP server",
+            "group": "mcp-server",
+        }
+        details = f.metadata.get("mcp_server")
+        details = details if isinstance(details, dict) else {}
+        languages = details.get("languages")
+        languages = [x for x in languages if isinstance(x, str)] if isinstance(languages, list) else []
+        transports = details.get("transports")
+        transports = [x for x in transports if isinstance(x, str)] if isinstance(transports, list) else []
+        constructions = details.get("constructions")
+        files: list[str] = []
+        for construction in constructions if isinstance(constructions, list) else []:
+            location = construction.get("file") if isinstance(construction, dict) else None
+            if isinstance(location, str) and location and location not in files:
+                files.append(location)
+        tools = f.metadata.get("mcp_tools")
+        tools = [t for t in tools if isinstance(t, str) and t] if isinstance(tools, list) else []
+        tools_omitted = max(0, len(tools) - _MAX_MCP_TOOLS)
+        files_omitted = max(0, len(files) - _MAX_MCP_FILES)
+        service["properties"] = _properties(
+            [
+                ("shadowscan:mcp:implementation", "source"),
+                ("shadowscan:mcp:languages", languages),
+                # One known transport names the server's; several are left to the finding.
+                ("shadowscan:mcp:transport", transports[0] if len(transports) == 1 else None),
+                ("shadowscan:mcp:tools", tools[:_MAX_MCP_TOOLS]),
+                ("shadowscan:mcp:tools-omitted", tools_omitted or None),
+                ("shadowscan:mcp:files", files[:_MAX_MCP_FILES]),
+                ("shadowscan:mcp:files-omitted", files_omitted or None),
+            ]
+        )
+        self.services[ref] = service
+        return ref, bool(tools_omitted or files_omitted)
+
     def add(self, f: Finding) -> None:
         ref = self.finding_ref(f)
         entry: dict[str, Any] = {
@@ -291,7 +340,11 @@ class _Bom:
                 service, capped = self.mcp_service(ref, position, server)
                 needs.add(service)
                 endpoints_capped = endpoints_capped or capped
-        if servers_omitted or models_omitted or endpoints_capped:
+        lists_capped = False
+        if f.kind != Kind.MCP_SERVER and "mcp-server" in f.capabilities:
+            service, lists_capped = self.implemented_mcp_service(ref, f)
+            needs.add(service)
+        if servers_omitted or models_omitted or endpoints_capped or lists_capped:
             self.truncated.append(ref)
 
 

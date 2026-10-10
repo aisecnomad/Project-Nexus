@@ -1,0 +1,228 @@
+"""ShadowScan (NexusShadowScan) ``code.filesystem`` connector."""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+
+import yaml
+
+from tools.discovery_benchmark import taxonomy
+from tools.discovery_benchmark.adapters import (
+    Command,
+    Normalized,
+    ToolConfig,
+    ToolSpec,
+    load_json,
+    run_version,
+)
+
+SPEC = ToolSpec(
+    id="shadowscan",
+    name="ShadowScan (Project Nexus)",
+    vendor="aisecnomad",
+    categories=frozenset(taxonomy.CATEGORIES),
+    notes="code.filesystem connector, default options, JSON report; exit 3 (incomplete) is accepted",
+)
+
+_IAC_BY_SLUG = {
+    "aws-bedrock-agents": "iac:bedrock",
+    "aws-bedrock-agentcore": "iac:bedrock",
+    "azure-ai-foundry-agents": "iac:azure-openai",
+    "azure-openai": "iac:azure-openai",
+    "gcp-vertex-agent-engine": "iac:vertex-ai",
+    "gcp-vertex-ai": "iac:vertex-ai",
+    "gcp-dialogflow": "iac:dialogflow",
+}
+_PROVIDER_BY_CLOUD_SLUG = {
+    "aws-bedrock-agents": "provider:bedrock",
+    "aws-bedrock-agentcore": "provider:bedrock",
+    "azure-ai-foundry-agents": "provider:azure-openai",
+    "gcp-vertex-agent-engine": "provider:vertex-ai",
+}
+_LOWCODE = {
+    "n8n": "lowcode:n8n",
+    "dify": "lowcode:dify",
+    "flowise": "lowcode:flowise",
+    "langflow": "lowcode:langflow",
+}
+
+
+# ShadowScan ids that must not be mapped by the name rules: a shape (not a vendor) or a
+# product the taxonomy does not track whose words happen to resemble one it does.
+_NO_FACT = frozenset({"provider.openai-compatible", "framework.m365-agents-sdk"})
+
+# Signal types that establish an SDK (a dependency, an import or a code idiom); a host or a
+# configuration file alone shows a client configuration, not SDK usage.
+_SDK_SIGNALS = frozenset({"dependency", "import", "code"})
+
+# ShadowScan ids whose slug differs from the taxonomy value.
+_SLUG_ALIASES = {
+    "provider.aws-bedrock": "provider:bedrock",
+    "provider.google-vertex-ai": "provider:vertex-ai",
+    "provider.voyage-ai": "provider:voyage",
+    "platform.litellm": "framework:litellm",
+    "platform.portkey": "framework:portkey",
+}
+
+
+def _direct_fact(family: str, slug: str) -> str | None:
+    """A taxonomy fact spelled exactly like the signature slug, when one exists."""
+    category = {"framework": "framework", "provider": "provider", "platform": "framework"}.get(family)
+    if category is None:
+        return None
+    fact = f"{category}:{slug}"
+    return fact if fact in taxonomy.all_known_facts() else None
+
+
+def _slug_facts(signature: str) -> frozenset[str]:
+    """Map a signature id such as ``framework.vercel-ai-sdk`` onto taxonomy facts."""
+    family, _, slug = signature.partition(".")
+    words = slug.replace("-", " ").replace("_", " ")
+    if signature in _NO_FACT:
+        return frozenset()
+    if signature in _SLUG_ALIASES:
+        return frozenset({_SLUG_ALIASES[signature]})
+    direct = _direct_fact(family, slug)
+    if direct is not None and (family != "platform" or slug not in _LOWCODE):
+        return frozenset({direct})
+    if family == "framework":
+        return frozenset(f for f in taxonomy.facts_from_name(words) if f.startswith("framework:"))
+    if family == "provider":
+        return frozenset(f for f in taxonomy.facts_from_name(words) if f.startswith("provider:"))
+    if family == "protocol":
+        if slug == "mcp":
+            return frozenset({"mcp:sdk"})
+        if slug == "a2a":
+            return frozenset({"a2a:sdk"})
+        return frozenset()
+    if family == "platform":
+        if slug in _LOWCODE:
+            return frozenset()  # an exported flow only counts on a workflow finding (handled by the caller)
+        return frozenset(f for f in taxonomy.facts_from_name(words) if f.startswith("framework:"))
+    if family == "cloud":
+        fact = _PROVIDER_BY_CLOUD_SLUG.get(slug)
+        return frozenset({fact}) if fact else frozenset()
+    return frozenset()
+
+
+def _sdk_backed_protocols(finding: dict[str, Any]) -> frozenset[str]:
+    """Protocol signatures backed by dependency, import or code evidence in this finding."""
+    backed: set[str] = set()
+    for item in finding.get("evidence") or []:
+        if not isinstance(item, dict):
+            continue
+        signature = str(item.get("signature") or "")
+        signal = str(item.get("signal") or "")
+        if signature.startswith("protocol.") and signal.split(":", 1)[0] in _SDK_SIGNALS:
+            backed.add(signature)
+    return frozenset(backed)
+
+
+class ShadowScanAdapter:
+    spec = SPEC
+
+    def unavailable_reason(self, cfg: ToolConfig) -> str | None:
+        return None if cfg.binary("shadowscan") else "no 'bin' configured for shadowscan"
+
+    def version(self, cfg: ToolConfig) -> str:
+        return run_version(
+            [cfg.binary("shadowscan") or "shadowscan", "--version"], pattern=r"(\d+\.\d+\.\d+\S*)"
+        )
+
+    def commands(self, cfg: ToolConfig, repo_dir: Path, out_dir: Path) -> list[Command]:
+        config = {
+            "options": {"parallel": 2, "connector_timeout_seconds": 1500},
+            "connectors": [{"name": "code.filesystem", "path": str(repo_dir), "label": repo_dir.name}],
+        }
+        (out_dir / "shadowscan.yaml").write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
+        argv = (
+            cfg.binary("shadowscan") or "shadowscan",
+            "scan",
+            "-c",
+            str(out_dir / "shadowscan.yaml"),
+            "--format",
+            "json",
+            "-o",
+            str(out_dir / "report.json"),
+        )
+        return [Command(argv, ok_exit_codes=frozenset({0, 3}))]
+
+    def normalize(self, out_dir: Path) -> Normalized:
+        data = load_json(out_dir / "report.json")
+        if not isinstance(data, dict) or not isinstance(data.get("findings"), list):
+            return Normalized(error="report.json missing or malformed")
+        result = Normalized(raw_count=len(data["findings"]))
+        incomplete = any(isinstance(s, dict) and s.get("incomplete") for s in data.get("stats") or [])
+        result.detail["incomplete"] = incomplete
+        mapped: list[dict[str, Any]] = []
+        for finding in data["findings"]:
+            if not isinstance(finding, dict):
+                continue
+            kind = str(finding.get("kind", ""))
+            facts: set[str] = set()
+            if kind in {"secret", "token"}:
+                continue
+            locations = [
+                str(e.get("location") or "") for e in finding.get("evidence") or [] if isinstance(e, dict)
+            ]
+            resource = str(finding.get("resource", ""))
+            signatures = [str(s) for s in finding.get("frameworks") or []]
+            providers = [str(s) for s in finding.get("model_providers") or []]
+            if kind == "infra":
+                for sig in signatures + providers:
+                    family, _, slug = sig.partition(".")
+                    if family in {"cloud", "provider"} and slug in _IAC_BY_SLUG:
+                        facts.add(_IAC_BY_SLUG[slug])
+                    elif family == "provider" and slug in {"aws-bedrock", "bedrock"}:
+                        facts.add("iac:bedrock")
+                    elif family == "provider" and slug in {"azure-openai"}:
+                        facts.add("iac:azure-openai")
+                    elif family == "provider" and slug in {"vertex-ai", "google-vertex", "gcp-vertex-ai"}:
+                        facts.add("iac:vertex-ai")
+                    elif family in {"provider", "framework", "platform"}:
+                        facts.update(_slug_facts(sig))
+                    # a protocol on an infra finding is a deployed image or endpoint, not SDK usage
+            elif kind == "mcp-server":
+                for path in [resource, *locations]:
+                    facts.update(
+                        f for f in taxonomy.facts_for_config_path(path) if f.startswith("mcp-client-config:")
+                    )
+                for sig in signatures:
+                    if not sig.startswith("protocol."):
+                        facts.update(_slug_facts(sig))
+            elif kind == "agent-config":
+                for path in [resource, *locations]:
+                    facts.update(
+                        f for f in taxonomy.facts_for_config_path(path) if f.startswith("agent-config:")
+                    )
+                if not facts:
+                    facts.add("agent-config:generic")
+            elif kind == "workflow":
+                for sig in signatures:
+                    family, _, slug = sig.partition(".")
+                    if family == "platform" and slug in _LOWCODE:
+                        facts.add(_LOWCODE[slug])
+                    else:
+                        facts.update(_slug_facts(sig))
+                for sig in providers:
+                    facts.update(_slug_facts(sig))
+            else:  # agent, framework-usage, ai-app, local-model, cloud-resource ...
+                sdk_backed = _sdk_backed_protocols(finding)
+                capabilities = finding.get("capabilities") or []
+                if isinstance(capabilities, list) and "mcp-server" in capabilities:
+                    facts.add("mcp:server")  # the project implements an MCP server
+                for sig in signatures:
+                    if sig == "protocol.a2a" and resource.endswith(".json"):
+                        facts.add("a2a:agent-card")
+                    elif sig.startswith("protocol.") and sig not in sdk_backed:
+                        continue  # a host or config mention is not SDK usage
+                    else:
+                        facts.update(_slug_facts(sig))
+                for sig in providers:
+                    facts.update(_slug_facts(sig))
+            if facts:
+                mapped.append({"kind": kind, "resource": resource, "facts": sorted(facts)})
+                result.facts.update(facts)
+        result.detail["mapped"] = mapped[:400]
+        return result

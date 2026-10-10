@@ -848,7 +848,7 @@ def test_builtin_tag_keys_do_not_warn(caplog, monkeypatch):
 
 # The default weights are policy: a change moves every score, so it has to be deliberate. When this
 # fails, update docs/concepts/risk.md, the changelog and the migration notes, then this digest.
-_DEFAULT_WEIGHTS_DIGEST = "cd4ac6c379997546276b168e06024dadcb3112862d159a15245157571c5f0c41"
+_DEFAULT_WEIGHTS_DIGEST = "4deaeb53fc5c5530aeb1aed0bfca422893584ea76885cdd5351465fa1542030b"
 
 
 def test_default_risk_weights_change_only_deliberately():

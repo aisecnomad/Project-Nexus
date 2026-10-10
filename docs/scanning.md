@@ -31,7 +31,29 @@ that are never silent:
   warnings, including when `strict_coverage` is enabled.
 * **Binary or undecodable content.** Text with a UTF-8, UTF-16 or UTF-32
   byte-order mark is decoded and the mark removed. A Python source is decoded
-  with the codec its `# coding:` cookie declares. Any other file the scanner
+  with the codec its `# coding:` cookie declares. Text that is not valid UTF-8
+  and has no NUL byte (Latin-1 or Windows-1252 prose, Shift-JIS comments) is
+  read with each byte that is not valid replaced by U+FFFD, except in a Python
+  source or a notebook, whose own runtime rejects it: everything the
+  scanner looks for is ASCII, which such an encoding writes the same way, so the
+  file is analyzed in full and the scan stays complete; the warning `is not
+  valid UTF-8, the bytes that are not were replaced` records it (one warning
+  per kind, listing the first files; `strict_coverage` makes each file a gap
+  instead). Content in which any 8 KiB window has more than four characters,
+  and more than a tenth of the window, that are not valid UTF-8, or that holds a
+  control character other than tab, line break or form feed anywhere, is not
+  text and stays a gap. A file of at
+  least 512 bytes that is valid UTF-8, has at most one NUL byte in 200 and holds
+  no other control character in its first 8 KiB (a TypeScript cache key joined
+  with a literal NUL) is read as text too, with the warning `stray NUL bytes in
+  text, read as text`. Names are matched in it without its NUL bytes, as bash
+  removes them from a script, so a NUL cannot split a host or variable name
+  (`api.open<NUL>ai.com` is matched as `api.openai.com`). Node and PHP keep NUL
+  bytes, and removing one can join two characters into a comment opener
+  (`/<NUL>*`) or a PHP closing tag (`?<NUL>>`), so a source file is lexed both
+  with and without them: only text that both readings take for a comment or a
+  string is masked, and the file's lexing is incomplete (exit code 3) unless
+  both readings agree. Any other file the scanner
   analyzes by name (source, configuration, documents, `.env`, extensionless
   files) that has a NUL byte in its first 8 KiB, or that its declared codec
   cannot decode or does not read as ASCII where the bytes are ASCII (UTF-16 or
@@ -63,13 +85,15 @@ that are never silent:
   source is available to scan, not that it matches an authentic remote commit.
 * **Undecodable or binary content** in a file whose name the scanner would
   analyze (source, manifests, `.env`, configuration, MCP and agent files,
-  notebooks) makes the scan incomplete with `binary or undecodable content in
-  analyzable file`. Text with a UTF-8, UTF-16 or UTF-32 byte-order mark is
+  notebooks) that is not text in a supported encoding makes the scan incomplete
+  with `binary or undecodable content in analyzable file`; the rules above say
+  which invalid UTF-8 and NUL-bearing files are read instead. Text with a UTF-8, UTF-16 or UTF-32 byte-order mark is
   decoded and analyzed (the mark is removed, so a BOM-prefixed `.mcp.json`
   parses). A file with a NUL byte in its first 8 KiB and no byte-order mark is
   not text in any supported encoding, yet interpreters such as Node and `sh`
   still run a script with a NUL in a comment, so it is a gap, not an empty file;
-  this includes UTF-16 without a byte-order mark. Invalid UTF-8 and malformed
+  this includes UTF-16 without a byte-order mark and NUL-dense content. Mostly-invalid UTF-8, a Python
+  source or notebook that is not valid UTF-8, and malformed
   BOM-declared content also make coverage incomplete, with a fixed diagnostic
   that does not expose the rejected bytes. Names the scanner
   never reads (images, archives, `.bin`, compiled artifacts) stay silent, and so
@@ -125,6 +149,16 @@ evidence there. Deciding that is linear in the module and matches at most
 A large module that does import such a library, or has more imports than that,
 still reports
 `import-bound analysis skipped (source binding AST limit exceeded); lexical evidence retained`.
+Before the module's tree is walked, one bounded pass over its `import` and
+`from ... import` statements checks whether any names a module that a signature's
+import pattern can bind (directly, or through an attribute of the imported
+module); a module whose imports cannot is parsed but not walked, so a syntax
+error in it is still reported as `import-bound analysis skipped (source did not
+parse); lexical evidence retained`. A JavaScript or TypeScript file whose
+imports and `require` calls resolve to no signature skips the call scan the
+same way (its lexer still runs, since the regex passes need the comment and
+string spans it produces). The bound evidence and the diagnostics are identical
+either way; a test compares both paths over every fixture source.
 
 The JavaScript and TypeScript lexer that masks comments, strings and JSX text
 has a look-ahead allowance of its own: a fixed floor plus four characters of
@@ -142,8 +176,28 @@ found only under test or fixture paths (`tests/`, `fixtures/`, `cassettes/`,
 `__mocks__/`, `test_*.py`, `*_test.go`, `*.spec.ts`, …) has half weight and cannot
 promote a project to an *agent*; a project whose evidence is entirely test code
 is tagged `test-code-only`. Exported low-code workflows found under those paths
-follow the same rule. Set `include_tests: true` (`--include-tests`) to
-treat test code like any other source. A real-format credential under a test,
+follow the same rule.
+
+Documentation, example and generated code is discounted the same way, but never
+judged by a project's own location. Evidence under a documentation directory
+(`docs/`, `doc/`, `documentation/`, `wiki/`, `guides/`, `tutorials/`) or an
+example directory (`examples/`, `samples/`, `demos/`, `quickstart/`, `starter/`,
+`templates/`, `boilerplate/`, `cookbook/`, `recipes/`, and their singular or
+plural forms) has half weight only when that directory lies inside the file's
+project, below the directory holding its manifest. A directory that is itself a
+project root, such as `services/templates/` with its own `requirements.txt`, is a
+deployable unit and is not discounted. Generated code is recognized by file name
+only (`*_pb2.py`, `*_pb2_grpc.py`, `*.generated.*`) and has 0.4 weight; a
+directory named `generated/` or `codegen/` is ordinary source. When all non-test
+evidence of a project is discounted, the finding is tagged `docs-only`,
+`example-code-only` or `generated-code-only` and its confidence is capped at
+0.85, 0.85 or 0.7 (`metadata.confidence_cap`); `metadata.negative_contexts` lists
+the contexts seen and each discounted evidence item carries
+`attributes.negative_context`. Discounted evidence keeps the capabilities it
+implies.
+
+Set `include_tests: true` (`--include-tests`) to treat test, documentation,
+example and generated code like any other source. A real-format credential under a test,
 fixture or `cassettes/` path is still reported as a `secret` finding, because
 recorded cassettes capture real traffic and a committed key is exposed wherever
 it lives; without `include_tests` it has half weight and the `test-code-only`
@@ -152,7 +206,15 @@ tag. Recognisable placeholders (repeated characters, marker words such as
 Evidence that only names a coding agent in a test path (an environment variable,
 a display name, a dependency or a code pattern) likewise does not establish a
 coding-agent configuration; instruction documents and coding-agent config
-files still do.
+files still do. A mention in a test path (a provider host in a fixture JSON,
+a variable name, a display name, a model identifier, a CI job image) anchors
+no project finding at all without `include_tests`; imports, dependencies and
+code patterns there still do. An oversize file under a test path is skipped
+with the warning `skipped oversize test fixture` and leaves the scan complete
+only when `scan_secrets` is off and neither `include_tests` nor
+`strict_coverage` is set; otherwise it is read for credentials below the
+limit and a coverage gap above it (see
+[large and generated files](#large-and-generated-files)).
 
 ## Incremental scans
 
@@ -185,8 +247,11 @@ connectors:
     input: ./exports/aws.jsonl
 ```
 
-Each `code.filesystem.paths` root is a separate cache unit. Offline local directory
-inputs to `code.github` / `code.gitlab` and static exports to the four `cloud.*`
+Each `code.filesystem.paths` root is a separate cache unit. A `code.filesystem`
+scan with `diff_base` is never cached or reused: its result depends on HEAD and
+the base ref's merge base, which the working-tree fingerprint does not cover.
+Offline local directory inputs to `code.github` / `code.gitlab` and static
+exports to the four `cloud.*`
 connectors are also eligible. Live remote repositories, live cloud APIs, gateway
 logs, identity, SaaS inputs and third-party connectors are collected anew: unchanged configuration cannot
 establish that remote state is unchanged. Hashing still reads eligible inputs;
@@ -270,16 +335,37 @@ incomplete depends on what the file could hide:
 * A file whose name matches `oversize_skip_globs` is skipped with a warning and
   the scan stays complete. The default list names lockfiles (`package-lock.json`,
   `yarn.lock`, `pnpm-lock.yaml`, `poetry.lock`, `Pipfile.lock`, `Cargo.lock`,
-  `Gemfile.lock`, `composer.lock`, `go.sum`), minified bundles and source maps
-  (`*.min.js`, `*.min.css`, `*.map`), data and vector graphics (`*.svg`, `*.csv`,
-  `*.parquet`), compiled or packaged artifacts (`*.wasm`, `*.so`, `*.dylib`,
-  `*.dll`, `*.jar`, `*.pyc`, `*.class`), documents, images and fonts (`*.pdf`,
-  `*.png`, `*.jpg`, `*.jpeg`, `*.gif`, `*.woff`, `*.woff2`, `*.ttf`) and archives
-  (`*.zip`, `*.gz`, `*.tar`). Such content is generated from sources the scanner
-  does inspect, or is binary, so no agent configuration, framework usage or
+  `Gemfile.lock`, `composer.lock`, `go.sum`, `gradle.lockfile`,
+  `Package.resolved`, `Cartfile.resolved`, `deno.lock`, `pubspec.lock`,
+  `mix.lock`, `bun.lock`, `*.lockb`, `flake.lock`), logs and recordings
+  (`*.log`, `*.har`, `*.snap`), minified bundles and source maps (`*.min.js`,
+  `*.min.css`, `*.map`), data and vector graphics (`*.svg`, `*.csv`, `*.parquet`), compiled
+  or packaged artifacts (`*.wasm`, `*.so`, `*.dylib`, `*.dll`, `*.jar`,
+  `*.pyc`, `*.class`), documents, images and fonts (`*.pdf`, `*.png`, `*.jpg`,
+  `*.jpeg`, `*.gif`, `*.woff`, `*.woff2`, `*.ttf`) and archives (`*.zip`,
+  `*.gz`, `*.tar`). Such content is generated from sources the scanner does
+  inspect, or is binary, so no agent configuration, framework usage or
   credential evidence is lost by skipping it. The warning still names each file
   so the omission is visible. Lockfiles, minified bundles, source maps and
   bytecode below the limit are skipped silently because they are never analyzed.
+* With `scan_secrets: false`, an oversize documentation file (`.md`, `.mdc`,
+  `.mdx`, `.txt`, not a manifest name) is skipped with a warning and the scan
+  stays complete: its body is matched by file name only, so no technology
+  evidence is lost and nothing would have read it for credentials. With
+  credential detection on (the default) its text is read for credentials below
+  the limit, so an oversize copy is a coverage gap like any other unread file.
+  A coding-agent instruction document (`CLAUDE.md`, `AGENTS.md`, `GEMINI.md`,
+  …), an agent definition under `.claude/agents/`, `.github/agents/`,
+  `.cursor/rules/` or `.windsurf/rules/`, and a file a file-name signature
+  selects are parsed, so an oversize copy stays a gap in every mode.
+* With `scan_secrets: false` and `include_tests` unset, an oversize file under
+  a test or fixture path (`tests/cassettes/*.yaml`, `pkg/fixtures/*.json`,
+  `test_*.py`) is skipped with the warning `skipped oversize test fixture` and
+  the scan stays complete: test code is discounted evidence that cannot
+  establish a deployment, so its omission is disclosed and counted (one
+  summary warning per root) rather than treated as a gap. With credential
+  detection on, or `include_tests: true`, the file is analyzable like any
+  other and the gap returns; `strict_coverage` records it as an error.
 * Every other oversize file, for example a 2 MiB Python module, JSON or YAML
   document, is skipped and makes the scan incomplete (exit 3). With
   `strict_coverage: true` (`--strict-coverage`) it is recorded as an error
@@ -301,6 +387,37 @@ boundary while remaining capped at 10 seconds, or at `scan_timeout` when that
 is higher. A 900 KB JSON index gets 8 seconds by default and a pathological
 file still fails fast. An exhausted budget marks the file's analysis incomplete
 and the scan incomplete.
+
+The budget is CPU time of the thread analyzing the file, not elapsed time: a
+scanner descheduled behind other processes on a busy host (a benchmark running
+several scans on four CPUs) has not spent it, so ordinary files no longer fail
+with `MatchTimeoutError` under contention alone. Elapsed time still ends the
+file once it reaches four times the budget (8 seconds for a 2-second budget),
+clipped to the remaining connector deadline less its safety margin, so hostile
+input and the connector deadline fail fast as before. The diagnostic reports
+both: `file analysis incomplete (MatchTimeoutError: signature matching exceeded
+the input execution budget (cpu 2.01s of 2.00s, wall 2.40s of 8.00s))`; a wall
+figure far above the CPU figure says the host was contended, not the file
+expensive.
+
+Excerpts are cut at emit time, for the evidence a report keeps, from the
+file's redacted lines. Whether redaction exceeds a sanitization limit is known
+only by redacting, so every file that recorded excerpted evidence is still
+redacted when its analysis ends, and a `structured sanitization incomplete ...;
+excerpts withheld` error marks the scan incomplete even when none of that
+file's matches reaches the report. The file's text is then dropped; nothing is
+written anywhere.
+
+The JavaScript and TypeScript lexer runs on every such file, whether or not
+its imports can bind a signature: the comment and string spans it produces are
+the ignore ranges of the regex passes.
+
+The scan is single-process. A process pool (an opt-in `workers` option) is not
+implemented: findings must be applied in submission order so deduplication and
+emit order stay deterministic; each worker would need its own signature index
+and its own confined root descriptor; a crashed worker must fail its file
+closed while the connector deadline stays in the parent; and credential values
+would cross process pipes. No speedup is claimed for it.
 
 IAM wildcard and agent-definition front-matter parsing use this same bounded
 matching mechanism. The matching budget does not replace an external process
@@ -331,8 +448,17 @@ remained when the walk began, at least 250 ms), records one error naming how man
 files it examined and how many remain (`connector deadline reached after N of M
 files ... results incomplete`), and returns the findings collected so far. The
 engine keeps those findings and reports the scan incomplete (exit 3), so a large
-tree yields partial inventory rather than nothing. Split roots share the deadline;
-a root that starts inside the margin records that error for all of its files.
+tree yields partial inventory rather than nothing. Split roots share the deadline.
+Each root's entries are listed first and scanned in priority order (manifests and
+agent or MCP configuration first, source last, smaller files before larger).
+Listing stops after half of the time in which a file can still start and records
+`connector deadline: listing stopped after N entries`, so a large tree or a slow
+filesystem still scans the entries it listed. A root that starts when no file can
+start any more lists nothing (`listing stopped after 0 entries`), so it cannot run
+the connector past the deadline and discard the findings of the roots before it.
+A tree whose listing alone takes more than that half is reported incomplete even
+when listing and scanning together would have finished; raise
+`connector_timeout_seconds` or narrow the root with `exclude` for such a tree.
 
 On expiry, the engine discards that connector's results, records incomplete
 coverage and the reason, retains other completed connectors' findings, and
@@ -534,14 +660,40 @@ or display-name reference, the heuristics are dropped and the finding is built
 from the name references alone: it is tagged `env-names-only`, its evidence
 weights are halved and its confidence is capped at 0.8 (`likely`), however many
 names appear. A data or prose file that only lists four or more products by
-domain or variable name (a proxy blocklist, a vendor policy, a copy of the
-signature packs) is a catalog: its mentions count only for a product with an
-import, dependency or code pattern elsewhere in the project, and the discounted
-files are listed in `metadata.catalog_mentions` (see
+domain, variable name or model identifier (a proxy blocklist, a vendor policy,
+a leaderboard, a copy of the signature packs) is a catalog, as is a shorter list
+whose file name spells `blocklist`, `denylist` or `blacklist` as one word or two
+(`deny_list.json`); an allowlist, an egress policy or a firewall or WAF rule set
+permits what it names and is not one. A catalog's mentions count only for a
+product with an import, dependency or code pattern elsewhere in the project, and
+the discounted files are listed in `metadata.catalog_mentions`.
+A lexical code pattern without the library's import, dependency, bound call,
+configuration shape, image, IaC, model id or a host or variable name of weight
+0.3 or more anywhere in the project (a Rust `create_agent(`, a C#
+`AgentType.Validate(`, a Java `new MCPClient()`) and a
+signature known only from mentions below weight 0.3 (the bare `huggingface.co`
+host) are kept as evidence but establish nothing: they are listed under
+`metadata.potential_frameworks` / `metadata.potential_providers` instead of
+`frameworks[]` / `model_providers[]`, and a project with nothing else yields a
+note naming the files rather than a finding. Model identifiers in source and
+configuration are medium-weight evidence (at most 0.5 each); a project known
+only from them is tagged `model-ids-only` and capped at 0.6, and a model id in
+a data file is a mention that anchors nothing. A container image in a CI
+pipeline is a mention at 0.3 of its weight and yields no `infra` finding.
+Configuration is never a catalog, however many products it names: deployment
+and CI documents, files under `.devcontainer/` or a top-level `config/`,
+`conf/` or `settings/` directory, files that assign the variables they name
+(`OPENAI_API_KEY=...`), and data files that code of the same project loads by
+name, outside documentation and website directories; a deny-list file name
+outweighs the directory and the reference, not an assignment (see
 [Code connectors](connectors/code.md)). MCP servers
 for files and databases carry the `data-access` capability, browser servers
-`browsing`, and shells `code-exec`. In gateway logs, round-the-clock activity
-keeps the informational `always-on` tag but only marks a caller as agentic,
+`browsing`, and shells `code-exec`; a project that implements an MCP server
+(an import-bound `FastMCP(` or `new McpServer(`, or a Go, Java, .NET or Rust
+server idiom corroborated by the SDK) carries `mcp-server`, the capability of
+exposing tools to other agents, and is titled `MCP server in ...` with the
+server described under `metadata.mcp_server`. In gateway logs, round-the-clock
+activity keeps the informational `always-on` tag but only marks a caller as agentic,
 with the `autonomous` capability, when tool use, an agent-framework user agent,
 a service or principal identity, or missing end-user attribution corroborates
 it. `tools/evaluation/corpus.json` carries regression cases for each rule.
@@ -623,12 +775,25 @@ source is named by its path below the reports' common directory
 (`host-a/report.json` for reports collected as `<host>/report.json`), or by
 its file name when the reports share a directory.
 
+Whatever the order of the sources, a merged finding is `shadow: true` when
+any source that reported it found it unregistered, `false` when one matched
+it to the inventory that scan was given, and `null` when none of the sources
+that reported it was given an inventory (by `--inventory` or the
+configuration's `inventory:` key). Scans made without an inventory never make
+a finding look unregistered: in a mixed fleet, a finding seen only on
+machines scanned without one stays `null` although the merged
+`inventory_present` is true. A registered finding keeps the first
+`registry_match` named by a source that matched it, in the order given. The
+merged `inventory_present` is true when any source had an inventory, even an
+empty one, and `inventory_size` is the largest source inventory.
+
 Report files are untrusted input. A finding id that another report already
 uses for a finding with another identity (resource, connector, account and
-the other identity fields) is refused (exit 1) rather than merged. Machines
-that share a host name and home directory, such as clones of one VM image,
-produce the same identities and merge as one machine scanned twice; give each
-a distinct `--label`, such as its asset tag.
+the other identity fields) is refused (exit 1) rather than merged, as is a
+report whose `inventory_present` is not a boolean. Machines that share a host
+name and home directory, such as clones of one VM image, produce the same
+identities and merge as one machine scanned twice; give each a distinct
+`--label`, such as its asset tag.
 
 The merged report is comparable with `shadowscan diff` only when every source
 was complete and carried a comparable collection scope; its fingerprint is
@@ -673,6 +838,13 @@ the same label would otherwise make out-of-scope findings look resolved.
 By default `diff` exits 0 when the comparison is complete, whatever it finds.
 `--fail-on-new` exits 2 when there are new findings or a finding's risk level
 rose; an incomplete comparison still exits 3.
+
+`--shadow-only` narrows the displayed records to findings whose `shadow`
+field is true (unmatched against the supplied inventory; findings from
+inventory-less scans have `shadow: null` and are not shown). It is a view:
+the summary counts, incompleteness reasons, `--fail-on-new` gating and exit
+codes are always computed over the full comparison, and `--json` always
+carries the complete document plus a `shadow_only_view` id list.
 
 Connectors that were disabled or left out by `--only` do not make a scan
 incomplete (that is operator intent), but the JSON report lists them as

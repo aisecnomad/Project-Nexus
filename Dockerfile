@@ -38,6 +38,9 @@
 #   docker buildx imagetools inspect chainguard/wolfi-base:latest
 # and copy the top-level image index Digest into both FROM lines after
 # reviewing its source and updating the resolution date above.
+# Anonymous Docker Hub pulls are rate limited. CI pulls this digest through the
+# mirror.gcr.io pull-through cache; a digest pull is content-verified, so any
+# builder can do the same (docs/production.md).
 FROM chainguard/wolfi-base:latest@sha256:824f77df45397eb954dfb963db255907ee8842e3446353ce93d688e5e862f51d AS build
 
 # apk packages are deliberately not version-pinned: Wolfi is a rolling

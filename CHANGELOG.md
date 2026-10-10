@@ -5,8 +5,66 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## Unreleased
 
+### Fleet shadow status, triage budget and CI corrections
+
+- `shadowscan merge` no longer reports findings from scans made without an
+  inventory as unregistered. It turned `shadow: null` ("no inventory
+  supplied") into `true`, so a merge of such reports claimed every finding as
+  shadow, and the HTML and Markdown reports said "N shadow (unregistered)".
+  Shadow status now merges in three states, whatever the order of the
+  sources: `true` when any source found the finding unregistered, `false` when
+  a source matched it to the inventory that scan was given, and `null` when no
+  source that reported it had an inventory. A registered finding keeps the
+  first non-empty `registry_match` of a source that matched it; a shadow or
+  unassessed finding has none. The merged report carries `inventory_present`
+  (true when any source had an inventory, even an empty one), and a source
+  whose `inventory_present` is not a boolean is refused (exit 1).
+- LLM triage is bounded. `options.llm_triage.budget_seconds` (default 300,
+  1 to 3600) limits one triage run, and the HTTP client's retries,
+  `Retry-After` waits, connection set-up and response reads stop at the same
+  time. A run stops after three consecutive failed requests. Selected findings
+  a run does not reach are recorded as `metadata.llm_triage.status: skipped`,
+  with a warning on `engine.llm-triage` that names the reason. Under a CLI job
+  deadline (`--job-deadline-seconds` or `options.job_deadline_seconds`),
+  triage ends 10% of the deadline before it (at least 5 s, at most 60 s) or is
+  skipped, so triage no longer uses up the time reserved for writing the
+  report.
+  Library callers pass the deadline as `Engine.run(job_deadline=...)`, a
+  finite `time.monotonic()` value checked before collection starts;
+  `JobDeadline.expires_at` exposes the CLI's.
+  Triage stays advisory: risk, shadow status, completeness and `--fail-on` are
+  unchanged.
+- CI's container job adds Google's Docker Hub pull-through cache
+  (`https://mirror.gcr.io`) to the runner's Docker daemon and pulls the
+  Dockerfile's digest-pinned base image before the build. Anonymous Docker Hub
+  pulls from shared runner addresses failed with HTTP 429, which failed the
+  job on recent pushes to `main`. The digest pin keeps the base image identical;
+  the daemon falls back to Docker Hub when the mirror fails.
+- Restore the README's package classifier
+  (`Development Status :: 3 - Alpha`), whose typo failed the documentation
+  consistency test, and its `python -m shadowscan.signatures.validate`
+  contributor command. A new test checks that every `python -m` module shown
+  in the documentation exists.
+- `make install-dev` followed by `make typecheck` no longer fails without the
+  cloud SDKs: the mypy overrides list the `google` namespace package, which
+  `import google.auth` also binds. A new test type-checks every optional SDK
+  import with installed packages hidden.
+
 ### Scan evidence, completeness and replay corrections
 
+- Report only the exception type when a connector, or one `code.github` or
+  `code.gitlab` repository, fails unexpectedly inside third-party code, so
+  opaque SDK exception text cannot reach reports. Exceptions raised by
+  ShadowScan code keep their fixed or sanitized message, such as the HTTP
+  layer's transport and read-deadline diagnostics. Plugin-metadata error paths
+  are no longer excluded from coverage, and regression tests pin each path
+  (from #171).
+- Restore the package classifier and the signature-validation command in the
+  README, both mistyped on `main`.
+- Lint, format-check and type-check `benchmarks/` with the rest of the tree in
+  `make`, CI, pre-commit and CONTRIBUTING.md. `benchmarks/README.md` indexes the
+  seven benchmarks, and `.gitattributes` marks their corpora, labels and stored
+  runs as generated.
 - Resolve supported Go SDK import aliases before publishing credential-bearing
   source evidence, and keep excerpts aligned with LF-based source locations when
   literals contain carriage returns. Reports remain confidential; dynamic call
@@ -246,10 +304,12 @@ author-written and not independent review.
   `remote-code-fetch` (15) and `invisible-text` (10), which raise the
   finding's risk. `metadata.instruction_content` lists the rules and files.
 - A project whose executable code constructs and serves an MCP server (the
-  SDK plus a server-construction idiom outside test code) is now typed as an
-  `mcp-server` finding titled "MCP server implementation", with
-  `metadata.mcp_server_implementation.files`, instead of low-risk LLM usage.
-  The resource and identity are unchanged. MCP client code stays as before.
+  SDK plus a server-construction idiom outside test code) is reported through
+  the `mcp-server` capability, `metadata.mcp_server` and an "MCP server in"
+  title (see "October 8 MCP server capability and model id attribution").
+  The finding kind, resource and identity are
+  unchanged; `mcp-server` findings remain MCP configuration inventories.
+  MCP client code stays as before.
 - Spring AI: `ChatClient` builder chains that register concrete tools with
   `defaultTools(new ...)` after setting a system prompt or advisors, and
   per-request `prompt().tools(new ...)` chains, now establish an agent; Spring
@@ -262,6 +322,757 @@ author-written and not independent review.
 - Evaluation corpus: six cases cover the typing changes (mlflow tracking
   versus the LLM flavor, Spring AI with and without tools, a Go MCP server
   and a TypeScript MCP client).
+
+### Change-scoped scans, path context, corroboration and new ecosystems
+
+These change confidence, risk, kind and the set of findings against existing
+baselines; rebaseline before comparing (see `docs/production.md`).
+
+- `code.filesystem` option `diff_base` (`shadowscan code PATH --diff-base REF`)
+  scans the files committed between the merge base with `REF` and HEAD, plus
+  dependency manifests and `.env*` files. Findings carry the `diff-scan` tag and
+  `metadata.diff_scan`; the report is not comparable and is never cached. It
+  needs Git 2.45 or later and falls back to a full scan with a warning.
+- Path context discounts code evidence. Inside a project, documentation
+  directories (`docs/`, `guides/`, `tutorials/`, ...) and example directories
+  (`examples/`, `samples/`, `templates/`, `recipes/`, ...) scale evidence weight
+  by 0.5; generated files (`*_pb2.py`, `*_pb2_grpc.py`, `*.generated.*`) by 0.4.
+  When every non-test observation of a project is discounted, the finding is
+  tagged `docs-only`, `example-code-only` or `generated-code-only`, its
+  confidence is capped at 0.85, 0.85 or 0.7 (`metadata.confidence_cap`) and the
+  new default risk weights subtract 8, 8 or 10. `metadata.negative_contexts`
+  and `attributes.negative_context` record the context. `include_tests`
+  disables the discount, as it does for test code.
+- A project finding whose evidence spans independent signal types gains a
+  synthetic `corroboration:cross-signal` evidence item of weight 0.10 (library
+  and code) or 0.15 (three or more signal types) and
+  `metadata.cross_signal_corroboration`, raising confidence and likelihood.
+- A mention-only data file with fewer than four products is a catalog when its
+  name spells `blocklist`, `denylist` or `blacklist` as one word or two
+  (`ai-blocklist.yaml`, `deny_list.json`), so its mentions alone yield no
+  finding.
+- `import` and `code` signals accept the languages `c`, `cpp`, `elixir`, `r` and
+  `lua`; `conda` dependency signals cover the OpenAI, Anthropic, Hugging Face,
+  LangChain and LlamaIndex packages. New signatures: Agency Swarm, Rivet, Devin, Bumblebee/Instructor
+  (Elixir), LangChain (Elixir), R LLM clients, Lua LLM clients, Rust AI crates,
+  Homebrew AI tools (heuristic), MLflow AI Gateway and Cloudflare AI Gateway.
+  Several coding-agent, Dify, Flowise, Langflow and SageMaker signatures gained
+  patterns and file names.
+- An authored 130-case benchmark under `benchmarks/sab_realworld` exercises
+  these changes. It is author-written, not independent validation.
+
+### PR review: incremental scan and evidence verification
+
+- Preserve whitespace and newlines in changed Git paths so incremental scans
+  inspect the actual filenames.
+- Keep semantic rejections and lexical corroboration checks authoritative when
+  a signature signal declares an agent indicator.
+- A `diff_base` (`--diff-base`) scan of `code.filesystem` is no longer a
+  comparable inventory. Its `collection_scope` is `comparable: false` with
+  the reason "diff-scoped collection is not a repository inventory", so
+  `shadowscan diff` lists earlier findings outside the diff window as unknown
+  instead of resolved. The connector warning now says that unchanged files were
+  not scanned, even when the report holds no finding.
+- `--incremental` never reuses a diff-scoped result. The cache fingerprint
+  covers the working tree, not HEAD or the base ref's merge-base, so a squashed
+  or rebased branch with an unchanged tree replayed a stale change set.
+- `--diff-base` applies only to local PATHS. Combined with `--github-*` or
+  `--gitlab-group` it previously crashed with a configuration traceback; remote
+  repositories in the same run are now scanned in full, and `--diff-base`
+  without PATHS is a usage error.
+- A changed path that is not valid UTF-8 now takes the documented full-scan
+  fallback instead of failing the connector with no findings.
+- A small data file is a catalog by name only when a whole word of its stem
+  (split at `.`, `_`, `-`), or two adjacent words, spell `blocklist`,
+  `denylist` or `blacklist`. The earlier substring rule also matched
+  allowlists, whitelists, egress and ingress policies, which permit the traffic
+  they name, and unrelated names such as `oracle_endpoints.yaml` (`acl`) or
+  `security_agent.yaml`, dropping their project findings. A bare `block`,
+  `deny`, `firewall` or `waf` no longer counts either: a firewall or WAF rule
+  set is a default-deny policy with allow exceptions, and
+  `infra/firewall-rules.json` opening egress to `api.openai.com` and
+  `api.anthropic.com` reported no finding and a complete scan. The scan note
+  now says when a file was discounted for its deny-list name.
+- Generated code is recognized by file name only (`*_pb2.py`, `*_pb2_grpc.py`,
+  `*.generated.*`). A directory named `codegen`, `generated` or `autogenerated`
+  and `*.auto.*` files (Terraform `*.auto.tfvars`) are ordinary source again, and
+  discounted generated evidence keeps its capabilities. A shell-executing agent
+  under `services/codegen/` had lost `code-exec`/`tool-use` and dropped from
+  medium to low risk.
+- Documentation and example directories discount evidence only inside the
+  file's project. A directory that is itself a project root with a manifest
+  (`services/templates/requirements.txt`) is a deployable unit and keeps full
+  weight, confidence and risk.
+- The Elixir and R signatures have no dependency signals, and the schema has
+  no `hex` or `cran` ecosystem: nothing parses `mix.exs`, `DESCRIPTION` or
+  `renv.lock`, so those signals could never match. Their import patterns name
+  LLM libraries only (Bumblebee and Instructor; openai and ellmer):
+  `import Nx`, `library(reticulate)`, `library(torch)` and `library(keras)` are
+  numerical or general ML code and no longer report LLM usage. The Rust
+  signature no longer matches the `candle-core` and `candle-nn` tensor crates
+  (`candle-transformers` remains), and the code patterns of the Elixir, R, Lua
+  and Rust signatures apply only to files of their language.
+- `platform.mlflow-ai-gateway` no longer matches a bare `mlflow` or
+  `mlflow-skinny` dependency, so mlflow experiment tracking again yields no
+  finding, or a file named `gateway_config.yaml`, which any API gateway may
+  use. `coding-agent.devin` no longer matches a lowercase `devin.md` anywhere
+  (`content/authors/devin.md` is a page about a person). A file glob cannot
+  name the repository root alone, so a root `devin.md` is not matched either:
+  this is a known recall gap, and the authored benchmark case `rw-repo-057` (a
+  root `devin.md`) is now a false negative, lowering coding-agent recall from
+  1.00 to 0.90. `DEVIN.md`, `.devin/` and `.devin.json` remain.
+- Lua, R and Homebrew patterns write a quote as `'` instead of `\x27`, which
+  the required-literal prefilter could not read.
+- The evaluation corpus has 22 authored positive and hard-negative cases for
+  the signatures added on this branch (Elixir, R, Lua and Rust LLM libraries,
+  MLflow and Cloudflare AI gateways, Agency Swarm, Rivet, Devin, Homebrew).
+  Homebrew AI tools are a supporting heuristic with no product finding, so only
+  its negative case can be labeled.
+- The `benchmarks/sab_realworld` harness compared package labels such as
+  `crewai` with signature IDs such as `framework.crewai`, so its signature
+  recall was always 0. Labels now match a signature whose ID names them, whose
+  dependency signal declares them, or a listed alias. The committed results,
+  generated before the agent-indicator revert, are regenerated: agent-tier
+  accuracy 0.60 (was 0.70), signature recall 0.90. The results remain
+  author-written, not independent validation.
+
+### Real-world benchmark follow-up corrections
+
+- Crawler user-agent domain discounts apply only within a complete quoted UA
+  value. A provider endpoint in another value on the same line, or a later
+  occurrence of the same host, remains detection evidence.
+- The crawler user-agent pass tokenizes only lines naming `mozilla/`, in
+  linear time. An unclosed quote followed by escaped quotes made the former
+  whole-file stdlib regex pass quadratic and outside the per-file matching
+  budget: a 60 KB planted file held the walk for seconds and could let the
+  connector deadline discard every finding of the tree.
+
+### Real-world robustness: input-defect taxonomy for code.filesystem
+
+- Malformed input — invalid TOML/JSON in committed templates and fixtures,
+  invalid structured configuration syntax, invalid agent manifests, or an
+  MCP configuration whose servers value is not an object or array — produces
+  file-attributed
+  **input-defect warnings** that preserve partial findings and still fail
+  the scan closed (exit 3). The file and issue are always named in the
+  report; nothing is dropped silently. Integrity and ambiguity
+  failures (duplicate keys, conflicting dialects, resource-limit hits,
+  undecodable analyzable files, unscanned symlink targets) still fail
+  closed, because parsers diverge on those and they could hide content.
+  `strict_coverage: true` promotes input-defect warnings to errors; both
+  settings mark the scan incomplete. There is no completeness exemption for
+  malformed templates or fixtures.
+
+### Lexing, matching and walk-order robustness (real-world benchmark fixes)
+
+- The JS/TS/TSX lexer now lexes brace-less JSX elements as attribute values
+  (`title=<span>…</span>`), a legal construct that marked real repositories
+  incomplete. Plain `.js`/`.mjs`/`.cjs` files keep the JSX retry that applies
+  only when the plain reading is ambiguous and the JSX reading completes.
+  Malformed JSX still fails closed.
+- Credential detection scales its per-execution regex allowance linearly
+  with declared input size (`LINEAR_SECONDS_PER_MILLION_CHARS`, floor
+  0.1 s, always inside the per-file wall budget), so keyword-dense
+  megabyte files no longer abort the secret pass with MatchTimeoutError.
+  `python -m shadowscan.signatures.validate` now enforces a per-pattern
+  throughput floor on secret patterns against a pathological corpus:
+  patterns slower than the runtime allowance are rejected at validation.
+  The floor measures the matching thread's CPU time, so scheduler
+  contention on a shared CI runner cannot fail it. An attempt the
+  wall-clock guard stops is retried unless its CPU time already exceeds the
+  allowance; a pattern fails when it exceeds the allowance or every attempt
+  is stopped.
+- The filesystem walk buffers and orders entries by signal priority —
+  dependency manifests, MCP and coding-agent configuration first, source
+  files last, smaller before larger — so a connector deadline cuts the
+  largest, lowest-signal tail first, and the deadline diagnostic now
+  reports the exact remainder (never "at least N"). Listing stops after half
+  of the time in which a file can still start (`connector deadline: listing
+  stopped after N entries`), so a large tree or a slow filesystem still
+  scans the entries it listed instead of spending the deadline on
+  enumeration. Checks of file and directory links are listing work and stop
+  with it. A root that starts when no file can start any more lists
+  nothing (`listing stopped after 0 entries`), so a later root of a
+  multi-root or organization scan cannot run the connector past its deadline
+  and discard the earlier roots' findings. The scan stays incomplete
+  (exit 3). Rollout: a tree whose listing alone takes more than that half is
+  now reported incomplete even when the former interleaved walk would have
+  finished; raise `connector_timeout_seconds` for it.
+
+### Classification and precision
+
+- An exported low-code flow whose nodes include a verified agent node (n8n
+  `.agent`/`agentTool`/`openAiAssistant`, Dify `agent_mode: enabled`) now
+  yields a `kind: agent` finding, matching the lowcode.n8n connector; an
+  LLM chain without an agent node stays `kind: workflow`. Finding identity
+  is unchanged (`resource_type` stays `workflow-export`); the finding kind
+  and title change, and metadata gains `agent_flow`. Evaluation corpora
+  were relabeled accordingly.
+- Provider domains quoted inside crawler user-agent strings
+  (`Mozilla/5.0 (compatible; …-Bot/1.0; +https://provider.example/)`) no
+  longer count as provider usage; the discount is recorded as a visible
+  note naming the hosts.
+
+### New capabilities
+
+- `--format ocsf`: OCSF 1.1.0 Detection Finding (class_uid 2004) report
+  output for SIEM pipelines, with scan completeness marked on the document.
+  Each event declares the `datetime` profile in `metadata.profiles`, which
+  defines its `*_dt` timestamps.
+- `triage: true` (and `shadowscan code --triage`): a fast subset scan of
+  manifests, MCP/coding-agent configuration, flow exports and IaC that
+  skips source analysis, credential detection and content sweeps. A triage
+  scan is always reported incomplete so it can never pass as a full scan.
+- `shadowscan diff --shadow-only`: display only findings whose `shadow`
+  field is true; counts, incompleteness reasons and exit codes are still
+  computed over the full comparison, and the JSON document always carries
+  the complete comparison plus a `shadow_only_view` id list.
+
+### Real-world benchmark v2 runner hardening
+
+- The real-world benchmark runner and exit probe refuse privileged execution.
+  Outputs use private directories and atomic writes that reject symlink paths.
+  User/network/PID namespaces require an externally isolated disposable host;
+  they do not establish filesystem isolation. The v2 scorer also validates
+  result metadata and boolean detections against the declared corpus.
+  Historical result hashes are preserved; rerun the revised code separately.
+- The v2 scorer labels the entries added in v2 as held out only for a run recorded
+  before commit 7e523ba (9fdaf85 after its sign-off rewrite) tuned the Rust and JSX
+  lexer on them, which is the frozen v2 run. A run at any other commit, including
+  every run of the merged code, reports them under "Entries added in v2 (not held
+  out ...)" with the reason.
+
+### Lexical coverage: two constructs the lexer wrongly called ambiguous
+
+- Fixed: a Rust ordinary double-quoted string may span lines. The lexer ended it at the
+  line break and reported `incomplete source lexical analysis`. It now stays open across the
+  break, and an unclosed one is still incomplete.
+- Fixed: a `.js`, `.mjs` or `.cjs` file with JSX (React code in a `.js` file) was lexed as
+  plain JavaScript and reported incomplete. Plain lexing is retried as JSX only when it fails,
+  and the JSX reading is used only when it lexes completely. `.ts` files are never read as JSX.
+- Fixed (fail-open in the two changes above): a quote the Rust lexer misread opened an ordinary
+  string that now ran across lines to the next quote, masking the code in between while the file
+  reported complete. Rust C raw strings (`cr"..."`, `cr#"..."#`) and character literals with a
+  `\x7F`, `\u{201C}` or `\u{1_F600}` escape were misread this way; both are now recognized.
+- Fixed (fail-open): a `<` right after another `<` no longer opens a JSX element. `<<` is one
+  shift token, but in `mask<<shift>limit` the second `<` opened a `<shift>` element whose text ran
+  to a later `</shift>`. That masked code, including any construct that made the file ambiguous,
+  and the file reported complete. This affected `.js`, `.mjs`, `.cjs`, `.jsx` and `.tsx` files.
+  The code after such a shift now stays visible, and a file it leaves ambiguous stays incomplete
+  (exit 3). A `<<` elsewhere in a file (`"<<SYS>>"`, `<<EOF`, `1<<n`) does not change how its JSX
+  is read.
+- Measured on the v2 real-world repositories (a tuning set for this change, not held out): 77 of
+  the 100 lexically flagged files, excluding notebook cells, now complete. The bundled regression
+  corpora (`make evaluate`) show identical outcomes with timing removed; only the scanner source
+  hash differs.
+- Not changed: Ruby `#{...}` interpolation in a here-document still marks the scan incomplete. An
+  attempt to scan the interpolated code as code reported a Java framework in a Ruby file, because
+  the matchers are not Ruby-aware. That change was reverted, and
+  `tests/unit/test_source_lexer_benchmark_regressions.py` pins the conservative behaviour. Binary or undecodable
+  content, parser failures on configuration files, connector deadlines and notebook cell lexing also
+  still mark the scan incomplete.
+
+### Real-world benchmark follow-up fixes
+
+- `.js`, `.mjs` and `.cjs` files with a closing or self-closing tag are read
+  both as plain JavaScript and as JSX. When both readings complete, only what
+  both mask stays masked: element text such as `src/*.js` can no longer open a
+  plain-JavaScript comment that hides code up to a later `*/` while the scan
+  reports complete. A JSX reading that exhausts its look-ahead budget marks the
+  file incomplete.
+- Fixed: lossy text decoding checks every bounded window, so an ASCII prefix
+  cannot hide an invalid or control-character body. Python and notebook files
+  with a UTF-8 byte-order mark retain strict decoding of invalid bytes.
+- Fixed: real-world benchmark candidate URLs require an exact parsed GitHub
+  or GitLab hostname, safe path components and supported transport. Host-like
+  text in another site's path or query cannot create false provenance.
+
+### Real-world benchmark follow-ups
+
+Running ShadowScan on 326 public repositories (`tools/benchmark/realworld`)
+showed that 28% of scans ended incomplete (exit 3) and that most false alarms
+came from two causes. Each item below was reproduced on a specific repository
+before it was changed, has a regression test, and leaves finding IDs unchanged.
+`docs/production.md` lists the effect on reports.
+
+- Fixed: the JavaScript check that drops an SDK binding shadowed by a method
+  parameter ran a quadratic pattern over the whole source. On a 22 KB
+  TypeScript file it exceeded the 0.1 s pattern budget, the whole file's
+  analysis was lost and the scan was incomplete. It now runs the same pattern
+  on the window around each use of the name; a test compares it with the
+  original pattern on generated inputs.
+- Fixed: the source lexers called these ambiguous (exit 3) and, where they
+  mis-read them, treated string text as code: ordinary strings that span lines
+  in Rust, PHP and F# (`.fs`; F# scripts are not scanned); PHP 8 attributes (a `#[` line in PHP before 8 is a comment and now reads as code), which were read as comments; F# type
+  variables and primed names; C# `@"""` verbatim strings; JSX in `.js` files;
+  the TypeScript non-null assertion before a division; and Qt translation files
+  named `.ts`. Strings that stay ambiguous (unclosed, Ruby, heredoc
+  interpolation) still end the scan as incomplete.
+- Fixed: a file with a few stray NUL bytes in otherwise valid UTF-8 text, or
+  text that is not valid UTF-8 and has no NUL byte, was skipped whole and made
+  the scan incomplete. Both are read now and add a warning; dense NUL content
+  and UTF-16/32 without a byte-order mark remain gaps. Content that is mostly invalid UTF-8 or holds
+  control characters stays a gap. Notes are one warning per kind; `strict_coverage` treats each as a gap.
+- Fixed: agent definition front matter with `: ` in a plain value was
+  `invalid agent definition YAML`. It is quoted and parsed again through the
+  same strict loader, as coding agents do.
+- Fixed: `re:^mcp\.[a-z0-9-]+\.[a-z]+$` matched dotted identifiers such as
+  `mcp.translator.translatekey`. It now ends in one of a short list of common top-level domains.
+- Fixed: a host on a hosts-file, ad-block, resolver or proxy-rule line counted
+  as use of that product. The filter applies to non-source documents only.
+- Changed: a `secret` finding with no attributed provider is titled
+  `Hard-coded credential in <file>` and tagged `unattributed-credential`
+  instead of `LLM provider credential in <file>`.
+- Added: `protocol.mcp` recognizes JSON-RPC method dispatch without an SDK, and
+  `coding-agent.claude-code` recognizes `.claude/launch.json`,
+  `.claude/rules/*.md`, `.claude/output-styles/*.md` and the plugin manifests.
+
+### Shadow AI discovery benchmark follow-ups
+
+- Fixed: the model-identifier literal limit now marks coverage incomplete
+  when later literals were not matched. A model beyond the limit can no
+  longer produce an empty scan reported as complete.
+- Fixed: that limit counts only model-id candidates, literals that carry a
+  vendor stem. It counted every quoted string, so an ordinary file with more
+  than 400 strings and a stem anywhere in its text (`import.meta`,
+  `command-line`) made the scan incomplete (exit 3) with nothing unread.
+- Fixed: truncated catalog assignment and data-file reference analysis also
+  marks coverage incomplete while preserving the evidence already read.
+- Fixed: a truncated data-file reference list marks coverage incomplete only
+  when the project discounts a data file as a catalog that an unread reference
+  could have named. A non-AI repository whose test loader listed about 200
+  fixture JSON paths exited 3 although no result could change.
+- Fixed: a file's analysis keeps only the excerpts its recorded matches ask
+  for, not every redacted line until emit, so memory follows the number of
+  excerpts rather than the size of all matched files. A root-level Python
+  re-export consumer analyzed after the walk now keeps its excerpts; its
+  evidence had empty snippets unless an earlier pass had excerpted the file.
+- Fixed: the discovery benchmark carries incomplete runs (ShadowScan exit 3)
+  into scoring, the report and the regression gate. `metrics.json` records
+  `incomplete_runs` and a per-repository `incomplete` flag, REPORT.md marks
+  those cells `(incomplete)` instead of showing an incomplete control as
+  clean (43 of 87 ShadowScan runs in the 2026-10-09 baseline were
+  incomplete), and `compare` fails when a repository complete in the
+  baseline becomes incomplete. `compare --baseline-runs` reads the flag from
+  the `runs.json` of metrics scored before it was recorded. The committed
+  2026-10-08 and 2026-10-09 `metrics.json` and REPORT.md are re-scored and
+  re-rendered from their `runs.json`: they mark the controls psf/requests,
+  ripgrep and Newtonsoft.Json and the near-miss jenkinsci/docker-agent
+  incomplete instead of clean, and the benchmark README discloses the 43
+  incomplete runs next to its results tables. No other number changed.
+- Fixed: a dispatched benchmark run of some repositories (`--repos`) is scored
+  and compared over those repositories only. The unselected ones were scored
+  as missing, so the gate always reported a recall regression. Its REPORT.md
+  lists only the scored repositories; the others showed as `?` or `missing`.
+- Docs: the benchmark's isolation is described as it is: a rebuilt
+  environment and a dead proxy that clients may ignore, not a network or
+  filesystem sandbox; third-party tools need an externally isolated runner.
+
+### Shadow AI agent discovery benchmark
+
+- Add `tools/evaluation/benchmark_followup_corpus.json`, 24 authored synthetic
+  cases (16 positives, 8 negatives) that reproduce the shapes behind the
+  misses and false positives observed on the 87-repository benchmark: model
+  identifiers in code, LiteLLM Bedrock routes, implemented MCP servers in
+  Python, TypeScript and Go with exact `mcp-server` and `tool-use`
+  capabilities, `AnthropicBedrock`, Voyage AI, OllamaSharp,
+  `Directory.Packages.props`, Koog, LangChain4j MCP, devcontainer sample keys
+  and a code-loaded `model-settings.yml` carrying `api_base` hosts and
+  `api_key_env` names on the recall side (a loaded settings file holding model
+  identifiers only is still an open miss, recorded in `docs/evaluation.md`);
+  Rust
+  `ToolCallback` and `create_agent(`, Hugging Face host mentions, the
+  `InferenceClient` call shape, Browserbase without Stagehand, CI images,
+  documentation catalogs, a test-defined `handoff(`, `DIFY_API_KEY` and a
+  model leaderboard on the precision side. No case carries a `known_gap`
+  waiver. `make evaluate`, CI and `docs/evaluation.md` run and describe it;
+  `tests/test_evaluation.py` pins its counts. Labels are author-written
+  reproductions of public-repository shapes, not independent review.
+- Add `tools/discovery_benchmark/`, a harness that runs ShadowScan's
+  `code.filesystem` connector and other open-source code-surface discovery
+  tools (Trusera ai-bom, NuGuard, AgentDiscover, Agentic Radar, SafeDep xbom
+  and vet, Geiger, cdxgen) against the same pinned public repositories as an
+  unprivileged user with no network or credentials, normalizes their output
+  into one tool-neutral fact taxonomy and scores precision and recall at
+  repository, category and value level.
+- Add `benchmarks/shadow-ai-discovery/` with the pinned corpus (positives,
+  controls and vocabulary near-misses), session-labeled expected facts with
+  evidence pointers, the run results and the report. The labels are
+  author-written evidence, not independent human review, and the benchmark
+  covers the code surface only.
+
+### Signatures
+
+- New capability `mcp-server`: the project exposes tools to other agents over
+  MCP. The `protocol.mcp` code signal is split into server idioms that carry
+  it (`FastMCP(`, `mcp.server.Server(`, `new McpServer(`, `server.NewMCPServer(`,
+  `mcp.NewServer(`, `McpServer.sync(`, `McpServer.Create(`, `.AddMcpServer(`,
+  `[McpServerTool`, `impl ServerHandler for`, the server transports and
+  `@mcp.tool`), the ambiguous low-level `Server(` class (counted only with
+  other MCP evidence in the project) and client idioms that carry no
+  capability. `mcp-server` scores the same 5 risk points as `tool-use`, so an
+  MCP server project's default risk rises by 5; `risk_weights.capabilities`
+  accepts the new key. The default-weight digest in the tests is updated
+  and `docs/production.md` carries the migration note.
+- Model ids: every `model` pattern is anchored. The families whose prefix is
+  a common word are closed with the id's own alphabet (OpenAI's `gpt-*`,
+  `o1`/`o3`/`o4`, `chatgpt-*`, `text-embedding-*`, Cohere's `command*`,
+  `deepseek-*`), optionally followed by an Ollama/OpenRouter `:tag` or a
+  gateway `@region` pin, or gated on a generation or tier (`claude-`,
+  `sonar`), so `gpt-4-turbo-docs.md`, `command-line`, `o1ne`, `claude-code-*`
+  and `text-embedding-004` (now Gemini only) are no longer OpenAI, Cohere or
+  Anthropic ids, while every `gpt-` id (`gpt-35-turbo`, `gpt-image-1`,
+  `gpt-realtime`, `gpt-audio`, the tagged `gpt-oss:20b`) still is. The
+  `gemini-`, `grok-`, `mistral-`, `embed-`, `rerank-` and `voyage-` prefixes
+  stay open-ended. LiteLLM-style routes attribute the routed provider:
+  `bedrock/`, `vertex_ai/`, `anthropic/`, `openai/`, `gemini/`, `mistral/`,
+  `cohere/`, `cohere_chat/`, `xai/`, `deepseek/` join the providers' id
+  signals; `openrouter/`, `together_ai/`, `groq/`, `ollama/`, `ollama_chat/`,
+  `huggingface/<org>/<model>`, `perplexity/`, `cerebras/` and `voyage/` are
+  new signals at weight 0.6. A route must carry a model id (`bedrock/edition`,
+  `xai/README` and a bare `mistral/` do not match). New bare families:
+  `voyage-*` embeddings (never `rerank-*`, which is Cohere's), the Cohere
+  `command`, `command-r*`, `command-a*`, `command-light*` and `command-nightly`
+  ids, the `claude-fable-*` tier and the `deepseek-ai/<model>` Hugging Face
+  names. No family is limited to a list of generations: `deepseek-v4-*`,
+  `deepseek-flash` and `gpt-5.4` match as the next ids will.
+- Claude on cloud platforms: `AnthropicBedrock(` and `from anthropic import
+  AnthropicBedrock` attribute `provider.aws-bedrock`, `AnthropicVertex(` and
+  its import `provider.google-vertex-ai` (previously both were Anthropic
+  code evidence). Bedrock also gains `CLAUDE_CODE_USE_BEDROCK` (0.5),
+  `AWS_BEARER_TOKEN_BEDROCK` (0.6), the `BedrockRuntime*` client classes and
+  the `"bedrock-runtime"` service name, the `@anthropic-ai/bedrock-sdk`
+  package and import, and the Rust `aws-sdk-bedrock*` crates; Vertex gains
+  `CLAUDE_CODE_USE_VERTEX` and `@anthropic-ai/vertex-sdk`. The Claude model id
+  still attributes Anthropic, so Bedrock Claude ids label both providers.
+- JVM provider modules: LangChain4j `dev.langchain4j:langchain4j-<vendor>`
+  modules and `dev.langchain4j.model.<pkg>.` imports, and Spring AI
+  `spring-ai-starter-model-<vendor>` / `spring-ai-<vendor>` artifacts and
+  `org.springframework.ai.<vendor>.` imports attribute the provider
+  (Anthropic, OpenAI, Azure OpenAI, Bedrock, Vertex AI, Gemini, Cohere,
+  Hugging Face, Ollama, Mistral, Voyage AI) alongside the framework; the
+  Spring AI `spring-ai-starter-mcp*` / `spring-ai-mcp*` prefixes and
+  `dev.langchain4j:langchain4j-mcp` with `dev.langchain4j.mcp.` imports attribute
+  `protocol.mcp`.
+- Long-tail SDKs: Voyage AI import, `voyageai.Client(`, npm `voyageai` and
+  `voyage-ai-provider`, `VOYAGE_API_KEY` raised to 0.6; Ollama `OllamaSharp`
+  (NuGet and `using OllamaSharp`) and the `host.docker.internal:11434` /
+  `0.0.0.0:11434` endpoints; Hugging Face `@xenova/transformers` and the
+  `@xenova/...` / `@huggingface/...` JavaScript imports.
+- New `framework.koog` (JetBrains Koog, Kotlin): the `ai.koog` Maven group and
+  `import ai.koog.` lines; agent indicator with `tool-use`.
+- Browserbase / Stagehand split: `framework.stagehand` keeps only the agent
+  SDK (`@browserbasehq/stagehand`, `stagehand`, `stagehand-py`, their imports
+  and `new Stagehand(`); the new `platform.browserbase` owns
+  `@browserbasehq/sdk`, `browserbase`, `BROWSERBASE_API_KEY`,
+  `BROWSERBASE_PROJECT_ID` and the `browserbase.com` API hosts with
+  `browsing` and no agent indicator, so a project that only rents hosted
+  browsers is framework usage, not an agent.
+- Language gates: the Spring AI (`ToolCallback`, `ChatClient.builder(`,
+  `@Tool(`), LangChain4j (`@Tool`), Rig, LangChainGo,
+  Microsoft.Extensions.AI, Cloudflare Agents, Inngest AgentKit, Semantic
+  Kernel (.NET and Python idioms) and the Go, Java, .NET and Rust MCP server
+  idioms declare `languages`, so a Rust `pub trait ToolCallback` or a C#
+  `AddMcpServer()` string in a Python file no longer counts. Config
+  projections and `shadowscan signatures test` pass no language and are not
+  gated.
+- `provider.openai`'s bare `chat.completions.create(` / `responses.create(`
+  signal is `ambiguous`: it counts only with the openai package, import or a
+  specific OpenAI code match in the project. `provider.openai-compatible`
+  gains a weight-0.5 code signal for an `OpenAI(` / `AsyncOpenAI(` /
+  `new OpenAI({` constructor that sets `base_url` / `baseURL` (bounded to
+  the constructor's argument list) and an `ambiguous` weight-0.5 signal for
+  the `.chat.completions.create(` request shape, which counts only next to
+  such an override; a plain OpenAI SDK project stays `provider.openai` alone
+  (the `review_corpus` case `provider-call-only` forbids the second
+  provider).
+
+### code.filesystem
+
+- Rust test modules (`tests.rs`, `*_test.rs`, `*_tests.rs`) are test paths, and a
+  model identifier inside a test file is a weak mention like a host there: Rig's
+  `accounts/fireworks/models/...` fixture no longer adds Fireworks. A literal that
+  ends in a file extension (`sonar-project.properties`, `gpt-4-notes.md`) is never
+  read as a model identifier.
+
+- Throughput: excerpt lines are cut at emit time for the evidence a report
+  keeps. Every file that recorded excerpted evidence is still redacted when
+  its analysis ends, so a sanitization limit in a file whose matches are all
+  dropped keeps the `structured sanitization incomplete ...; excerpts
+  withheld` error and the incomplete scan (exit 3). The Python import binder walks
+  a module only when one bounded pass over its import statements finds a
+  module a signature can bind (a module that cannot bind is still parsed, so a
+  file that does not parse keeps its `source did not parse` warning and its
+  lexical framework evidence), and the JavaScript binder skips the call scan
+  when no import resolves to a signature (its lexer still runs: the regex
+  passes need its comment and string spans, which are their ignore ranges).
+  The Python gate keeps the binder for any line naming `import` or `from`
+  that is continued with a backslash, holds a form feed or joins statements
+  with `;`. The import, code and credential passes of a source file share one
+  literal scan and one case-folded copy. A structured file is parsed once: the
+  manifest (`package.json`, `composer.json` when strict JSON), configuration
+  and MCP passes reuse the document instead of parsing the text again, and
+  parse failures stay reported where they were. Findings are unchanged; a
+  determinism test compares two scans of a tree.
+- Follow-up, not implemented: an opt-in process pool (`workers`) for
+  `code.filesystem`. It needs in-order application of per-file results, a
+  signature index and confined root descriptor per worker, crash and
+  deadline handling that fails closed, and credential values crossing process
+  pipes; see `docs/scanning.md`.
+- The per-file matching budget (`scan_timeout`) is CPU time of the analyzing
+  thread, with an absolute elapsed-time cap of four times the budget clipped to
+  the connector deadline, so a scanner descheduled on a busy host no longer
+  fails ordinary files with `MatchTimeoutError`; the diagnostic reports both
+  figures (`cpu 2.01s of 2.00s, wall 2.40s of 8.00s`). The Python re-export
+  pass after the walk clips its binder's cap the same way, and a consumer it
+  queues is redacted during the walk, so neither that pass nor emit can run
+  past the deadline the walk kept for them.
+- Implemented MCP servers are first-class: a Python or JavaScript server
+  construction is import-bound (`FastMCP(`, `Server(` from `mcp.server` and
+  `mcp.server.lowlevel`, `new McpServer(` and `new Server(` from
+  `@modelcontextprotocol/sdk/server/*`, `fastmcp`, `mcp-framework`) and
+  recorded as `import-bound MCP server construction` evidence that replaces the
+  lexical match of its line, so the low-level `Server` class is told apart from
+  `http.server` and Node `http` servers. The ambiguous `Server(` pattern never
+  establishes a server, so an MCP client next to an `aiohttp`, `socketserver`
+  or `socket.io` server keeps `tool-use` alone, and a lexical `FastMCP(` or
+  `new McpServer(` the binder did not resolve counts only in a file that
+  imports an SDK server module (a local class of that name does not);
+  `registerTool`/`tool` callbacks on a
+  low-level `Server` receiver link to their execution bodies like `McpServer`
+  ones. The lexical Go, Java, .NET and Rust idioms carry `mcp-server` only
+  when the SDK is imported or declared somewhere in the project; otherwise the
+  capability is withheld (listed under `metadata.potential_capabilities`) and
+  the evidence stays capped `uncorroborated-lexical`.
+- The project finding of an implemented server is titled `MCP server in
+  <dir>: ...` (finding identity is unchanged; the title is prose) and carries
+  `metadata.mcp_server` with `constructions` (`file`, `line`, `construct`,
+  `language`, `bound`; at most 50, `constructions_limited` disclosed),
+  `languages` and `transports` (`stdio`, `http`). Constructions in test paths
+  are left out unless `include_tests` is set. An implemented server with no
+  recognized tool names now suppresses vendor-neutral heuristics other than
+  execution sinks, as a server with recognized tools already did. MCP client
+  configurations keep `tool-use` only.
+
+- Model identifiers are provider evidence. Quoted literals in source files and
+  notebook code cells (comments skipped where the lexer masks them) and quoted
+  or bare values after a model-ish key (`model`, `model_id`, `default_model`,
+  `deployment`, `llm`, `engine`, `OPENAI_MODEL=`) in YAML, JSON, TOML,
+  Terraform, Bicep, dotenv, `.cfg`, `.ini` and `.properties` files are handed
+  to the anchored `model` signatures when they carry a vendor stem; a route
+  such as `bedrock/anthropic.claude-...` attributes both the route's provider
+  and the vendor. Each match weighs at most 0.5, lists the whole id under
+  `metadata.models` and is kept at most three times per signature per file
+  (400 vendor-stem literals per file, with incomplete coverage beyond). A
+  model id in source or a notebook anchors a project finding, tagged
+  `model-ids-only` with confidence capped at 0.6 when nothing else
+  establishes a technology; one in a data or configuration file is a mention
+  (`data_mention`) that anchors nothing and keeps leaderboards and pricing
+  tables catalogs. Markdown is never read for
+  model ids; `amazon.com`, `o1ne`, `tts-config`, `command-line` and
+  `gemini-python/1.8.2` match nothing. The last path segment is matched only
+  under a known route prefix (`bedrock/`, `openai/`, `openrouter/`, `@cf/`, …),
+  so `EleutherAI/gpt-neox-20b` is a namespace, not an OpenAI model; the
+  open-ended families are held to the vendor's shape (`gpt-` followed by a
+  digit or `oss-`, `o1-`/`o3-`/`o4-` by a variant or release date) and a
+  segment that names tooling is rejected, so `gpt-tokenizer`, `gpt-3-encoder`,
+  `gpt-4all`, `gpt-engineer`, `o1-visa`, `grok-1-formatter` and `qwen-agent`
+  match nothing while `gpt-5-codex`, `gpt-oss-120b`, `o3-deep-research`,
+  `grok-code-fast-1` and `qwen2.5-coder-7b-instruct` still do. Dotted
+  `.properties` keys (`spring.ai.openai.chat.options.model=gpt-4o`) are read.
+  A model id also corroborates the same
+  vendor's code pattern (`boto3.client("bedrock-runtime")` beside a Bedrock
+  route in `config/agent.yaml`).
+- Uncorroborated code patterns establish nothing. A lexical code match, in any
+  language, whose signature has no import, dependency, file-name, image, IaC
+  or model match, import-bound call, configuration shape, manifest artifact or
+  mention of weight 0.3 or more (a host such as `contoso.openai.azure.com`, a
+  variable name) anywhere in the project keeps its evidence (0.6 cap, `uncorroborated-lexical`
+  group) but joins neither `frameworks[]` nor `model_providers[]`, adds no
+  capability or agent indicator and is listed under
+  `metadata.potential_frameworks` / `metadata.potential_providers`; the title
+  follows the established technologies. A Rust `pub trait ToolCallback` no
+  longer titles a crate "Spring AI" (0xPlaygrounds/rig), a Rust `create_agent(`
+  is not LangChain (block/goose), `AgentType.Validate(` in C# is not LangChain
+  (microsoft/semantic-kernel), `handoff(` in Rust is not the OpenAI Agents SDK
+  (openai/codex). A project whose only evidence is such patterns yields no
+  finding and a note naming up to five files (never incomplete), so nothing
+  disappears silently. `apply_matches` gained `establish: bool`. Elixir
+  calls a module by its qualified name without importing it and no parser
+  reads `mix.exs`, so `framework.nx-bumblebee` reads a remote call to
+  Bumblebee's or Instructor's own entry points (`Bumblebee.load_model(`,
+  `Instructor.chat_completion(`) as its import, not as a lexical pattern.
+  Elixir source is not lexed, so only a call with its parenthesis and no `#`
+  before it on the line counts: a comment or a `@moduledoc` naming
+  `Bumblebee.Text` establishes nothing.
+- Weak mentions establish nothing. When every match of a signature in a
+  project is a host, variable name, display name, data-file model id or CI
+  job image below weight 0.3 after the test-path discount, the signature is
+  potential, not established: `huggingface.co` (0.15) in a comment, an OAuth
+  endpoint or a gallery YAML beside an OpenAI import no longer puts
+  `provider.huggingface` into `model_providers[]` (six benchmark false
+  positives); `router.huggingface.co` and `api-inference.huggingface.co` (0.8)
+  still do.
+- Mentions in test data do not anchor. Without `include_tests`, a host,
+  variable, display name, model id or CI image under a test path anchors no
+  project finding (faisalman/ua-parser-js: `huggingface.co` in
+  `test/data/ua/extension/crawler.json` gave a 0.075-confidence provider);
+  imports, dependencies and code patterns in tests still do. Dropped projects
+  are named in the same note.
+- CI job images are mentions. An `image:` in `.github/workflows/`,
+  `.gitlab-ci.yml`, `.circleci/`, `azure-pipelines.yml`,
+  `bitbucket-pipelines.yml`, `.drone.yml`, `.woodpecker*`, `.buildkite/`,
+  `.gitlab/` or a `Jenkinsfile` is recorded at 0.3 of the image weight, tagged
+  `ci_image`, anchors nothing, corroborates no lexical code pattern (a workflow
+  image beside an unbound Java `McpClient.sync(` does not establish MCP) and
+  produces no `infra` finding (pydantic/pydantic `third-party.yml` tested the
+  MCP SDK in `modelcontextprotocol/python-sdk` and was reported as
+  infrastructure at 0.989); Compose and Kubernetes images keep full weight and
+  their infrastructure finding.
+- The OpenAI request shape (`.chat.completions.create(`) in a project that
+  installs or imports the OpenAI SDK never adds `provider.openai-compatible`
+  as a second provider; beside a Hugging Face `InferenceClient` import it names
+  neither provider (huggingface/agents-course `scripts/translation.py`).
+- Incomplete coverage is reserved for content the scan would have read. The
+  remaining lockfiles (`gradle.lockfile`, `Package.resolved`,
+  `Cartfile.resolved`, `deno.lock`, `pubspec.lock`, `mix.lock`, `bun.lock`,
+  `*.lockb`, `flake.lock`) are never read, and `*.log`, `*.har` and `*.snap`
+  join the default `oversize_skip_globs`. Change logs are not on that list: a
+  name glob such as `CHANGELOG*` or `HISTORY*` also matches source files
+  (`history_store.py`, `changes.ts`) a scanned repository can name freely, and
+  credential detection reads change logs like any other prose, so an oversize
+  `CHANGELOG.md` stays a coverage gap while `scan_secrets` is on (Mastra's eight
+  `CHANGELOG.md` files over 1 MB keep a default scan at exit 3). With
+  `scan_secrets: false`, two more kinds of oversize file are skipped with a
+  warning and the scan stays complete: a documentation file (`.md`, `.mdc`,
+  `.mdx`, `.txt` that is not a manifest, coding-agent instruction document,
+  agent definition or file-name-signature match), whose body the technology
+  passes never read, `CHANGELOG.md` among them, and, without `include_tests` or
+  `strict_coverage`, a file under a test or fixture path (pydantic-ai: 56
+  recorded cassettes), whose evidence is discounted; the latter are counted
+  in `skipped_oversize_test_fixtures` and summarised in one warning per root.
+  With credential detection on (the default) every read file, prose and
+  fixtures included, is scanned for credentials, so an oversize README or
+  cassette stays a coverage gap (exit 3): a planted key in it is never lost
+  to an exit 0. Instruction documents, agent definitions, source and
+  configuration over `max_file_size` keep the gap in every mode; see
+  `docs/production.md`.
+- .NET central package management: `Directory.Packages.props`
+  (`PackageVersion`), `Directory.Build.props` and other MSBuild imports
+  (`GlobalPackageReference`, `PackageReference Update=`) declare NuGet
+  dependencies, so `Microsoft.Extensions.AI` and `OllamaSharp` pinned there
+  (autogen, semantic-kernel) establish their technologies.
+- The evaluation harness (`tools/evaluation/evaluate.py`) no longer treats the
+  connector's informational notes (`evidence not reported because ...`) as an
+  incomplete scan.
+
+- `code.filesystem`: the catalog rule no longer discounts configuration that
+  names four or more products. Three public repositories showed the cost:
+  SWE-agent's `.devcontainer/sample_keys.cfg` (five provider keys, read as a
+  catalog, so the project reported LiteLLM alone), the providers aider's
+  `models.py` loads from `aider/resources/model-settings.yml`, and those a
+  codex-rs crate embeds from `provider_catalog_overrides.json` with
+  `include_str!`. Three shapes are configuration now, whatever they name: a
+  data file under `.devcontainer/`, or under `config/`, `conf/` or `settings/`
+  at the top of the scan or of its project; a data file that assigns a variable
+  it names on a line of its own (`NAME=value`, `export NAME=value`,
+  `NAME: value`, also in `.cfg`, `.ini`, `.conf` and `.properties` files, which
+  have no parser), as a key with a scalar value at any depth, or under a
+  `containerEnv` or `remoteEnv` key; and a data file that source code, a
+  notebook or a shell script of the same project names in a quoted path literal
+  (`open("model-settings.yml")`, `include_str!("../providers.json")`). A
+  reference does not reach data under a documentation or website directory
+  (`docs/`, `doc/`, `website/`, `site/`, `_data/`, `_posts/`, `_includes/`,
+  `blog/`): leaderboards, galleries and pricing tables stay catalogs even when
+  a script writes them, and a model identifier found in a data file counts as a
+  mention like a domain or a variable name, so a table of model ids is a
+  catalog while a model a manifest or IaC file selects still anchors.
+  Blocklists, vendor policies and the signature packs are discounted as before,
+  and a file named as a deny list (`blocklist`, `denylist`, `blacklist`) stays
+  a list under `config/` or when code loads it, since a proxy keeps its deny
+  list beside its configuration and loads it; one that assigns the variables it
+  names or deploys a Kubernetes or ECS resource is configuration. Since a
+  reference cannot exempt a deny list, a truncated reference list beside one
+  leaves the scan complete. A vendor policy that names a variable as a value (`key_env: OPENAI_API_KEY`),
+  keys a mapping or a list by it in any style (a YAML block or flow mapping, a
+  JSON object or array, a TOML inline table) or lists it as a key with no value
+  still assigns nothing. The reference exemption is by name and its
+  documentation-directory list is fixed, which is the accepted cost: a quoted
+  `"settings.yaml"` anywhere in code exempts every data file of that name in
+  the project, and published data outside the listed directories (`public/`,
+  `static/`) is configuration once a build script names it. The two new passes
+  are bounded (10,000 assignment lines per data file, 2,000 quoted literals per
+  loader) and run under the matcher's retrying budget, so a file of 100,000
+  `X=1` lines is judged on its first 10,000 instead of marking the scan
+  incomplete. `metadata.catalog_mentions`, the scan note and finding identity
+  are unchanged.
+
+### CycloneDX
+
+- A finding with the `mcp-server` capability (other than an MCP
+  configuration) publishes the server it implements as a `services[]` entry in
+  group `mcp-server` (`shadowscan:mcp-server:<digest>`), with
+  `shadowscan:mcp:implementation=source`, `languages`, `transport` when the
+  code names exactly one, `tools` and `files` (capped at 20 and 10, the caps
+  disclosed as `tools-omitted`/`files-omitted` and in the `incomplete`
+  composition); the project stays an `application` component that depends on
+  it. The benchmark adapter maps the capability to the `mcp:server` fact.
+
+### Real-world benchmark follow-ups: fail-closed corrections
+
+Review of the changes above found inputs that made a scan of real AI use look
+complete and empty. Each has a regression test; finding IDs are unchanged.
+
+- Fixed: stray NUL bytes read as text were left in the analyzed text, so
+  `api.open<NUL>ai.com` or `OPENAI_<NUL>API_KEY` in a shell script, which bash
+  runs as `api.openai.com` and `OPENAI_API_KEY`, matched nothing. The code
+  connector now matches names in the text without its NUL bytes (line numbers
+  are unchanged). Node and PHP keep NUL bytes, and removing one can join
+  `/<NUL>*` into a comment opener or `?<NUL>>` into a PHP closing tag that
+  masks the code after it, so a source file with NUL bytes is lexed both with
+  and without them: only what both readings mask stays masked, and the file's
+  lexing is incomplete unless both readings agree.
+- Fixed: the JSX walk read valid JavaScript as elements and masked the code
+  between them: `yield <a> 1` and `await <a> 1` in a script (where both words
+  are names), `of <a> 1` after an operand, a keyword cut out of a longer name
+  (`a<ZWNJ>typeof <a> 1`, likewise at a combining mark or a `\u{...}` escape)
+  and the second `<` of a left shift (`mask<<shift>limit`). In `.js`, `.mjs`
+  and `.cjs` files JSX is now only tried when the plain walk is ambiguous, and
+  not used where an element follows a word other than a reserved word that
+  cannot be a name (`return`, `typeof`, `case` and the like) or in a file with
+  such a shift; the scan then stays incomplete. Before, the code connector
+  lexed these files as JSX from the start.
+- Fixed: a `.ts` or `.tsx` file that started with `<TS>` or `<tileset` was
+  masked whole as a Qt translation or Tiled tileset, although `<TS>expr` is a
+  type assertion and `<TS></TS>` a JSX element. Only a file that opens with an
+  XML declaration or a document type declaration, has its root's closing tag
+  at the end, and parses as well-formed XML with that root (a document that
+  declares entities is not parsed) is treated as one.
+- Fixed: `#[` in PHP was always read as an attribute, so a PHP 7 comment such
+  as `#[TODO] don't call this` opened a string that masked the code after it.
+  A PHP file with `#[` is now lexed both as PHP 8 and as PHP before 8 reads
+  it, and only what both readings mask stays masked. When only the PHP 7
+  reading leaves a string open at the end of the file (a multi-line attribute
+  string), PHP 7 cannot run the file and the PHP 8 reading is used alone;
+  when only the PHP 8 reading does, the lexing stays incomplete, because a
+  PHP 8 construct the lexer misreads can cause it.
+- Fixed: a PHP here-document closed only at a marker alone on its line (with
+  an optional `;`, `,` or `)`). Since PHP 7.3 code may follow the marker
+  (`EOT)]`), so such a file stayed open to its end, which also made the PHP 8
+  reading of `#[Attr(<<<EOT` look invalid and let the PHP 7 reading mask code.
+  The marker now closes wherever no name character follows it, and the rest
+  of its line is lexed as code.
+- Changed: the `mcp.<vendor>.<tld>` host form of `protocol.mcp` matches
+  country-code domains again (except two-letter codes that are common file
+  extensions or property names, such as `py`, `md`, `rs`, `pl`, `ps`, `id` and
+  `in`) and more generic ones (`biz`, `digital`, `club` and others, but not
+  words that name properties or methods such as `info`, `page` or `live`), so
+  `mcp.example.de` is an MCP endpoint again. A `protocol.mcp` host candidate
+  followed by a call, an index, an underscore or an assignment
+  (`MCP.LOGGER.info("x")`, `mcp.client.is_connected()`, `mcp.session.page = 2`)
+  is code, not a host, and in a source file a candidate counts only where a
+  string or a URL starts with it (`"mcp.vendor.de"`, `https://mcp.vendor.de`,
+  or followed by an `/mcp` or `/sse` path), so `y = mcp.result.no` is not one.
 
 ## 0.1.2 — 2026-10-08
 

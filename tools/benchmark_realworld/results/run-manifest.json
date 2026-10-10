@@ -1,0 +1,182 @@
+{
+  "manifest": "corpus.json",
+  "manifest_sha256": "4ebc1dc910ff684661193e76af402617053658eb2f5d83d1849ce82fd6d967bc",
+  "repos": 41,
+  "cases": 82,
+  "tool_pins": {
+    "cisco-aibom": "1.10.0",
+    "agent-bom": "0.108.2",
+    "agentdiscover": "2.9.5",
+    "snyk-agent-scan": "0.6.8",
+    "cisco-ai-mcp-scanner": "4.8.6",
+    "mcp-audit-scanner": "0.18.2",
+    "shadow-mcp": "0.2.0",
+    "safedep-vet": "v1.17.5"
+  },
+  "sandbox": "unshare --net --pid --fork --mount-proc; setpriv nobody; empty environment; HOME=case; no .git, no symlinks",
+  "python": "3.13.16",
+  "platform": "Linux-6.18.44-fc-v80-x86_64-with-glibc2.39",
+  "finished_utc": "2026-10-08T15:45:28+00:00",
+  "runs": [
+    {
+      "tool": "shadowscan",
+      "display": "Project Nexus ShadowScan",
+      "source": "aisecnomad/Project-Nexus",
+      "surfaces": {
+        "repo": "code.filesystem on the checkout",
+        "endpoint": "code.filesystem on the home directory",
+        "network": "gateway.logs on a JSON access log"
+      },
+      "wall_seconds": 267.2,
+      "ok": 48,
+      "error": 34,
+      "n/a": 0
+    },
+    {
+      "tool": "shadowscan-dedicated",
+      "display": "Project Nexus ShadowScan (dedicated connectors)",
+      "source": "aisecnomad/Project-Nexus",
+      "surfaces": {
+        "repo": "code.filesystem on the checkout",
+        "endpoint": "endpoint.inventory on the home directory",
+        "network": "gateway.logs on a JSON access log + network.logs on TLS/flow records"
+      },
+      "wall_seconds": 195.9,
+      "ok": 66,
+      "error": 16,
+      "n/a": 0
+    },
+    {
+      "tool": "cisco-aibom",
+      "display": "Cisco AI BOM",
+      "source": "cisco-ai-defense/aibom",
+      "surfaces": {
+        "repo": "analyze <checkout>; Tier-3 LLM classifier unreachable (deterministic floor)",
+        "endpoint": "analyze <home directory>; Tier-3 LLM classifier unreachable"
+      },
+      "wall_seconds": 2567.9,
+      "ok": 72,
+      "error": 10,
+      "n/a": 0
+    },
+    {
+      "tool": "agent-bom",
+      "display": "agent-bom",
+      "source": "msaad00/agent-bom",
+      "surfaces": {
+        "repo": "scan <checkout> --no-scan --offline (inventory only), empty HOME",
+        "endpoint": "scan --no-scan --offline with HOME=<case> (client auto-discovery)"
+      },
+      "wall_seconds": 368.3,
+      "ok": 82,
+      "error": 0,
+      "n/a": 0
+    },
+    {
+      "tool": "agentdiscover",
+      "display": "AgentDiscover Scanner",
+      "source": "Defend-AI-Tech-Inc/agent-discover-scanner",
+      "surfaces": {
+        "repo": "scan --format sarif + audit --skip-layers 2,3,4,5, empty HOME",
+        "endpoint": "scan + audit --skip-layers 2,3,4,5 on the home, HOME=<case>"
+      },
+      "wall_seconds": 314.5,
+      "ok": 82,
+      "error": 0,
+      "n/a": 0
+    },
+    {
+      "tool": "safedep-vet",
+      "display": "SafeDep vet",
+      "source": "safedep/vet",
+      "surfaces": {
+        "repo": "vet ai discover -D <tree> --scope project, empty home; any project-scope item",
+        "endpoint": "vet ai discover --scope system, HOME=<tree>; any system-scope item"
+      },
+      "wall_seconds": 85.3,
+      "ok": 82,
+      "error": 0,
+      "n/a": 0
+    },
+    {
+      "tool": "mcp-audit",
+      "display": "mcp-audit (mcp-audit-scanner)",
+      "source": "mcp-audit-scanner",
+      "surfaces": {
+        "repo": "discover --json --path <tree>, empty home; any entry",
+        "endpoint": "discover --json, HOME=<tree>; any client or server entry"
+      },
+      "wall_seconds": 84.7,
+      "ok": 82,
+      "error": 0,
+      "n/a": 0
+    },
+    {
+      "tool": "shadow-mcp",
+      "display": "shadow-mcp",
+      "source": "shadow-mcp",
+      "surfaces": {
+        "endpoint": "discover --home <tree> --no-processes --no-cli; any server in the inventory"
+      },
+      "wall_seconds": 38.2,
+      "ok": 41,
+      "error": 0,
+      "n/a": 41
+    },
+    {
+      "tool": "snyk-agent-scan",
+      "display": "Snyk Agent Scan",
+      "source": "snyk/agent-scan",
+      "surfaces": {
+        "endpoint": "inspect --json with HOME=<case> (machine discovery; no analysis upload)"
+      },
+      "wall_seconds": 38.9,
+      "ok": 41,
+      "error": 0,
+      "n/a": 41
+    },
+    {
+      "tool": "cisco-mcp-scanner",
+      "display": "Cisco MCP Scanner",
+      "source": "cisco-ai-defense/mcp-scanner",
+      "surfaces": {
+        "endpoint": "--scan-known-configs --analyzers yara with HOME=<case>"
+      },
+      "wall_seconds": 67.7,
+      "ok": 41,
+      "error": 0,
+      "n/a": 41
+    },
+    {
+      "tool": "claw-hunter",
+      "display": "Claw-Hunter (Backslash)",
+      "source": "backslash-security/claw-hunter",
+      "surfaces": {
+        "endpoint": "claw-hunter.sh --json with HOME=<case>"
+      },
+      "wall_seconds": 41.0,
+      "ok": 41,
+      "error": 0,
+      "n/a": 41
+    },
+    {
+      "tool": "ai-detector",
+      "display": "AI-Detector (shamo0)",
+      "source": "shamo0/AI-Detector",
+      "surfaces": {
+        "endpoint": "detect-shadow-ai.sh, SHADOW_AI_REPORT=json, network module off, HOME=<case>"
+      },
+      "wall_seconds": 57.8,
+      "ok": 41,
+      "error": 0,
+      "n/a": 41
+    }
+  ],
+  "self_check": {
+    "repo": "aisecnomad/Project-Nexus",
+    "status": "error",
+    "detected": false,
+    "items": 0,
+    "note": "incomplete scan (exit 3)"
+  }
+}

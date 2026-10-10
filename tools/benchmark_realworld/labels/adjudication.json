@@ -1,0 +1,71 @@
+{
+  "policy": "Adjudication of labeler disagreements, written after both labelers returned and before any scored tool run. Each decision cites lines that were checked by the orchestrator. The policy is applied to every repository alike: when the protocol's criteria are not clearly met either way, the label is ambiguous and the repository is left out of the primary metrics.",
+  "decisions": {
+    "rw-09-aider": {
+      "label": "ambiguous",
+      "candidates": ["llm", "agent"],
+      "confidence": "medium",
+      "evidence": [
+        "aider/coders/wholefile_func_coder.py: model output is a function call that the code applies as an edit",
+        "aider/coders/base_coder.py:100-101 and 933-940: reflection loop, max_reflections = 3"
+      ],
+      "reason": "Model output selects edit functions that the code applies inside a bounded reflection loop, which reads as clause (a). Labeler B read function calls as output formatting only, and the cited evidence does not settle which reading the protocol intends, so the label is ambiguous."
+    },
+    "rw-11-chatbot-ui": {
+      "label": "ambiguous",
+      "candidates": ["llm", "agent"],
+      "confidence": "medium",
+      "evidence": [
+        "app/api/chat/tools/route.ts:81 and 153: executes each model-selected tool via fetch",
+        "app/api/chat/tools/route.ts:207: one follow-up completion, with no loop back to the model"
+      ],
+      "reason": "One round of model-selected tool execution and no loop. Clause (a) asks for a loop, and tool execution is present, so the evidence is weak either way."
+    },
+    "rw-32-fastapi": {
+      "label": "llm",
+      "confidence": "high",
+      "evidence": [
+        "scripts/translate.py:14: imports pydantic_ai Agent",
+        "scripts/translate.py:143 and 157: Agent('openai-chat:...') and run_sync() call an LLM provider"
+      ],
+      "reason": "A maintainer script in the repository calls an LLM provider. Protocol v1.1 clarifies that 'shipped' covers repository code outside documentation and tests. The stratum stays ordinary because it is a design-time choice; the label is evidence-based."
+    },
+    "rw-35-private-gpt": {
+      "label": "agent",
+      "confidence": "high",
+      "evidence": [
+        "private_gpt/server/mcp/_runtime.py:10: imports mcp ClientSession (MCP client implementation, clause b)",
+        "private_gpt/server/mcp/mcp_service.py:49: builds mcp__<server>__<tool> names for MCP tools"
+      ],
+      "reason": "Shipped MCP client implementation (clause b). The orchestrator's first pass missed it."
+    },
+    "rw-36-azure-search-openai-demo": {
+      "label": "agent",
+      "confidence": "high",
+      "evidence": [
+        ".github/agents/triager.agent.md: agent definition with a tools list (clause c)",
+        ".github/agents/fixer.agent.md: second agent definition (clause c)",
+        "app/backend/prepdocslib/servicesetup.py:12: OpenAI SDK (llm evidence in addition)"
+      ],
+      "reason": "Agent definitions for an AI platform are in the repository (clause c). The orchestrator's first pass had marked it ambiguous from the RAG code alone."
+    },
+    "rw-39-streamlit-llm-examples": {
+      "label": "agent",
+      "confidence": "high",
+      "evidence": [
+        "pages/2_Chat_with_search.py:3 and 40-46: initialize_agent with AgentType.ZERO_SHOT_REACT_DESCRIPTION",
+        "pages/2_Chat_with_search.py:6 and 40: DuckDuckGoSearchRun tool that the agent calls"
+      ],
+      "reason": "A ReAct agent loop with a search tool, in a shipped sample page (clause a). The orchestrator's first pass had marked it llm from two other pages only."
+    },
+    "rw-41-llms-from-scratch": {
+      "label": "llm",
+      "confidence": "high",
+      "evidence": [
+        "pkg/llms_from_scratch/ch07.py:212: query_model posts to the Ollama /api/chat endpoint",
+        "ch07/03_model-evaluation/llm-instruction-eval-openai.ipynb:164: chat.completions.create call"
+      ],
+      "reason": "LLM API calls in shipped package code and sample notebooks. The stratum stays hard-negative because it is a design-time choice; the label is evidence-based."
+    }
+  }
+}

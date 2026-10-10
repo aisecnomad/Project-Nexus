@@ -639,7 +639,7 @@ class FakeEngine:
     abandoned_workers = []
     def __init__(self, cfg, progress=None):
         pass
-    def run(self, only=None):
+    def run(self, only=None, **kwargs):
         register_checkout(checkout)
         command = [sys.executable, '-c', sleeper, pidfile]
         worker = threading.Thread(target=lambda: run_bounded_clone(command, dict(os.environ), Ctx(), 120))

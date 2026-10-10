@@ -97,11 +97,21 @@ def test_corroborated_identifiers_still_count(tmp_path, index, files, signature)
 
 
 def test_uncorroborated_lexical_evidence_is_capped_in_every_category(tmp_path, index):
-    findings, _ = _run(
+    # A lexical MCPClient( with no MCP dependency, import or configuration
+    # anywhere in the project establishes nothing: no finding, one note.
+    findings, ctx = _run(
         index, _write(tmp_path, {"App.java": "class App { void run() { var c = new MCPClient(); } }\n"})
     )
+    assert not _projects(findings) and not ctx.stats.incomplete
+    assert [w for w in ctx.stats.warnings if "App.java" in w and "evidence not reported" in w]
+    # Beside an unrelated established library the evidence is kept at the 0.6
+    # cap but listed as potential, so frameworks[] does not name MCP.
+    _write(tmp_path, {"requirements.txt": "openai>=1.0\n"})
+    findings, _ = _run(index, tmp_path)
     project = next(f for f in _projects(findings))
-    assert "protocol.mcp" in project.frameworks and project.confidence <= 0.6
+    assert "protocol.mcp" not in project.frameworks
+    assert project.metadata["potential_frameworks"] == ["protocol.mcp"]
+    assert [e.weight for e in project.evidence if e.signal == "code:protocol.mcp"] == [pytest.approx(0.6)]
     _write(
         tmp_path,
         {
@@ -110,7 +120,35 @@ def test_uncorroborated_lexical_evidence_is_capped_in_every_category(tmp_path, i
         },
     )
     findings, _ = _run(index, tmp_path)
-    assert next(f for f in _projects(findings)).confidence > 0.6
+    project = next(f for f in _projects(findings))
+    assert "protocol.mcp" in project.frameworks and project.confidence > 0.6
+    assert "potential_frameworks" not in project.metadata
+
+
+def test_evidence_only_matches_keep_weight_but_establish_nothing(index):
+    # apply_matches(establish=False): the evidence stays, with its weight and
+    # location; frameworks[], model_providers[], capabilities and the agent
+    # indicator count do not change, and the signature is listed as potential.
+    from shadowscan.connectors.common import apply_matches
+    from shadowscan.models import Finding, Surface
+
+    finding = Finding(
+        surface=Surface.CODE,
+        connector="code.filesystem",
+        kind=Kind.FRAMEWORK_USAGE,
+        title="",
+        resource="r",
+        resource_type="project",
+    )
+    framework = next(m for m in index.match_code("agent = Agent(role='x')\n", "python") if m.agent_indicator)
+    provider = index.match_domain("api.anthropic.com")[0]
+    indicators = apply_matches(finding, [framework, provider], location="app.py", establish=False)
+    assert indicators == 0 and finding.frameworks == [] and finding.model_providers == []
+    assert finding.capabilities == [] and finding.metadata["agent_indicators"] == 0
+    assert finding.metadata["potential_frameworks"] == [framework.signature_id]
+    assert finding.metadata["potential_providers"] == ["provider.anthropic"]
+    assert {e.signature for e in finding.evidence} == {framework.signature_id, "provider.anthropic"}
+    assert all(e.weight > 0 and e.location.startswith("app.py") for e in finding.evidence)
 
 
 def test_supporting_tools_alone_are_not_titled_as_an_llm_sdk(tmp_path, index):
@@ -239,6 +277,27 @@ def test_mcp_server_capabilities_come_from_registered_tools(tmp_path, index):
     assert "data-access" in found["fs"].capabilities and found["fs"].metadata["mcp_tools"] == ["write_file"]
     assert "autonomous" not in found["thinking"].capabilities
     assert found["fs"].risk.score >= found["thinking"].risk.score
+    # Both projects implement a server, whatever their tools imply.
+    assert all("mcp-server" in f.capabilities for f in found.values())
+    assert all(
+        f.metadata["mcp_server"]["constructions"][0]["file"].endswith("/index.ts") for f in found.values()
+    )
+
+
+def test_low_level_sdk_server_is_bound_and_http_servers_are_not(tmp_path, index):
+    files = {
+        "low/package.json": '{"dependencies": {"@modelcontextprotocol/sdk": "^1.17.0"}}',
+        "low/index.ts": 'import { Server } from "@modelcontextprotocol/sdk/server/index.js";\n'
+        'const server = new Server({ name: "low", version: "1" }, { capabilities: {} });\n',
+        "web/package.json": '{"dependencies": {"socket.io": "^4.8.0"}}',
+        "web/index.ts": 'import { Server } from "http";\nconst server = new Server();\nserver.listen(8000);\n',
+    }
+    found = {f.metadata["path"]: f for f in _projects(_run(index, _write(tmp_path, files))[0])}
+    assert set(found) == {"low"}
+    assert "mcp-server" in found["low"].capabilities
+    assert [c["construct"] for c in found["low"].metadata["mcp_server"]["constructions"]] == [
+        "@modelcontextprotocol/sdk/server/index.js:Server("
+    ]
 
 
 @pytest.mark.parametrize(

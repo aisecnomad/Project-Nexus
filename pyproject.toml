@@ -84,6 +84,7 @@ ignore = ["SIM108", "SIM102", "SIM103", "C408", "SIM105", "UP042"]
 "tests/**" = ["E501"]
 # Benchmark case templates embed source files from other languages verbatim.
 "tools/benchmark/*_cases.py" = ["E501"]
+"benchmarks/*/corpus.py" = ["E501"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -117,6 +118,7 @@ module = [
     "botocore.*",
     "oci",
     "oci.*",
+    "google",
     "google.auth",
     "google.auth.*",
     "azure.identity",

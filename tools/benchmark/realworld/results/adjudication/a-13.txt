@@ -1,0 +1,1 @@
+[{"card": "A105", "ai": "yes", "app": "yes", "agent": "yes"}, {"card": "A106", "ai": "no", "app": "no", "agent": "no"}, {"card": "A107", "ai": "no", "app": "no", "agent": "no"}, {"card": "A108", "ai": "no", "app": "no", "agent": "no"}, {"card": "A109", "ai": "yes", "app": "no", "agent": "yes"}]

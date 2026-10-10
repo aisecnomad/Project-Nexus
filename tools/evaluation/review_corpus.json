@@ -122,7 +122,13 @@
       },
       "present": false,
       "assertions": {
-        "max_agent_findings": 0
+        "max_agent_findings": 0,
+        "forbidden_findings": [
+          {
+            "kind": "framework-usage",
+            "provider_signature": "provider.openai-compatible"
+          }
+        ]
       }
     },
     {

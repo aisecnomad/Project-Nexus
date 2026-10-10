@@ -1,0 +1,650 @@
+{
+  "schema": 1,
+  "metadata": {
+    "name": "Benchmark follow-up regressions, October 2026",
+    "type": "synthetic",
+    "provenance": "Small files written from scratch for this regression suite (AI-assisted) that reproduce the shapes behind the misses and false positives observed on 87 public repositories with ShadowScan 0.1.2. Author-written reproductions of public-repository shapes, not copies: no copied third party code, live repositories, independent labels or field accuracy claims."
+  },
+  "cases": [
+    {
+      "id": "rust-toolcallback-not-spring-ai",
+      "family": "precision",
+      "description": "Rust rig service declaring `pub trait ToolCallback`: a Java-only Spring AI pattern must not attribute framework.spring-ai to a Rust file",
+      "files": {
+        "Cargo.toml": "[package]\nname = \"ledger-serve\"\nversion = \"0.3.1\"\nedition = \"2021\"\n\n[dependencies]\nrig-core = \"0.11\"\ntokio = { version = \"1\", features = [\"full\"] }\nserde = { version = \"1\", features = [\"derive\"] }\n",
+        "src/serve.rs": "use rig::providers::openai;\nuse serde::Deserialize;\n\n#[derive(Deserialize)]\npub struct ToolCall {\n    pub name: String,\n    pub arguments: String,\n}\n\n/// Invoked by the serving loop when the model selects a tool.\npub trait ToolCallback {\n    fn call(&self, call: &ToolCall) -> Result<String, String>;\n}\n\npub fn client() -> openai::Client {\n    openai::Client::from_env()\n}\n",
+        "src/main.rs": "mod serve;\n\n#[tokio::main]\nasync fn main() {\n    let _client = serve::client();\n    println!(\"ledger-serve ready\");\n}\n"
+      },
+      "target": {
+        "kind": "framework-usage",
+        "signature": "framework.spring-ai"
+      },
+      "present": false,
+      "assertions": {
+        "forbidden_signatures": [
+          "framework.spring-ai"
+        ],
+        "expected_findings": [
+          {
+            "kind": "framework-usage",
+            "product_signature": "framework.rig"
+          }
+        ],
+        "forbidden_findings": [
+          {
+            "kind": "framework-usage",
+            "product_signature": "framework.spring-ai"
+          }
+        ]
+      }
+    },
+    {
+      "id": "test-fixture-host-only",
+      "family": "precision",
+      "description": "A crawler test fixture that only names https://huggingface.co/ in test data establishes nothing",
+      "files": {
+        "test/data/crawler.json": "{\n  \"seeds\": [\n    \"https://huggingface.co/\",\n    \"https://example.org/docs\",\n    \"https://example.net/blog\"\n  ],\n  \"max_depth\": 2,\n  \"respect_robots\": true\n}\n",
+        "test/crawler_test.py": "import json\nfrom pathlib import Path\n\n\ndef test_seeds_are_absolute_urls():\n    data = json.loads(Path(__file__).with_name(\"data\").joinpath(\"crawler.json\").read_text())\n    assert all(seed.startswith(\"https://\") for seed in data[\"seeds\"])\n",
+        "README.md": "# linkwalker\n\nA tiny breadth-first crawler used in networking exercises.\n"
+      },
+      "target": {
+        "kind": "framework-usage",
+        "signature": "provider.huggingface"
+      },
+      "present": false,
+      "assertions": {
+        "exact_findings": [],
+        "forbidden_signatures": [
+          "provider.huggingface"
+        ]
+      }
+    },
+    {
+      "id": "huggingface-link-in-comment",
+      "family": "precision",
+      "description": "An OpenAI SDK app with a comment linking a huggingface.co model card: provider.openai is expected, provider.huggingface is not",
+      "files": {
+        "requirements.txt": "openai==1.59.0\npython-dotenv==1.0.1\n",
+        "src/app.py": "import os\n\nfrom openai import OpenAI\n\n# Prompt wording adapted from the model card at\n# https://huggingface.co/meta-llama/Llama-3.1-8B-Instruct (system prompt section).\nSYSTEM = \"You are a terse assistant for the shipping desk.\"\n\nclient = OpenAI(api_key=os.environ[\"OPENAI_API_KEY\"])\n\n\ndef answer(question: str) -> str:\n    response = client.chat.completions.create(\n        model=\"gpt-4o-mini\",\n        messages=[{\"role\": \"system\", \"content\": SYSTEM}, {\"role\": \"user\", \"content\": question}],\n    )\n    return response.choices[0].message.content or \"\"\n"
+      },
+      "target": {
+        "kind": "framework-usage",
+        "signature": "provider.openai"
+      },
+      "present": true,
+      "assertions": {
+        "forbidden_signatures": [
+          "provider.huggingface"
+        ],
+        "expected_findings": [
+          {
+            "kind": "framework-usage",
+            "provider_signature": "provider.openai"
+          }
+        ],
+        "forbidden_findings": [
+          {
+            "kind": "framework-usage",
+            "provider_signature": "provider.huggingface"
+          }
+        ]
+      }
+    },
+    {
+      "id": "inference-client-call-shape",
+      "family": "precision",
+      "description": "huggingface_hub InferenceClient using the OpenAI-compatible chat.completions.create call shape: provider.huggingface, never provider.openai",
+      "files": {
+        "requirements.txt": "huggingface-hub==0.27.1\n",
+        "scripts/translate.py": "import os\nimport sys\n\nfrom huggingface_hub import InferenceClient\n\nclient = InferenceClient(model=\"Helsinki-NLP/opus-mt-en-de\", token=os.environ.get(\"HF_TOKEN\"))\n\n\ndef translate(text: str) -> str:\n    completion = client.chat.completions.create(\n        messages=[{\"role\": \"user\", \"content\": f\"Translate to German: {text}\"}],\n        max_tokens=256,\n    )\n    return completion.choices[0].message.content\n\n\nif __name__ == \"__main__\":\n    print(translate(\" \".join(sys.argv[1:])))\n"
+      },
+      "target": {
+        "kind": "framework-usage",
+        "signature": "provider.huggingface"
+      },
+      "present": true,
+      "assertions": {
+        "forbidden_signatures": [
+          "provider.openai"
+        ],
+        "expected_findings": [
+          {
+            "kind": "framework-usage",
+            "provider_signature": "provider.huggingface"
+          }
+        ],
+        "forbidden_findings": [
+          {
+            "kind": "framework-usage",
+            "provider_signature": "provider.openai"
+          }
+        ]
+      }
+    },
+    {
+      "id": "browserbase-sdk-only",
+      "family": "precision",
+      "description": "Browserbase session SDK with its API key: platform.browserbase usage, not Stagehand and not an agent",
+      "files": {
+        "pyproject.toml": "[project]\nname = \"snapshot-bot\"\nversion = \"0.2.0\"\nrequires-python = \">=3.11\"\ndependencies = [\n  \"browserbase>=1.0\",\n  \"playwright>=1.48\",\n]\n",
+        "tools/browser.py": "import os\n\nfrom browserbase import Browserbase\n\n\ndef new_session():\n    bb = Browserbase(api_key=os.environ[\"BROWSERBASE_API_KEY\"])\n    return bb.sessions.create(project_id=os.environ[\"BROWSERBASE_PROJECT_ID\"])\n\n\ndef connect_url(session) -> str:\n    return session.connect_url\n"
+      },
+      "target": {
+        "kind": "framework-usage",
+        "signature": "platform.browserbase"
+      },
+      "present": true,
+      "assertions": {
+        "forbidden_signatures": [
+          "framework.stagehand"
+        ],
+        "expected_findings": [
+          {
+            "kind": "framework-usage",
+            "product_signature": "platform.browserbase"
+          }
+        ],
+        "forbidden_findings": [
+          {
+            "kind": "framework-usage",
+            "product_signature": "framework.stagehand"
+          }
+        ],
+        "max_agent_findings": 0
+      }
+    },
+    {
+      "id": "ci-image-only",
+      "family": "precision",
+      "description": "A workflow job running third-party checks in the modelcontextprotocol/python-sdk container image is not an MCP finding",
+      "files": {
+        ".github/workflows/third-party.yml": "name: third-party\non:\n  pull_request:\n    paths:\n      - \"vendor/**\"\njobs:\n  conformance:\n    runs-on: ubuntu-latest\n    container:\n      image: modelcontextprotocol/python-sdk\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2\n        with:\n          persist-credentials: false\n      - run: ./vendor/run-conformance.sh\n",
+        "vendor/run-conformance.sh": "#!/bin/sh\nset -eu\necho \"conformance checks for vendored schemas\"\n"
+      },
+      "target": {
+        "kind": "framework-usage",
+        "signature": "protocol.mcp"
+      },
+      "present": false,
+      "assertions": {
+        "exact_findings": [],
+        "forbidden_signatures": [
+          "protocol.mcp"
+        ]
+      }
+    },
+    {
+      "id": "docs-json-env-names",
+      "family": "precision",
+      "description": "A documentation site's static server catalog listing BROWSERBASE_API_KEY and friends is not an agent, and never Stagehand",
+      "files": {
+        "documentation/static/servers.json": "[\n  {\n    \"name\": \"browser\",\n    \"summary\": \"Headless browser sessions\",\n    \"env\": [\"BROWSERBASE_API_KEY\", \"BROWSERBASE_PROJECT_ID\"]\n  },\n  {\n    \"name\": \"search\",\n    \"summary\": \"Web search\",\n    \"env\": [\"SEARCH_API_KEY\"]\n  },\n  {\n    \"name\": \"storage\",\n    \"summary\": \"Object storage\",\n    \"env\": [\"STORAGE_BUCKET\", \"STORAGE_REGION\"]\n  }\n]\n",
+        "documentation/index.md": "# Server catalog\n\nThe table on this page is rendered from `static/servers.json`.\n",
+        "package.json": "{\n  \"name\": \"catalog-docs\",\n  \"private\": true,\n  \"scripts\": { \"build\": \"docusaurus build\" },\n  \"dependencies\": { \"@docusaurus/core\": \"3.6.3\", \"react\": \"18.3.1\" }\n}\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.stagehand"
+      },
+      "present": false,
+      "assertions": {
+        "forbidden_signatures": [
+          "framework.stagehand"
+        ],
+        "max_agent_findings": 0,
+        "forbidden_findings": [
+          {
+            "kind": "agent"
+          }
+        ]
+      }
+    },
+    {
+      "id": "rust-create-agent-lexical",
+      "family": "precision",
+      "description": "A Rust `create_agent(` constructor with no LangChain evidence anywhere is not framework.langchain",
+      "files": {
+        "Cargo.toml": "[package]\nname = \"fleet-scheduler\"\nversion = \"1.4.0\"\nedition = \"2021\"\n\n[dependencies]\nuuid = { version = \"1\", features = [\"v4\"] }\n",
+        "src/agents.rs": "use uuid::Uuid;\n\n#[derive(Debug, Clone)]\npub struct Agent {\n    pub id: Uuid,\n    pub hostname: String,\n    pub capacity: u32,\n}\n\n/// Registers a build agent with the scheduler.\npub fn create_agent(hostname: &str, capacity: u32) -> Agent {\n    Agent { id: Uuid::new_v4(), hostname: hostname.to_string(), capacity }\n}\n",
+        "src/main.rs": "mod agents;\n\nfn main() {\n    let agent = agents::create_agent(\"builder-07\", 4);\n    println!(\"{:?}\", agent);\n}\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.langchain"
+      },
+      "present": false,
+      "assertions": {
+        "exact_findings": [],
+        "forbidden_signatures": [
+          "framework.langchain"
+        ]
+      }
+    },
+    {
+      "id": "python-handoff-def-in-tests",
+      "family": "precision",
+      "description": "A Pydantic AI project whose tests define `async def handoff(` is not the OpenAI Agents SDK",
+      "files": {
+        "pyproject.toml": "[project]\nname = \"triage-assistant\"\nversion = \"0.5.0\"\nrequires-python = \">=3.11\"\ndependencies = [\"pydantic-ai>=0.4\"]\n\n[project.optional-dependencies]\ndev = [\"pytest>=8\", \"pytest-asyncio>=0.24\"]\n",
+        "triage/agent.py": "from pydantic_ai import Agent\n\ntriage = Agent(\"openai:gpt-4o-mini\", system_prompt=\"Classify support tickets by urgency.\")\n\n\nasync def classify(text: str) -> str:\n    result = await triage.run(text)\n    return result.output\n",
+        "tests/test_agent.py": "import pytest\n\nfrom triage.agent import classify\n\n\nasync def handoff(ticket: dict) -> dict:\n    \"\"\"Simulate passing a classified ticket to the on-call queue.\"\"\"\n    ticket[\"queue\"] = \"on-call\" if ticket[\"urgency\"] == \"high\" else \"backlog\"\n    return ticket\n\n\n@pytest.mark.asyncio\nasync def test_handoff_routes_high_urgency():\n    ticket = await handoff({\"urgency\": \"high\"})\n    assert ticket[\"queue\"] == \"on-call\"\n\n\n@pytest.mark.asyncio\nasync def test_classify_returns_text(monkeypatch):\n    assert callable(classify)\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.openai-agents-sdk"
+      },
+      "present": false,
+      "assertions": {
+        "forbidden_signatures": [
+          "framework.openai-agents-sdk"
+        ],
+        "expected_findings": [
+          {
+            "kind": "agent",
+            "product_signature": "framework.pydantic-ai"
+          }
+        ],
+        "forbidden_findings": [
+          {
+            "kind": "agent",
+            "product_signature": "framework.openai-agents-sdk"
+          },
+          {
+            "kind": "framework-usage",
+            "product_signature": "framework.openai-agents-sdk"
+          }
+        ]
+      }
+    },
+    {
+      "id": "dify-api-key-env-not-workflow",
+      "family": "precision",
+      "description": "A TypeScript provider catalog naming DIFY_API_KEY is not a Dify workflow or agent finding",
+      "files": {
+        "package.json": "{\n  \"name\": \"provider-catalog\",\n  \"private\": true,\n  \"type\": \"module\",\n  \"dependencies\": { \"zod\": \"^3.23.8\" }\n}\n",
+        "src/providers.ts": "export interface ProviderEntry {\n  id: string;\n  label: string;\n  envKey: string;\n  docs: string;\n}\n\nexport const PROVIDERS: ProviderEntry[] = [\n  { id: \"dify\", label: \"Dify\", envKey: \"DIFY_API_KEY\", docs: \"docs/providers/dify.md\" },\n  { id: \"mailer\", label: \"Mailer\", envKey: \"MAILER_API_KEY\", docs: \"docs/providers/mailer.md\" },\n  { id: \"maps\", label: \"Maps\", envKey: \"MAPS_API_KEY\", docs: \"docs/providers/maps.md\" },\n];\n\nexport function envKeyFor(id: string): string | undefined {\n  return PROVIDERS.find((entry) => entry.id === id)?.envKey;\n}\n"
+      },
+      "target": {
+        "kind": "workflow",
+        "signature": "platform.dify"
+      },
+      "present": false,
+      "assertions": {
+        "max_agent_findings": 0,
+        "forbidden_findings": [
+          {
+            "kind": "workflow"
+          },
+          {
+            "kind": "agent"
+          }
+        ]
+      }
+    },
+    {
+      "id": "model-id-in-code",
+      "family": "recall",
+      "description": "A Python module naming model=\"claude-3-5-sonnet-20241022\" without any SDK import is Anthropic usage with the model recorded",
+      "files": {
+        "app/settings.py": "import os\n\nDEFAULTS = {\n    \"model\": \"claude-3-5-sonnet-20241022\",\n    \"max_tokens\": 1024,\n    \"temperature\": 0.2,\n}\n\n\ndef settings() -> dict:\n    return {**DEFAULTS, \"api_base\": os.environ.get(\"LLM_API_BASE\", \"\")}\n",
+        "app/__init__.py": "\"\"\"Synthetic package for the model-id-in-code case.\"\"\"\n"
+      },
+      "target": {
+        "kind": "framework-usage",
+        "signature": "provider.anthropic"
+      },
+      "present": true,
+      "assertions": {
+        "expected_findings": [
+          {
+            "kind": "framework-usage",
+            "provider_signature": "provider.anthropic"
+          }
+        ]
+      }
+    },
+    {
+      "id": "litellm-route-in-yaml",
+      "family": "recall",
+      "description": "A LiteLLM model config routing to bedrock/anthropic.claude-3-5-sonnet-20241022-v2:0 attributes both Bedrock and Anthropic",
+      "files": {
+        "requirements.txt": "litellm==1.55.0\npyyaml==6.0.2\n",
+        "config/models.yaml": "model_list:\n  - model_name: sonnet\n    litellm_params:\n      model: bedrock/anthropic.claude-3-5-sonnet-20241022-v2:0\n      aws_region_name: us-east-1\n",
+        "router.py": "import litellm\nimport yaml\n\nwith open(\"config/models.yaml\") as fh:\n    MODELS = yaml.safe_load(fh)[\"model_list\"]\n\n\ndef complete(prompt: str) -> str:\n    entry = MODELS[0][\"litellm_params\"]\n    response = litellm.completion(model=entry[\"model\"], messages=[{\"role\": \"user\", \"content\": prompt}])\n    return response.choices[0].message.content\n"
+      },
+      "target": {
+        "kind": "framework-usage",
+        "signature": "provider.aws-bedrock"
+      },
+      "present": true,
+      "assertions": {
+        "expected_findings": [
+          {
+            "kind": "framework-usage",
+            "provider_signature": "provider.aws-bedrock"
+          },
+          {
+            "kind": "framework-usage",
+            "provider_signature": "provider.anthropic"
+          }
+        ]
+      }
+    },
+    {
+      "id": "fastmcp-server",
+      "family": "recall",
+      "description": "A Python FastMCP server with the mcp dependency is framework-usage with the mcp-server capability",
+      "files": {
+        "pyproject.toml": "[project]\nname = \"notes-mcp\"\nversion = \"0.1.0\"\nrequires-python = \">=3.11\"\ndependencies = [\"mcp>=1.2\"]\n",
+        "notes_mcp/server.py": "from mcp.server.fastmcp import FastMCP\n\nmcp = FastMCP(\"x\")\n\n\n@mcp.tool()\ndef add_note(title: str, body: str) -> str:\n    \"\"\"Store a note and return its title.\"\"\"\n    return title\n\n\nif __name__ == \"__main__\":\n    mcp.run()\n"
+      },
+      "target": {
+        "kind": "framework-usage",
+        "signature": "protocol.mcp"
+      },
+      "present": true,
+      "assertions": {
+        "expected_findings": [
+          {
+            "kind": "framework-usage",
+            "product_signature": "protocol.mcp",
+            "capabilities": [
+              "mcp-server",
+              "tool-use"
+            ]
+          }
+        ],
+        "max_agent_findings": 0
+      }
+    },
+    {
+      "id": "mcp-server-typescript",
+      "family": "recall",
+      "description": "A TypeScript `new McpServer(` with the @modelcontextprotocol/sdk dependency carries the mcp-server capability",
+      "files": {
+        "package.json": "{\n  \"name\": \"weather-mcp\",\n  \"private\": true,\n  \"type\": \"module\",\n  \"dependencies\": { \"@modelcontextprotocol/sdk\": \"^1.12.0\", \"zod\": \"^3.23.8\" }\n}\n",
+        "src/index.ts": "import { McpServer } from \"@modelcontextprotocol/sdk/server/mcp.js\";\nimport { StdioServerTransport } from \"@modelcontextprotocol/sdk/server/stdio.js\";\nimport { z } from \"zod\";\n\nconst server = new McpServer({ name: \"weather\", version: \"1.0.0\" });\n\nserver.registerTool(\n  \"forecast\",\n  { description: \"Three-day forecast\", inputSchema: { city: z.string() } },\n  async ({ city }) => ({ content: [{ type: \"text\", text: `Forecast for ${city}: mild` }] }),\n);\n\nawait server.connect(new StdioServerTransport());\n"
+      },
+      "target": {
+        "kind": "framework-usage",
+        "signature": "protocol.mcp"
+      },
+      "present": true,
+      "assertions": {
+        "expected_findings": [
+          {
+            "kind": "framework-usage",
+            "product_signature": "protocol.mcp",
+            "capabilities": [
+              "mcp-server",
+              "tool-use"
+            ]
+          }
+        ],
+        "max_agent_findings": 0
+      }
+    },
+    {
+      "id": "go-mcp-server",
+      "family": "recall",
+      "description": "A Go `server.NewMCPServer(` with the mark3labs/mcp-go module carries the mcp-server capability",
+      "files": {
+        "go.mod": "module example.com/inventory-mcp\n\ngo 1.23\n\nrequire github.com/mark3labs/mcp-go v0.32.0\n",
+        "main.go": "package main\n\nimport (\n\t\"context\"\n\n\t\"github.com/mark3labs/mcp-go/mcp\"\n\t\"github.com/mark3labs/mcp-go/server\"\n)\n\nfunc main() {\n\ts := server.NewMCPServer(\"inventory\", \"1.0.0\")\n\ts.AddTool(mcp.NewTool(\"count_stock\", mcp.WithDescription(\"Count items in stock\")), countStock)\n\t_ = server.ServeStdio(s)\n}\n\nfunc countStock(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {\n\treturn mcp.NewToolResultText(\"42\"), nil\n}\n"
+      },
+      "target": {
+        "kind": "framework-usage",
+        "signature": "protocol.mcp"
+      },
+      "present": true,
+      "assertions": {
+        "expected_findings": [
+          {
+            "kind": "framework-usage",
+            "product_signature": "protocol.mcp",
+            "capabilities": [
+              "mcp-server",
+              "tool-use"
+            ]
+          }
+        ],
+        "max_agent_findings": 0
+      }
+    },
+    {
+      "id": "anthropic-bedrock-client",
+      "family": "recall",
+      "description": "`from anthropic import AnthropicBedrock` is Claude on Bedrock: provider.aws-bedrock expected",
+      "files": {
+        "requirements.txt": "anthropic[bedrock]==0.40.0\n",
+        "summarize.py": "from anthropic import AnthropicBedrock\n\nclient = AnthropicBedrock(aws_region=\"us-west-2\")\n\n\ndef summarize(text: str) -> str:\n    message = client.messages.create(\n        model=\"anthropic.claude-3-5-sonnet-20241022-v2:0\",\n        max_tokens=300,\n        messages=[{\"role\": \"user\", \"content\": f\"Summarize: {text}\"}],\n    )\n    return message.content[0].text\n"
+      },
+      "target": {
+        "kind": "framework-usage",
+        "signature": "provider.aws-bedrock"
+      },
+      "present": true,
+      "assertions": {
+        "expected_findings": [
+          {
+            "kind": "framework-usage",
+            "provider_signature": "provider.aws-bedrock"
+          },
+          {
+            "kind": "framework-usage",
+            "provider_signature": "provider.anthropic"
+          }
+        ]
+      }
+    },
+    {
+      "id": "voyage-import",
+      "family": "recall",
+      "description": "`import voyageai` is Voyage AI embedding usage",
+      "files": {
+        "requirements.txt": "voyageai==0.3.2\nnumpy==2.2.0\n",
+        "embed.py": "import os\n\nimport voyageai\n\nvo = voyageai.Client(api_key=os.environ[\"VOYAGE_API_KEY\"])\n\n\ndef embed(texts: list[str]) -> list[list[float]]:\n    return vo.embed(texts, model=\"voyage-3\").embeddings\n"
+      },
+      "target": {
+        "kind": "framework-usage",
+        "signature": "provider.voyage-ai"
+      },
+      "present": true,
+      "assertions": {
+        "expected_findings": [
+          {
+            "kind": "framework-usage",
+            "provider_signature": "provider.voyage-ai"
+          }
+        ]
+      }
+    },
+    {
+      "id": "ollamasharp-csproj",
+      "family": "recall",
+      "description": "A .NET project referencing OllamaSharp with a global using is Ollama usage",
+      "files": {
+        "CustomerSupport.csproj": "<Project Sdk=\"Microsoft.NET.Sdk\">\n\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net9.0</TargetFramework>\n    <Nullable>enable</Nullable>\n    <ImplicitUsings>enable</ImplicitUsings>\n  </PropertyGroup>\n\n  <ItemGroup>\n    <PackageReference Include=\"OllamaSharp\" Version=\"5.1.7\" />\n  </ItemGroup>\n\n</Project>\n",
+        "GlobalUsings.cs": "global using OllamaSharp;\nglobal using System.Text;\n",
+        "Program.cs": "var ollama = new OllamaApiClient(new Uri(\"http://localhost:11434\"), \"llama3.2\");\nvar reply = new StringBuilder();\nawait foreach (var token in ollama.GenerateAsync(\"Draft a polite refund reply.\"))\n{\n    reply.Append(token?.Response);\n}\nConsole.WriteLine(reply.ToString());\n"
+      },
+      "target": {
+        "kind": "framework-usage",
+        "signature": "provider.ollama"
+      },
+      "present": true,
+      "assertions": {
+        "expected_findings": [
+          {
+            "kind": "framework-usage",
+            "provider_signature": "provider.ollama"
+          }
+        ]
+      }
+    },
+    {
+      "id": "directory-packages-props",
+      "family": "recall",
+      "description": "Central package management: Directory.Packages.props pinning Microsoft.Extensions.AI is framework usage",
+      "files": {
+        "dotnet/Directory.Packages.props": "<Project>\n  <PropertyGroup>\n    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>\n  </PropertyGroup>\n  <ItemGroup>\n    <PackageVersion Include=\"Microsoft.Extensions.AI\" Version=\"9.5.0\" />\n    <PackageVersion Include=\"Microsoft.Extensions.Logging\" Version=\"9.0.5\" />\n  </ItemGroup>\n</Project>\n",
+        "dotnet/Assistant/Assistant.csproj": "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net9.0</TargetFramework>\n    <ImplicitUsings>enable</ImplicitUsings>\n  </PropertyGroup>\n  <ItemGroup>\n    <PackageReference Include=\"Microsoft.Extensions.AI\" />\n  </ItemGroup>\n</Project>\n",
+        "dotnet/Assistant/Program.cs": "using Microsoft.Extensions.AI;\n\nIChatClient client = new SampleChatClient();\nvar response = await client.GetResponseAsync(\"Summarize today's standup notes.\");\nConsole.WriteLine(response.Text);\n"
+      },
+      "target": {
+        "kind": "framework-usage",
+        "signature": "framework.microsoft-extensions-ai"
+      },
+      "present": true,
+      "assertions": {
+        "expected_findings": [
+          {
+            "kind": "framework-usage",
+            "product_signature": "framework.microsoft-extensions-ai"
+          }
+        ]
+      }
+    },
+    {
+      "id": "koog-gradle",
+      "family": "recall",
+      "description": "A Gradle version catalog declaring ai.koog:koog-agents next to Kotlin importing ai.koog is Koog usage",
+      "files": {
+        "gradle/libs.versions.toml": "[versions]\nkoog = \"0.4.1\"\nkotlin = \"2.1.20\"\n\n[libraries]\nkoog-agents = { module = \"ai.koog:koog-agents\", version.ref = \"koog\" }\n\n[plugins]\nkotlin-jvm = { id = \"org.jetbrains.kotlin.jvm\", version.ref = \"kotlin\" }\n",
+        "build.gradle.kts": "plugins {\n    alias(libs.plugins.kotlin.jvm)\n}\n\ndependencies {\n    implementation(libs.koog.agents)\n}\n",
+        "src/main/kotlin/app/Main.kt": "package app\n\nimport ai.koog.agents.core.agent.AIAgent\nimport ai.koog.prompt.executor.llms.all.simpleOpenAIExecutor\n\nfun main() {\n    val agent = AIAgent(\n        executor = simpleOpenAIExecutor(System.getenv(\"OPENAI_API_KEY\")),\n        systemPrompt = \"You answer release-notes questions.\",\n    )\n    println(agent.toString())\n}\n"
+      },
+      "target": {
+        "kind": "framework-usage",
+        "signature": "framework.koog"
+      },
+      "present": true,
+      "assertions": {
+        "expected_findings": [
+          {
+            "kind": "framework-usage",
+            "product_signature": "framework.koog"
+          }
+        ]
+      }
+    },
+    {
+      "id": "langchain4j-mcp-module",
+      "family": "recall",
+      "description": "A Maven project with dev.langchain4j:langchain4j-mcp importing McpClient is MCP protocol usage via LangChain4j",
+      "files": {
+        "pom.xml": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<project xmlns=\"http://maven.apache.org/POM/4.0.0\">\n  <modelVersion>4.0.0</modelVersion>\n  <groupId>com.example</groupId>\n  <artifactId>ops-assistant</artifactId>\n  <version>1.0.0</version>\n  <dependencies>\n    <dependency>\n      <groupId>dev.langchain4j</groupId>\n      <artifactId>langchain4j</artifactId>\n      <version>1.0.0</version>\n    </dependency>\n    <dependency>\n      <groupId>dev.langchain4j</groupId>\n      <artifactId>langchain4j-mcp</artifactId>\n      <version>1.0.0-beta5</version>\n    </dependency>\n  </dependencies>\n</project>\n",
+        "src/main/java/com/example/ops/McpTools.java": "package com.example.ops;\n\nimport dev.langchain4j.mcp.client.DefaultMcpClient;\nimport dev.langchain4j.mcp.client.McpClient;\nimport dev.langchain4j.mcp.client.transport.stdio.StdioMcpTransport;\n\nimport java.util.List;\n\npublic final class McpTools {\n    public static McpClient filesystem() {\n        return new DefaultMcpClient.Builder()\n            .transport(new StdioMcpTransport.Builder()\n                .command(List.of(\"npx\", \"-y\", \"@modelcontextprotocol/server-filesystem\", \"/srv/ops\"))\n                .build())\n            .build();\n    }\n}\n"
+      },
+      "target": {
+        "kind": "framework-usage",
+        "signature": "protocol.mcp"
+      },
+      "present": true,
+      "assertions": {
+        "expected_findings": [
+          {
+            "kind": "framework-usage",
+            "product_signature": "protocol.mcp"
+          },
+          {
+            "kind": "framework-usage",
+            "product_signature": "framework.langchain4j"
+          }
+        ]
+      }
+    },
+    {
+      "id": "devcontainer-sample-keys",
+      "family": "recall",
+      "description": "A devcontainer sample config naming five provider API keys beside a LiteLLM requirement attributes all five providers (env-name evidence stays capped)",
+      "files": {
+        ".devcontainer/sample_keys.cfg": "OPENAI_API_KEY=\nANTHROPIC_API_KEY=\nGEMINI_API_KEY=\nMISTRAL_API_KEY=\nGROQ_API_KEY=\n",
+        ".devcontainer/devcontainer.json": "{\n  \"name\": \"router-dev\",\n  \"image\": \"mcr.microsoft.com/devcontainers/python:3.12\",\n  \"postCreateCommand\": \"pip install -r requirements.txt\",\n  \"runArgs\": [\"--env-file\", \".devcontainer/sample_keys.cfg\"]\n}\n",
+        "requirements.txt": "litellm==1.55.0\n"
+      },
+      "target": {
+        "kind": "framework-usage",
+        "signature": "provider.openai"
+      },
+      "present": true,
+      "assertions": {
+        "expected_findings": [
+          {
+            "kind": "framework-usage",
+            "provider_signature": "provider.openai"
+          },
+          {
+            "kind": "framework-usage",
+            "provider_signature": "provider.anthropic"
+          },
+          {
+            "kind": "framework-usage",
+            "provider_signature": "provider.google-gemini"
+          },
+          {
+            "kind": "framework-usage",
+            "provider_signature": "provider.mistral"
+          },
+          {
+            "kind": "framework-usage",
+            "provider_signature": "provider.groq"
+          }
+        ]
+      }
+    },
+    {
+      "id": "referenced-model-settings",
+      "family": "recall",
+      "description": "A models module loading model-settings.yml whose entries carry api_base hosts and api_key_env names for four providers attributes those providers without a catalog discount; a loaded settings file holding model identifiers only is a separate open miss documented in docs/evaluation.md",
+      "files": {
+        "app/models.py": "from pathlib import Path\n\nimport yaml\n\nSETTINGS_FILE = \"model-settings.yml\"\n\n\ndef load_model_settings() -> list[dict]:\n    path = Path(__file__).with_name(\"resources\") / SETTINGS_FILE\n    return yaml.safe_load(path.read_text())\n\n\ndef settings_for(name: str) -> dict | None:\n    return next((entry for entry in load_model_settings() if entry[\"name\"] == name), None)\n",
+        "app/resources/model-settings.yml": "- name: gpt-4o\n  api_base: https://api.openai.com/v1\n  api_key_env: OPENAI_API_KEY\n  edit_format: diff\n- name: claude-3-5-sonnet-20241022\n  api_base: https://api.anthropic.com/v1\n  api_key_env: ANTHROPIC_API_KEY\n  edit_format: diff\n- name: mistral-large-latest\n  api_base: https://api.mistral.ai/v1\n  api_key_env: MISTRAL_API_KEY\n  edit_format: whole\n- name: llama-3.1-70b-versatile\n  api_base: https://api.groq.com/openai/v1\n  api_key_env: GROQ_API_KEY\n  edit_format: whole\n",
+        "requirements.txt": "pyyaml==6.0.2\n"
+      },
+      "target": {
+        "kind": "framework-usage",
+        "signature": "provider.anthropic"
+      },
+      "present": true,
+      "assertions": {
+        "expected_findings": [
+          {
+            "kind": "framework-usage",
+            "provider_signature": "provider.openai"
+          },
+          {
+            "kind": "framework-usage",
+            "provider_signature": "provider.anthropic"
+          },
+          {
+            "kind": "framework-usage",
+            "provider_signature": "provider.mistral"
+          },
+          {
+            "kind": "framework-usage",
+            "provider_signature": "provider.groq"
+          }
+        ]
+      }
+    },
+    {
+      "id": "website-data-leaderboard",
+      "family": "precision",
+      "description": "A static website's leaderboard data listing eight model identifiers and nothing else is not usage",
+      "files": {
+        "website/_data/leaderboard.yml": "- model: gpt-4o\n  score: 71.2\n- model: claude-3-5-sonnet-20241022\n  score: 70.8\n- model: gemini-1.5-pro\n  score: 66.1\n- model: mistral-large-latest\n  score: 60.4\n- model: llama-3.1-70b-instruct\n  score: 58.9\n- model: command-r-plus\n  score: 55.0\n- model: deepseek-chat\n  score: 54.3\n- model: qwen2.5-72b-instruct\n  score: 52.7\n",
+        "website/_layouts/default.html": "<!doctype html>\n<html><body>{{ content }}</body></html>\n",
+        "website/index.md": "---\nlayout: default\n---\n# Leaderboard\n\n{% for row in site.data.leaderboard %}- {{ row.model }}: {{ row.score }}\n{% endfor %}\n"
+      },
+      "target": {
+        "kind": "framework-usage",
+        "signature": "provider.openai"
+      },
+      "present": false,
+      "assertions": {
+        "exact_findings": []
+      }
+    }
+  ]
+}

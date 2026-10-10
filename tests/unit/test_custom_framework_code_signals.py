@@ -73,15 +73,29 @@ def _project(index: SignatureIndex, root: Path, files: dict[str, str]) -> Findin
 
 @pytest.mark.parametrize("name", sorted(SOURCES))
 def test_uncorroborated_custom_framework_pattern_is_reported_in_every_language(tmp_path, name):
-    finding = _project(_index(tmp_path, PACK), tmp_path / "repo", {name: SOURCES[name]})
+    index = _index(tmp_path, PACK)
     # Like any lexical framework pattern without the product's import or
-    # dependency: usage capped below the confirmed band, not an agent.
+    # dependency, the pattern alone establishes nothing: no finding, and a
+    # note names the file so the evidence does not disappear silently.
+    alone = tmp_path / "alone"
+    alone.mkdir()
+    (alone / name).write_text(SOURCES[name])
+    ctx = ConnectorContext(config={"path": str(alone), "use_git": False}, index=index)
+    findings = FilesystemConnector(ctx).run()
+    assert not [f for f in findings if f.resource_type == "project"], f"{name}: pattern alone established"
+    assert ctx.stats is not None and not ctx.stats.incomplete and not ctx.stats.errors
+    assert any(name in w and "evidence not reported" in w for w in ctx.stats.warnings)
+    # Beside an established library the evidence is reported, capped below
+    # the confirmed band and listed as potential: frameworks[] does not name
+    # the custom framework, and the finding is usage, not an agent.
+    finding = _project(index, tmp_path / "repo", {name: SOURCES[name], "requirements.txt": "openai>=1.0\n"})
     assert finding is not None, f"{name}: custom framework pattern was ignored"
     assert finding.kind == Kind.FRAMEWORK_USAGE
-    assert finding.frameworks == ["custom.acme-agent"]
-    assert finding.confidence == pytest.approx(0.6)
+    assert finding.frameworks == [] and finding.model_providers == ["provider.openai"]
+    assert finding.metadata["potential_frameworks"] == ["custom.acme-agent"]
     evidence = [e for e in finding.evidence if e.signal == "code:custom.acme-agent"]
     assert len(evidence) == 1 and evidence[0].attributes["confidence_group"] == "uncorroborated-lexical"
+    assert evidence[0].weight == pytest.approx(0.6)
 
 
 @pytest.mark.parametrize("name", ["main.py", "main.ts"])

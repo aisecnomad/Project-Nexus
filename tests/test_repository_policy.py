@@ -747,8 +747,8 @@ _SELF_SCAN = "run: shadowscan scan -c examples/shadowscan.offline.yaml --format 
         pytest.param(
             ".github/workflows/ci.yml",
             _replace(
-                "      - run: ruff check shadowscan tests tools\n",
-                "      - run: ruff check shadowscan tests tools\n        continue-on-error: true\n",
+                "      - run: ruff check shadowscan tests tools benchmarks\n",
+                "      - run: ruff check shadowscan tests tools benchmarks\n        continue-on-error: true\n",
             ),
             "sets continue-on-error",
             id="step-continue-on-error",
@@ -1238,14 +1238,207 @@ def test_container_updates_installed_base_packages_before_dependency_install() -
     )
 
 
-def test_container_stages_share_one_reviewed_base_digest() -> None:
-    images = [
+def _base_images() -> list[str]:
+    """The image named by each Dockerfile FROM line."""
+    return [
         arguments.split()[0]
         for keyword, arguments in _dockerfile_instructions((ROOT / "Dockerfile").read_text(encoding="utf-8"))
         if keyword == "FROM"
     ]
+
+
+def test_container_stages_share_one_reviewed_base_digest() -> None:
+    images = _base_images()
     assert len(images) == 2 and images[0] == images[1]
     assert re.fullmatch(r"chainguard/wolfi-base:latest@sha256:[0-9a-f]{64}", images[0])
+
+
+def _container_step(marker: str) -> tuple[int, dict[str, Any]]:
+    """The position and body of the one container-security step whose script contains marker."""
+    steps = _load(GITHUB / "workflows" / "ci.yml")["jobs"]["container-security"]["steps"]
+    (found,) = [(index, step) for index, step in enumerate(steps) if marker in step.get("run", "")]
+    return found
+
+
+# One stand-in for the hosted runner's sudo, systemctl, timeout, sleep and docker,
+# chosen by the name it runs as. Restarting docker loads daemon.json only when
+# DAEMON_RELOADS is 1, `docker info` lists the loaded mirrors with the trailing
+# slash dockerd adds, and `docker pull` fails FAILED_PULLS times, then succeeds.
+_RUNNER_STUB = """\
+import json, os, subprocess, sys
+from pathlib import Path
+name, args = Path(sys.argv[0]).name, sys.argv[1:]
+calls = Path(os.environ['STUB_CALLS'])
+with calls.open('a', encoding='utf-8') as log:
+    log.write(' '.join([name, *args]) + '\\n')
+loaded = calls.with_name('loaded.json')
+if name in ('sudo', 'timeout'):
+    sys.exit(subprocess.run(args[1:] if name == 'timeout' else args).returncode)
+if name == 'systemctl' and args == ['restart', 'docker'] and os.environ.get('DAEMON_RELOADS') == '1':
+    loaded.write_bytes(Path(os.environ['DAEMON_JSON']).read_bytes())
+if name == 'docker' and args[0] == 'info':
+    mirrors = json.loads(loaded.read_text()).get('registry-mirrors', []) if loaded.exists() else []
+    print(''.join(mirror.rstrip('/') + '/\\n' for mirror in mirrors), end='')
+if name == 'docker' and args[0] == 'pull':
+    attempt = sum(line.startswith('docker pull ') for line in calls.read_text().splitlines())
+    sys.exit(1 if attempt <= int(os.environ.get('FAILED_PULLS', '0')) else 0)
+"""
+
+
+def _run_on_stub_runner(
+    script: str, tmp_path: Path, cwd: Path, env: dict[str, str]
+) -> tuple[subprocess.CompletedProcess[str], list[str]]:
+    stubs = tmp_path / "bin"
+    if not stubs.exists():
+        stubs.mkdir()
+        for name in ("docker", "sleep", "sudo", "systemctl", "timeout"):
+            (stubs / name).write_text(f"#!{sys.executable}\n{_RUNNER_STUB}", encoding="utf-8")
+            (stubs / name).chmod(0o700)
+    (tmp_path / "temp").mkdir(exist_ok=True)
+    calls = tmp_path / "calls"
+    calls.unlink(missing_ok=True)
+    result = subprocess.run(
+        ["bash", "-e", "-c", script],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env={
+            **os.environ,
+            "PATH": f"{stubs}{os.pathsep}{os.environ['PATH']}",
+            "RUNNER_TEMP": str(tmp_path / "temp"),
+            "STUB_CALLS": str(calls),
+            **env,
+        },
+    )
+    return result, calls.read_text(encoding="utf-8").splitlines() if calls.exists() else []
+
+
+def test_container_build_pulls_its_base_digest_through_a_verified_docker_hub_mirror() -> None:
+    # Anonymous Docker Hub pulls from the shared addresses of hosted runners hit
+    # its rate limit (HTTP 429), failed the image build and so blocked releases.
+    mirror_index, mirror = _container_step("registry-mirrors")
+    pull_index, pull = _container_step("docker pull")
+    build_index, _ = _container_step("docker build")
+    assert mirror_index < pull_index < build_index
+    assert "if" not in mirror and "if" not in pull, "every build runs behind the mirror and the pre-pull"
+    assert mirror["env"]["DOCKER_HUB_MIRROR"].startswith("https://")
+    # The pull reads the digest from the Dockerfile, so a Dependabot refresh of
+    # the FROM lines cannot leave the workflow pulling a stale base image.
+    workflow = (GITHUB / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    assert not [image for image in _base_images() if image.partition("@")[2] in workflow]
+
+
+@pytest.mark.parametrize(
+    "existing,reloads,error",
+    [
+        pytest.param(None, True, None, id="no-daemon-json"),
+        pytest.param(
+            {"exec-opts": ["native.cgroupdriver=cgroupfs"], "cgroup-parent": "/actions_job"},
+            True,
+            None,
+            id="runner-settings",
+        ),
+        pytest.param({"registry-mirrors": ["https://mirror.example"]}, True, None, id="other-mirror"),
+        pytest.param({}, False, "does not report the registry mirror", id="daemon-ignores-mirror"),
+        pytest.param(["not", "an", "object"], True, "must be an object", id="malformed"),
+    ],
+)
+def test_container_mirror_step_keeps_daemon_settings_and_fails_closed(
+    tmp_path: Path, existing: Any, reloads: bool, error: str | None
+) -> None:
+    _, step = _container_step("registry-mirrors")
+    mirror = step["env"]["DOCKER_HUB_MIRROR"]
+    daemon_json = tmp_path / "etc" / "daemon.json"
+    daemon_json.parent.mkdir()
+    if existing is not None:
+        daemon_json.write_text(json.dumps(existing), encoding="utf-8")
+    assert step["run"].count("/etc/docker/daemon.json") == 1
+    script = step["run"].replace("/etc/docker/daemon.json", str(daemon_json))
+    env = {**step["env"], "DAEMON_JSON": str(daemon_json), "DAEMON_RELOADS": "1" if reloads else "0"}
+    result, calls = _run_on_stub_runner(script, tmp_path, ROOT, env)
+    if error:
+        assert result.returncode != 0 and error in result.stderr, result.stdout + result.stderr
+        return
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "systemctl restart docker" in calls
+    previous = existing or {}
+    expected = {**previous, "registry-mirrors": [*previous.get("registry-mirrors", []), mirror]}
+    assert json.loads(daemon_json.read_text(encoding="utf-8")) == expected
+    # A re-run job finds the mirror configured and adds no duplicate, also when
+    # daemon.json spells it with the trailing slash dockerd reports.
+    again, _ = _run_on_stub_runner(script, tmp_path, ROOT, env)
+    assert again.returncode == 0 and json.loads(daemon_json.read_text(encoding="utf-8")) == expected
+    slashed = {**expected, "registry-mirrors": [*expected["registry-mirrors"][:-1], f"{mirror}/"]}
+    daemon_json.write_text(json.dumps(slashed), encoding="utf-8")
+    again, _ = _run_on_stub_runner(script, tmp_path, ROOT, env)
+    assert again.returncode == 0 and json.loads(daemon_json.read_text(encoding="utf-8")) == slashed
+
+
+# Instructions that open no stage although lines in them start with "from": a
+# Python heredoc, a <<WORD heredoc whose tab-indented WORD line is still body
+# (only <<- strips tabs), a COPY of a <<"WORD" heredoc and a <<-WORD heredoc
+# with tab-indented lines, and a backslash continuation that carries a comment
+# line, which Docker drops from the continuation.
+_SCRIPTS_THAT_IMPORT = """\
+RUN python3.12 - <<'PY'
+from pathlib import Path
+PY
+RUN <<EOF python3.12
+from os import sep
+\tEOF
+from os import linesep
+EOF
+COPY <<"EOF" <<-END /opt/
+from a heredoc
+EOF
+\tfrom a tab-indented heredoc
+\tEND
+RUN python3.12 -c "import sys; \\
+# a comment line
+from pathlib import Path; print(Path.cwd())"
+"""
+
+
+@pytest.mark.parametrize(
+    "mutate,failed_pulls,attempts,passes",
+    [
+        pytest.param(None, 0, 1, True, id="first-attempt"),
+        pytest.param(None, 2, 3, True, id="third-attempt"),
+        pytest.param(None, 3, 3, False, id="never"),
+        pytest.param(
+            lambda text: re.sub(r"@sha256:[0-9a-f]{64}", "", text, count=1), 0, 0, False, id="unpinned-from"
+        ),
+        pytest.param(lambda text: text + _SCRIPTS_THAT_IMPORT, 0, 1, True, id="scripts-that-import"),
+        pytest.param(
+            lambda text: text.replace("\nFROM ", "\n# a comment line ends with \\\nFROM "),
+            0,
+            1,
+            True,
+            id="comment-before-from-ends-with-backslash",
+        ),
+        pytest.param(lambda text: text + "RUN <<EOF python3.12\nprint()\n", 0, 0, False, id="open-heredoc"),
+    ],
+)
+def test_container_base_image_pull_reads_the_dockerfile_digest_with_bounded_retries(
+    tmp_path: Path, mutate: Callable[[str], str] | None, failed_pulls: int, attempts: int, passes: bool
+) -> None:
+    _, step = _container_step("docker pull")
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+    (checkout / "Dockerfile").write_text(mutate(dockerfile) if mutate else dockerfile, encoding="utf-8")
+    result, calls = _run_on_stub_runner(step["run"], tmp_path, checkout, {"FAILED_PULLS": str(failed_pulls)})
+    assert (result.returncode == 0) is passes, result.stdout + result.stderr
+    # Both stages name one image; it is pulled once, by digest alone, and each
+    # attempt is bounded on its own, with a growing wait before the next.
+    (image,) = {re.sub(r":[^:/@]+(?=@)", "", image) for image in _base_images()}
+    expected: list[str] = []
+    for attempt in range(1, attempts + 1):
+        if attempt > 1:
+            expected.append(f"sleep {(attempt - 1) * 10}")
+        expected += [f"timeout 180s docker pull {image}", f"docker pull {image}"]
+    assert calls == expected
 
 
 def test_container_build_removes_setuid_and_setgid_bits_and_checks_none_remain() -> None:

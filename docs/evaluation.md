@@ -23,6 +23,28 @@ was labeled separately, as described below. None of them is a random or
 representative sample of repositories, so none estimates field precision,
 recall or calibration; see the held-out procedure below for that.
 
+
+## Real-world repository benchmark against other tools
+
+`benchmarks/shadow-ai-discovery/` is a separate, code-surface benchmark on
+pinned public repositories that compares ShadowScan's `code.filesystem`
+connector with other open-source discovery tools under one tool-neutral fact
+taxonomy. Its ground truth is session-labeled evidence with file pointers, not
+independent review. The harness gives each tool a rebuilt environment without
+API keys and a dead proxy that clients may ignore; it is not a filesystem or
+network sandbox. Without `--as-user` (as in the CI workflow) tools run as the
+invoking user, and `--as-user` only changes the account through `setpriv`.
+Run third-party tools only on an externally isolated, disposable runner with
+egress disabled and no credentials. See its README for the method and its
+REPORT.md for the measured numbers; neither replaces the regression corpora
+above. The `compare` subcommand and `.github/workflows/benchmark.yml` turn the
+committed results into a weekly regression gate for ShadowScan: a drop in
+in-scope F1 of more than one point, any drop in repository-level recall, a
+newly flagged control or near-miss repository, or a repository whose scan was
+complete in the baseline and is now incomplete (exit 3) fails the run.
+Incomplete runs are scored on the facts they found and marked `(incomplete)`
+in REPORT.md, never as clean negatives.
+
 ## Run the reproducible corpora
 
 From the reviewed checkout, with the package dependencies installed:
@@ -47,6 +69,9 @@ python -m tools.evaluation.evaluate \
 python -m tools.evaluation.evaluate \
   --corpus tools/evaluation/current_idioms_corpus.json \
   --output /tmp/nexus-current-idioms-eval.json
+python -m tools.evaluation.evaluate \
+  --corpus tools/evaluation/benchmark_followup_corpus.json \
+  --output /tmp/nexus-benchmark-followup-eval.json
 python -m tools.evaluation.evaluate \
   --corpus tools/evaluation/independent_corpus.json \
   --annotations tools/evaluation/independent_annotations.json \
@@ -200,8 +225,8 @@ annotation ledger remain frozen; adding regression cases does not refresh their
 independence. The [acceptance verifier](https://github.com/aisecnomad/Project-Nexus/blob/main/tools/acceptance/README.md) requires
 separate declared human-reviewed holdout evidence for deployment decisions.
 
-`tools/evaluation/current_idioms_corpus.json` holds 24 short synthetic cases
-(17 positives, 7 negatives) written from scratch, with AI assistance, in the
+`tools/evaluation/current_idioms_corpus.json` holds 28 short synthetic cases
+(17 positives, 11 negatives) written from scratch, with AI assistance, in the
 shape current SDK documentation uses. The positives are an AI SDK 7 chat route
 whose `streamText` call loops over imported tools with `stopWhen:
 isStepCount(5)`, an AI SDK 6 `ToolLoopAgent`, OpenAI Agents SDK agents in
@@ -214,16 +239,62 @@ OpenAI chat-completions loop that dispatches the selected function. The hard
 negatives are a plain AI SDK 7 chat route, a multi-step call without tools, a
 tool loop disabled with `toolChoice: 'none'`, single chat-completions and
 Messages API calls without tools, a local `agents` package whose `Agent` and
-`Runner` classes are not the OpenAI SDK, and a repository of Semgrep, Sigma and
+`Runner` classes are not the OpenAI SDK, a repository of Semgrep, Sigma and
 gitleaks rules that name LLM keys and hosts, which must produce no finding at
-all. The positives also assert an agent finding attributed to the expected
-product or provider. One case is a `known_gap`: a single-step `generateText`
-call with an imported executable tool is model-selected dispatch, but without a
+all, a Python FastMCP server and a TypeScript `McpServer`, each of which must
+be reported as `framework-usage` with exactly the `mcp-server` and `tool-use`
+capabilities and never as an agent, HTTP and socket servers imported under
+the name `Server`, which must produce no finding, and an MCP client next to
+`aiohttp` and `socket.io` servers constructed as `Server(`, which must keep
+`tool-use` alone and no `mcp-server`. The positives also assert an
+agent finding attributed to the expected product or provider. One case is a
+`known_gap`: a single-step `generateText` call with an imported executable tool is model-selected dispatch, but without a
 stop condition the scanner only recognizes inline `tool({ execute })`
 definitions, so it reports SDK usage. Its first run, against the scanner before
 the October fixes, failed two cases: the AI SDK 7 tool loop was missed and the
 rule repository was reported as LLM usage. Like the other authored suites, its
 scores describe these cases only, not field precision or recall.
+
+`tools/evaluation/benchmark_followup_corpus.json` holds 24 short synthetic
+cases (16 positives, 8 negatives) written from scratch, with AI assistance,
+after the October 2026 benchmark of ShadowScan 0.1.2 on 87 public
+repositories (122 misses and 23 false positives). Each case reproduces the
+shape behind one observed miss or false positive in a few small files; the
+labels are author-written reproductions of public-repository shapes, not
+copies of third-party code and not independent review. The negatives are a
+Rust rig service declaring a `ToolCallback` trait (never Spring AI), a test
+fixture and a code comment that only name `huggingface.co`, the
+`huggingface_hub` `InferenceClient` using the OpenAI-compatible call shape
+(never `provider.openai`), the Browserbase session SDK with its API key
+(Browserbase usage, never Stagehand or an agent), a CI job running in the
+`modelcontextprotocol/python-sdk` image, a documentation site's static server
+catalog listing `BROWSERBASE_API_KEY`, a Rust `create_agent(` constructor
+without LangChain, a Pydantic AI project whose tests define `async def
+handoff(` (never the OpenAI Agents SDK), a TypeScript provider catalog naming
+`DIFY_API_KEY` (no workflow or agent), and a website leaderboard listing eight
+model identifiers, which must produce no finding at all. The positives are a
+model identifier in code without an SDK import, a LiteLLM `bedrock/anthropic.`
+route in YAML (Bedrock and Anthropic), Python FastMCP, TypeScript `McpServer`
+and Go `NewMCPServer` servers that must carry exactly the `mcp-server` and
+`tool-use` capabilities and never be agents, `AnthropicBedrock`, `voyageai`,
+OllamaSharp in a `.csproj` with a global using, `Microsoft.Extensions.AI`
+pinned in `Directory.Packages.props`, Koog in a Gradle version catalog,
+LangChain4j's MCP module, a devcontainer sample key file naming five provider
+keys beside LiteLLM (presence is asserted, not confidence: env-name evidence
+stays capped), and a `model-settings.yml` the code loads whose entries carry
+`api_base` hosts and `api_key_env` names for four providers, attributed
+without a catalog discount because a module reads the file. That last case
+exercises the referenced-file rule only. It does not reproduce the benchmark
+miss it was drawn from: a code-loaded settings file whose entries hold model
+identifiers alone (`- name: gpt-4o`, with no host or key name) still produces
+no finding, although the same identifiers in a `.py` file attribute a
+provider. That shape remains an open benchmark miss; a unit test pins it as
+documented here and fails when the scanner starts to report it, so this
+paragraph is updated rather than left stale. No case carries a `known_gap`
+waiver; every case must stay correct. Like the other authored suites, its
+scores describe these cases only, not field precision or recall. A CHANGELOG
+over 1,000,000 bytes, which the corpus file limits cannot hold, is covered by
+unit tests instead.
 
 `tools/evaluation/public_corpus.json` contains **five complete, pinned public
 files** from two external repositories: a LangGraph example and README at

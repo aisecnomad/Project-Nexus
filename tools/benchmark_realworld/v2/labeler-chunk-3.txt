@@ -1,0 +1,11 @@
+/home/user/zie619/n8n-workflows
+/home/user/aws-samples/amazon-bedrock-samples
+/home/user/shubhamsaboo/awesome-llm-apps
+/home/user/osquery/osquery
+/home/user/open-telemetry/opentelemetry-collector
+/home/user/openai/gym
+/home/user/google/mediapipe
+/home/user/scikit-learn/scikit-learn
+/home/user/jquery/jquery
+/home/user/chartjs/chart.js
+/home/user/fivethirtyeight/data

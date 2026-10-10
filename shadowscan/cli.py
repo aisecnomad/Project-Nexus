@@ -207,8 +207,9 @@ def _run_and_emit(
     if watchdog is None and cfg.job_deadline_seconds is not None:
         watchdog = arm_job_deadline(cfg.job_deadline_seconds)
     owned_deadline = ctx is None or ctx.meta.get(_JOB_DEADLINE_CONTEXT_KEY) is None
+    job_deadline = watchdog.expires_at if watchdog is not None else None
     try:
-        _run_and_emit_with_deadline(cfg, fmt, output, verbose, max_rows, only, extra_stats)
+        _run_and_emit_with_deadline(cfg, fmt, output, verbose, max_rows, only, extra_stats, job_deadline)
     finally:
         if watchdog is not None and owned_deadline:
             watchdog.cancel()
@@ -222,8 +223,12 @@ def _run_and_emit_with_deadline(
     max_rows: int | None,
     only: list[str] | None = None,
     extra_stats: list[ScanStats] | None = None,
+    job_deadline: float | None = None,
 ) -> None:
-    """Run the scan and emit its report; ``extra_stats`` (command-level diagnostics) join its stats."""
+    """Run the scan and emit its report; ``extra_stats`` (command-level diagnostics) join its stats.
+
+    ``job_deadline`` is the armed watchdog's ``time.monotonic()`` expiry, if any.
+    """
 
     def progress(cid: str, msg: str) -> None:
         err_console.print(Text(terminal_text(f"{cid}: {msg}"), style="dim"))
@@ -235,7 +240,8 @@ def _run_and_emit_with_deadline(
         # Connectors run on worker threads, which cannot install signal
         # handlers: a termination signal must stop live clones from here.
         with terminate_clones_on_signal():
-            result = engine.run(only=only)
+            # The engine ends LLM triage early enough to emit the report before the watchdog fires.
+            result = engine.run(only=only, job_deadline=job_deadline)
     except SetupError as exc:
         # SetupError messages are credential-free by contract (shadowscan.errors).
         raise click.ClickException(str(exc)) from None
@@ -674,6 +680,19 @@ def run(connector: str, input_path: str | None, settings: tuple[str, ...], opts:
     is_flag=True,
     help="let test and fixture code establish agents at full weight",
 )
+@click.option(
+    "--triage",
+    is_flag=True,
+    help="fast subset scan (manifests, MCP/agent configs, flows, IaC); always exits incomplete",
+)
+@click.option(
+    "--diff-base",
+    default=None,
+    help=(
+        "local PATHS only: git ref to diff against; only committed changes are scanned (plus manifests and "
+        ".env for context), and the report cannot resolve findings in `shadowscan diff`"
+    ),
+)
 @scan_options
 def code(
     paths: tuple[str, ...],
@@ -686,6 +705,8 @@ def code(
     no_secrets: bool,
     strict_coverage: bool,
     include_tests: bool,
+    triage: bool,
+    diff_base: str | None,
     opts: ScanOptions,
 ) -> None:
     """Scan local directories and/or remote repositories for agent code, MCP, coding agents, IaC and
@@ -698,8 +719,16 @@ def code(
         common["strict_coverage"] = True
     if include_tests:
         common["include_tests"] = True
+    if triage:
+        common["triage"] = True
+    if diff_base and not paths:
+        raise click.UsageError("--diff-base applies only to local PATHS")
     if paths:
-        specs.append(ConnectorSpec(name="code.filesystem", config={"paths": list(paths), **common}))
+        local: dict[str, Any] = {"paths": list(paths), **common}
+        if diff_base:
+            # Remote repositories in the same run are always scanned in full.
+            local["diff_base"] = diff_base
+        specs.append(ConnectorSpec(name="code.filesystem", config=local))
     if github_org or github_repo:
         gh: dict[str, Any] = {**common}
         if github_org:
@@ -1244,7 +1273,15 @@ def inventory_stubs(findings_json: str, out_dir: str, kinds: str, min_risk: str)
         "an incomplete comparison still exits 3"
     ),
 )
-def diff(baseline: str, current: str, as_json: bool, fail_on_new: bool) -> None:
+@click.option(
+    "--shadow-only",
+    is_flag=True,
+    help=(
+        "display only findings whose shadow field is true (unmatched against the supplied "
+        "inventory); counts, incompleteness reasons and exit codes still cover every finding"
+    ),
+)
+def diff(baseline: str, current: str, as_json: bool, fail_on_new: bool, shadow_only: bool) -> None:
     """Compare reports; missing findings require complete, comparable scans to resolve."""
     try:
         comparison = compare_reports(
@@ -1253,7 +1290,27 @@ def diff(baseline: str, current: str, as_json: bool, fail_on_new: bool) -> None:
         )
     except (ValueError, TypeError, OSError):
         raise click.ClickException("invalid comparison input; expected two ShadowScan JSON reports") from None
+
+    def displayed(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        # shadow is tri-state: None means no inventory was supplied, which is
+        # not evidence the finding is shadow, so only shadow=True passes.
+        if not shadow_only:
+            return records
+        return [d for d in records if d.get("shadow") is True]
+
     if as_json:
+        # The JSON document always carries the full comparison (never make a
+        # filtered view look complete); the filter adds a view alongside it.
+        if shadow_only:
+            comparison = {
+                **comparison,
+                "shadow_only_view": {
+                    key: [d["id"] for d in displayed(comparison[key])]
+                    for key in ("new", "resolved", "unknown", "changed")
+                    if key != "changed"
+                }
+                | {"changed": [c["after"]["id"] for c in comparison["changed"] if c["after"].get("shadow")]},
+            }
         click.echo(json.dumps(comparison, indent=2, default=str))
     else:
         keys = ("new", "resolved", "unknown", "changed")
@@ -1276,10 +1333,12 @@ def diff(baseline: str, current: str, as_json: bool, fail_on_new: bool) -> None:
             ("<", local_baseline),
             (">", local_current),
         ):
-            for d in sorted(records, key=lambda d: -d["risk"]["score"]):
+            for d in sorted(displayed(records), key=lambda d: -d["risk"]["score"]):
                 line = f"  {marker} {d['risk']['level']:8} {d['title']}  {d['resource']}"
                 console.print(terminal_text(line), markup=False, highlight=False)
         for change in changed:
+            if shadow_only and change["after"].get("shadow") is not True:
+                continue
             x, y = change["before"], change["after"]
             fields_changed = ", ".join(change["changed_fields"])
             line = f"  ~ {y['title']}: {fields_changed} (risk {x['risk']['score']} → {y['risk']['score']})"
