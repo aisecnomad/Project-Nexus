@@ -28,6 +28,7 @@ JOB_DEADLINE_MESSAGE = (
 class JobDeadline:
     thread: threading.Thread
     _cancelled: threading.Event
+    expires_at: float  # time.monotonic() value at which the watchdog fires
 
     def cancel(self) -> None:
         """Disarm the watchdog when a CLI invocation has finished."""
@@ -82,4 +83,4 @@ def arm_job_deadline(
 
     thread = threading.Thread(target=_watch, name="shadowscan-job-deadline", daemon=True)
     thread.start()
-    return JobDeadline(thread, cancelled)
+    return JobDeadline(thread, cancelled, fire_at)

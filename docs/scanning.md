@@ -775,12 +775,25 @@ source is named by its path below the reports' common directory
 (`host-a/report.json` for reports collected as `<host>/report.json`), or by
 its file name when the reports share a directory.
 
+Whatever the order of the sources, a merged finding is `shadow: true` when
+any source that reported it found it unregistered, `false` when one matched
+it to the inventory that scan was given, and `null` when none of the sources
+that reported it was given an inventory (by `--inventory` or the
+configuration's `inventory:` key). Scans made without an inventory never make
+a finding look unregistered: in a mixed fleet, a finding seen only on
+machines scanned without one stays `null` although the merged
+`inventory_present` is true. A registered finding keeps the first
+`registry_match` named by a source that matched it, in the order given. The
+merged `inventory_present` is true when any source had an inventory, even an
+empty one, and `inventory_size` is the largest source inventory.
+
 Report files are untrusted input. A finding id that another report already
 uses for a finding with another identity (resource, connector, account and
-the other identity fields) is refused (exit 1) rather than merged. Machines
-that share a host name and home directory, such as clones of one VM image,
-produce the same identities and merge as one machine scanned twice; give each
-a distinct `--label`, such as its asset tag.
+the other identity fields) is refused (exit 1) rather than merged, as is a
+report whose `inventory_present` is not a boolean. Machines that share a host
+name and home directory, such as clones of one VM image, produce the same
+identities and merge as one machine scanned twice; give each a distinct
+`--label`, such as its asset tag.
 
 The merged report is comparable with `shadowscan diff` only when every source
 was complete and carried a comparable collection scope; its fingerprint is

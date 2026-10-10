@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import itertools
 import json
 from pathlib import Path
 
@@ -10,6 +11,8 @@ from click.testing import CliRunner
 
 from shadowscan.cli import main
 from shadowscan.fleet import merge_reports
+from shadowscan.models import Kind
+from shadowscan.reporters import render
 
 MCP = '{"mcpServers": {"fs": {"command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "/srv"]}}}\n'
 AGENT = "from crewai import Agent, Crew, Task\nagent = Agent(role='r', goal='g', backstory='b')\ncrew = Crew(agents=[agent], tasks=[Task(description='d', agent=agent)])\n"
@@ -20,10 +23,21 @@ def _report(tmp_path: Path, name: str, files: dict[str, str]) -> Path:
     repo.mkdir()
     for rel, text in files.items():
         (repo / rel).write_text(text)
-    out = tmp_path / f"{name}.json"
-    result = CliRunner().invoke(main, ["code", str(repo), "--format", "json", "-o", str(out)])
+    return _scan(repo, tmp_path / f"{name}.json")
+
+
+def _scan(repo: Path, out: Path, *options: str) -> Path:
+    result = CliRunner().invoke(main, ["code", str(repo), "--format", "json", "-o", str(out), *options])
     assert result.exit_code == 0, result.output
     return out
+
+
+def _inventory(tmp_path: Path, name: str, agent_id: str | None = None) -> Path:
+    """An inventory that registers every MCP configuration as ``agent_id``, or an empty one."""
+    path = tmp_path / f"{name}.yaml"
+    entry = f"\n  - id: {agent_id}\n    resources: ['*/.mcp.json']\n" if agent_id else " []\n"
+    path.write_text("agents:" + entry)
+    return path
 
 
 def test_merge_unions_reports_and_records_sources(tmp_path: Path):
@@ -172,3 +186,104 @@ def test_merge_names_sources_by_their_path_below_a_common_directory(tmp_path: Pa
     assert [s["name"] for s in merged["collection_scope"]["fleet"]["sources"]] == names
     assert "host-b/report.json: scan incomplete" in merged["collection_scope"]["reason"]
     assert merged["findings"][0]["metadata"]["merged_from"] == names
+
+
+def test_merge_without_inventory_does_not_report_unregistered_findings(tmp_path: Path):
+    # shadow None means no inventory was supplied, not "unregistered".
+    a = _report(tmp_path, "laptop-a", {".mcp.json": MCP})
+    b = _report(tmp_path, "laptop-b", {"crew.py": AGENT, "requirements.txt": "crewai==0.186.0\n"})
+    out = tmp_path / "merged.json"
+    result = CliRunner().invoke(main, ["merge", str(a), str(b), "--format", "json", "-o", str(out)])
+    assert result.exit_code == 0, result.output
+    merged = json.loads(out.read_text())
+    assert merged["findings"] and all(f["shadow"] is None for f in merged["findings"])
+    assert all(f["registry_match"] is None for f in merged["findings"])
+    assert merged["summary"]["shadow"] == 0
+    assert merged["inventory_present"] is False and merged["inventory_size"] == 0
+
+    fleet = merge_reports([(p.name, json.loads(p.read_text())) for p in (a, b)])
+    html = render(fleet, "html")
+    assert "shadow (unregistered)" not in html and "registered agents" not in html
+    assert "<span class=shadow>SHADOW</span>" not in html
+    assert "not in the inventory" not in render(fleet, "markdown")
+    table = CliRunner().invoke(main, ["merge", str(a), str(b)])
+    assert table.exit_code == 0, table.output
+    assert "SHADOW" not in table.output and "registered agents" not in table.output
+
+
+def test_merge_takes_registration_only_from_sources_that_reconciled(tmp_path: Path):
+    repo = tmp_path / "laptop"
+    unassessed = _report(tmp_path, "laptop", {".mcp.json": MCP, "crew.py": AGENT})
+    sources = [("none", json.loads(unassessed.read_text()))]
+    matches = {"it": "fs-mcp", "ops": "files"}
+    for name, agent_id in matches.items():
+        inventory = _inventory(tmp_path, name, agent_id)
+        report = _scan(repo, tmp_path / f"{name}.json", "--inventory", str(inventory))
+        sources.append((name, json.loads(report.read_text())))
+    # None + False and None + True in both orders, and every order of all three.
+    for inputs in [*itertools.permutations(sources, 2), *itertools.permutations(sources)]:
+        result = merge_reports(list(inputs))
+        by_kind = {f.kind: f for f in result.findings}
+        assert len(by_kind) == len(result.findings) == 2
+        assessed = [name for name, _ in inputs if name in matches]
+        # Registered by the first source whose inventory matched it.
+        assert by_kind[Kind.MCP_SERVER].shadow is False
+        assert by_kind[Kind.MCP_SERVER].registry_match == matches[assessed[0]]
+        # Unregistered where an inventory was supplied, whatever the other source's position.
+        assert by_kind[Kind.AGENT].shadow is True and by_kind[Kind.AGENT].registry_match is None
+        assert result.summary()["shadow"] == 1
+        assert result.inventory_present is True and result.inventory_size == 1
+
+
+def test_merge_drops_the_registry_match_of_a_finding_another_source_found_unregistered(tmp_path: Path):
+    unassessed = _report(tmp_path, "laptop", {".mcp.json": MCP})
+    repo = tmp_path / "laptop"
+    registered = _scan(repo, tmp_path / "it.json", "--inventory", str(_inventory(tmp_path, "it", "fs-mcp")))
+    empty = _scan(repo, tmp_path / "empty.json", "--inventory", str(_inventory(tmp_path, "agents")))
+    sources = [(p.name, json.loads(p.read_text())) for p in (registered, empty, unassessed)]
+    assert sources[0][1]["findings"][0]["registry_match"] == "fs-mcp"
+    # Registered + unregistered in both orders, and every order with an unassessed source.
+    for inputs in [*itertools.permutations(sources[:2]), *itertools.permutations(sources)]:
+        result = merge_reports(list(inputs))
+        [finding] = result.findings
+        assert finding.kind is Kind.MCP_SERVER
+        assert finding.shadow is True and finding.registry_match is None
+        assert result.summary()["shadow"] == 1
+
+
+@pytest.mark.parametrize("forged_match", [None, ""])
+def test_merge_ignores_a_registration_that_names_no_match(tmp_path: Path, forged_match: str | None):
+    _report(tmp_path, "laptop", {".mcp.json": MCP})
+    inventory = _inventory(tmp_path, "it", "fs-mcp")
+    path = _scan(tmp_path / "laptop", tmp_path / "it.json", "--inventory", str(inventory))
+    genuine = json.loads(path.read_text())
+    forged = json.loads(path.read_text())
+    forged["findings"][0]["registry_match"] = forged_match
+    for inputs in ([("forged", forged), ("genuine", genuine)], [("genuine", genuine), ("forged", forged)]):
+        [finding] = merge_reports(inputs).findings
+        assert finding.shadow is False and finding.registry_match == "fs-mcp"
+
+
+def test_merge_reports_a_supplied_inventory_even_when_empty(tmp_path: Path):
+    path = _report(tmp_path, "laptop", {".mcp.json": MCP})
+    inventory = _inventory(tmp_path, "agents")
+    empty = _scan(tmp_path / "laptop", tmp_path / "empty.json", "--inventory", str(inventory))
+    out = tmp_path / "merged.json"
+    for order in ((path, empty), (empty, path)):
+        result = CliRunner().invoke(main, ["merge", *map(str, order), "--format", "json", "-o", str(out)])
+        assert result.exit_code == 0, result.output
+        merged = json.loads(out.read_text())
+        assert merged["inventory_present"] is True and merged["inventory_size"] == 0
+        assert [f["shadow"] for f in merged["findings"]] == [True]
+        assert merged["summary"]["shadow"] == 1
+
+
+@pytest.mark.parametrize("value", ["canary", 1, None, {"present": True}])
+def test_merge_refuses_a_malformed_inventory_presence(tmp_path: Path, value: object):
+    report = json.loads(_report(tmp_path, "laptop", {".mcp.json": MCP}).read_text())
+    del report["inventory_present"]  # older reports omit it
+    assert merge_reports([("old", report)]).inventory_present is False
+    report["inventory_present"] = value
+    with pytest.raises(ValueError, match="inventory presence must be a boolean") as raised:
+        merge_reports([("forged", report)])
+    assert str(value) not in str(raised.value)

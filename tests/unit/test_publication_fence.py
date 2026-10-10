@@ -220,7 +220,7 @@ def test_cli_returns_promptly_when_a_timed_out_worker_outlives_report_emission(m
         def __init__(self, cfg, progress=None):
             self.abandoned_workers = ["slow"]
 
-        def run(self, only=None):
+        def run(self, only=None, **kwargs):
             return ScanResult(
                 stats=[
                     ScanStats(
@@ -262,7 +262,7 @@ def test_cli_hard_exit_survives_broken_diagnostic_streams(monkeypatch, failure_p
         def __init__(self, cfg, progress=None):
             self.abandoned_workers = ["blocked"]
 
-        def run(self, only=None):
+        def run(self, only=None, **kwargs):
             return ScanResult(stats=[ScanStats(connector="blocked", started_at="now", incomplete=True)])
 
     def output_step(name):
