@@ -302,6 +302,11 @@ summarizes each release for people who install and operate ShadowScan.
   complete registry made another project's unbound engines
   `observed-not-registered` even when that project's own registry listing
   failed.
+- An Agent Registry `RuntimeReference` on a Vertex AI or Dialogflow host that
+  is not a plain resource name (an `https:` URL, an API version segment, a
+  trailing slash) makes that registry's listing incomplete and the scan
+  incomplete (exit 3, one warning). It was previously ignored, so the engine
+  it registered could be reported `observed-not-registered`.
 - The fixtures and transports in the tests are synthetic, written from
   Google's API discovery documents; nothing was validated against a live
   project.

@@ -913,6 +913,11 @@ class GcpConnector(BaseConnector):
             )
         # Warned after the replay check above: these gaps already void the claims of the listings
         # they concern, so a replay keeps the claims live analysis made about the others.
+        if catalogs.unrecognized:
+            self.ctx.warn(
+                "cloud.gcp: Agent Registry runtime reference to Vertex AI or Dialogflow not recognized; "
+                "that registry's listing is not complete"
+            )
         if self.offline and catalogs.failed_listings:
             # Live collection warned when the listing failed; the export only records that it did.
             self.ctx.warn("cloud.gcp: registry catalog listing incomplete in export; records may be missing")

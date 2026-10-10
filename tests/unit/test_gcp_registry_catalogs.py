@@ -1474,3 +1474,43 @@ def test_only_a_vertex_reasoning_engine_reference_attributes_agent_engine(
     findings = by_resource(scan(index, write_records(tmp_path, records)).findings)
     negotiator = findings["projects/123/locations/global/agents/negotiator"]
     assert ("cloud.gcp-vertex-agent-engine" in negotiator.frameworks) is attributed
+
+
+UNRECOGNIZED = "cloud.gcp: Agent Registry runtime reference to Vertex AI or Dialogflow not recognized"
+
+
+@pytest.mark.parametrize(
+    "reference,recognized",
+    [
+        (f"//aiplatform.googleapis.com/v1/projects/{P}/locations/us-central1/reasoningEngines/789", False),
+        (f"https://us-central1-aiplatform.googleapis.com/v1/{RE_SHADOW}", False),
+        (f"//aiplatform.googleapis.com/{RE_SHADOW}/", False),
+        (f"//AIPLATFORM.googleapis.com/{RE_SHADOW}", False),
+        (f"//dialogflow.googleapis.com/projects/{P}/locations/global/agents/abc/flows/x", False),
+        # A plain resource name of a collection the scan does not observe names no engine.
+        (f"//aiplatform.googleapis.com/projects/{P}/locations/us-central1/endpoints/1", True),
+        # Neither Vertex AI nor Dialogflow.
+        (f"//container.googleapis.com/projects/{P}/locations/us-central1/clusters/c", True),
+        (f"https://aiplatform.googleapis.com.evil.example/{RE_SHADOW}", True),
+    ],
+)
+def test_unrecognized_vertex_or_dialogflow_runtime_references_are_never_complete(
+    index, tmp_path, reference, recognized
+):
+    template = next(record for record in fixture_records() if record["_kind"] == "agent-registry-agent")
+    added = [
+        {**template, "name": f"projects/{N}/locations/global/agents/{name}", "runtime_reference": reference}
+        for name in ("triage", "triage-copy")
+    ]
+    result = scan(index, write_records(tmp_path, [*fixture_records(), *added]))
+    warnings = next(stats.warnings for stats in result.stats if stats.connector == "cloud.gcp")
+    assert result.complete is recognized
+    # One warning however many records hold such a reference.
+    assert sum(warning.startswith(UNRECOGNIZED) for warning in warnings) == (0 if recognized else 1)
+    findings = by_resource(result.findings)
+    for record in added:
+        assert findings[record["name"]].metadata[RECORD_KEY]["bindings"] == []
+        assert findings[record["name"]].metadata[RECORD_KEY]["listing_complete"] is recognized
+    # The engine such a reference may register is never reported missing from the registry.
+    shadow = findings[RE_SHADOW].metadata.get(RECONCILIATION_KEY)
+    assert (shadow is not None and shadow["status"] == "observed-not-registered") is recognized

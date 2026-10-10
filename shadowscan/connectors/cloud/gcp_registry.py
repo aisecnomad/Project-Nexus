@@ -130,6 +130,8 @@ _REGISTRY_NAME = re.compile(
 _RUNTIME_REFERENCE = re.compile(
     r"//(?:[a-z0-9-]+-)?(?P<service>aiplatform|dialogflow)\.googleapis\.com/(?P<resource>projects/.+)"
 )
+# Any reference on a Vertex AI or Dialogflow host, in whatever form (scheme, version segment).
+_RUNTIME_HOST = re.compile(r"(?:https?:)?//(?:[a-z0-9-]+-)?(?:aiplatform|dialogflow)\.googleapis\.com/", re.I)
 # Discovery Engine names that become authenticated request paths.
 ENGINE_NAME = re.compile(
     r"projects/(?P<project>[A-Za-z0-9._:-]+)/locations/(?P<location>global|us|eu)"
@@ -499,6 +501,20 @@ def runtime_reference(uri: Any) -> Reference | None:
     return observed_reference(kind, match["resource"])
 
 
+def unrecognized_reference(uri: Any) -> bool:
+    """Whether a ``RuntimeReference`` names a Vertex AI or Dialogflow host in a form this scan cannot read.
+
+    Such a reference (an ``https:`` URL, a version segment, a trailing slash) may register a
+    reasoning engine or Dialogflow agent that would otherwise look unregistered. A plain resource
+    name of a collection this scan does not observe (a Vertex AI endpoint) is read: it names no
+    engine.
+    """
+    if not isinstance(uri, str) or not _RUNTIME_HOST.match(uri):
+        return False
+    match = _RUNTIME_REFERENCE.fullmatch(uri)
+    return match is None or _resource(match["resource"]) is None
+
+
 class ProjectNumbers:
     """Project number to project id, from this scan's own listings; a conflicting number maps to nothing."""
 
@@ -590,7 +606,8 @@ class RecordEntry:
     and ``registry_suffix`` the rest of that name: the registry id is both, with the number
     replaced by the project id when this scan knows it. ``references`` that name another
     project's resource move to ``cross_project`` when the catalogs are finished: a record binds
-    only resources of the project it was listed in.
+    only resources of the project it was listed in. ``unrecognized_reference`` marks a runtime
+    reference to Vertex AI or Dialogflow that this scan cannot read.
     """
 
     kind: str
@@ -610,6 +627,7 @@ class RecordEntry:
     updated_at: str | None = None
     publisher: str | None = None
     cross_project: list[Reference] = field(default_factory=list)
+    unrecognized_reference: bool = False
 
 
 def _typed(rec: dict[str, Any], key: str, kind: type) -> Any:
@@ -718,7 +736,8 @@ def _registry_entry(
         if not isinstance(protocol, dict) or not isinstance(protocol.get("urls") or [], list):
             raise ValueError("protocols")
         found += protocol.get("urls") or []
-    reference = runtime_reference(rec.get("runtime_reference"))
+    raw_reference = rec.get("runtime_reference")
+    reference = runtime_reference(raw_reference)
     identity = rec.get("runtime_identity")
     return RecordEntry(
         kind=kind,
@@ -737,6 +756,7 @@ def _registry_entry(
         identity=identity.removeprefix("principal://") if identity else None,
         updated_at=_text(rec.get("updateTime"), 64),
         publisher=_text(rec.get("publisher"), 512) if kind == "agent-registry-skill" else None,
+        unrecognized_reference=reference is None and unrecognized_reference(raw_reference),
     )
 
 
@@ -758,7 +778,9 @@ class RegistryCatalogs:
     number of a project other than the one it was listed in (counted in :attr:`foreign` and
     dropped): it would claim that other project's registry identity.
 
-    :attr:`failed_listings` counts coverage records of listings that did not complete.
+    :attr:`failed_listings` counts coverage records of listings that did not complete, and
+    :attr:`unrecognized` the Agent Registry records whose runtime reference names Vertex AI or
+    Dialogflow in a form this scan cannot read.
     """
 
     def __init__(self) -> None:
@@ -775,6 +797,7 @@ class RegistryCatalogs:
         self.tainted = False
         self.foreign = 0
         self.failed_listings = 0
+        self.unrecognized = 0
 
     # ------------------------------------------------------------ intake
     def taint(self) -> None:
@@ -883,13 +906,15 @@ class RegistryCatalogs:
             own = [reference for reference in entry.references if self._owns(entry, reference, literal)]
             entry.cross_project = [reference for reference in entry.references if reference not in own]
             entry.references = own
-        # An Agent Registry whose records name runtimes of another project, or name them by a
-        # number this scan cannot resolve, is never a complete listing of its own project.
+        # An Agent Registry whose records name runtimes of another project, or name them in a form
+        # or by a number this scan cannot resolve, is never a complete listing of its own project.
         self._unresolved_projects = {
             entry.project
             for _, entry in self._deferred
-            if entry.registry == AR_REGISTRY and (entry.cross_project or not self._resolved(entry))
+            if entry.registry == AR_REGISTRY
+            and (entry.cross_project or entry.unrecognized_reference or not self._resolved(entry))
         }
+        self.unrecognized = sum(entry.unrecognized_reference for _, entry in self._deferred)
         for finding, entry in self._deferred:
             self._apply(finding, entry, canonical, literal)
         self._presence()

@@ -309,10 +309,14 @@ hint, never a binding or an approval.
 the project's registry locations were enumerated (not set with
 `agent_registry_locations`), that enumeration and every location's agents, MCP
 servers and endpoints (and skills with `v1alpha`) listings completed, and every
-runtime reference of the project's records names a resource of that project
-with a project number the scan can resolve. Only then can an observed reasoning
-engine, Dialogflow CX agent or chat engine in that project that no record binds
-be reported `observed-not-registered`. Records bind only reasoning engines and Dialogflow CX
+runtime reference of the project's records names a resource of that project,
+in a form and with a project number the scan can read. Only then can an
+observed reasoning engine, Dialogflow CX agent or chat engine in that project
+that no record binds be reported `observed-not-registered`. A runtime reference
+on a Vertex AI or Dialogflow host that is not a plain resource name (an
+`https:` URL, an API version segment or a trailing slash, for example) also
+makes the scan incomplete (exit 3): it may register an engine that would
+otherwise look unregistered. Records bind only reasoning engines and Dialogflow CX
 agents, so a chat engine is never `registered-and-observed` through a record:
 check the Dialogflow CX agent behind it before treating it as unregistered.
 Engines that are not chat engines, Gemini Enterprise apps included, are cloud
