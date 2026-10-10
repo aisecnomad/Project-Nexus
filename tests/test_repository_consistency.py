@@ -14,6 +14,7 @@ modules with ``make policy``.
 from __future__ import annotations
 
 import functools
+import importlib.util
 import itertools
 import json
 import os
@@ -1247,6 +1248,99 @@ def test_documented_commands_name_real_subcommands() -> None:
                 if args and args[0] not in _PIP_COMMANDS:
                     problems.append(f"{_relative(path)}:{number}: {line}")
     assert not problems, "documented commands with no such subcommand:\n" + "\n".join(problems)
+
+
+# `python -m MODULE`, also through a path, a versioned interpreter or interpreter
+# options: flags (`-I`, `-OO`, `-Xdev`) and `-W`/`-X` with a separate argument
+# (`-X dev`). A name a table elides (`python -m vllm.entrypoints…`) is checked
+# up to the ellipsis.
+_PYTHON_OPTION = r"(?:-[WX]\s+[^\s-]\S*|-[^\s\-cm]\S*)"
+_PYTHON_MODULE = re.compile(rf"\bpython(?:3(?:\.\d+)?)?(?:\s+{_PYTHON_OPTION})*\s+-m\s+([^\s`'\";&|()<>]+)")
+_FIRST_PARTY = frozenset({"shadowscan", "tools"})
+
+
+def _code(text: str) -> Iterator[tuple[int, str]]:
+    """Yield ``(line_number, code)`` for each fenced-block line and each inline code span."""
+    prose = dict(_prose_lines(text))
+    for number, line in enumerate(text.splitlines(), start=1):
+        if number not in prose:
+            yield number, line
+            continue
+        for span in _INLINE_CODE.finditer(line):
+            yield number, span.group()[1:-1]
+
+
+def _python_modules(text: str) -> Iterator[tuple[int, str]]:
+    """Yield ``(line_number, module)`` for each ``python -m`` command a document shows."""
+    for number, code in _code(text):
+        for match in _PYTHON_MODULE.finditer(code):
+            yield number, match.group(1).removesuffix("…")
+
+
+def _runnable(module: str) -> bool:
+    """Whether ``python -m module`` finds code to run in this checkout."""
+    try:
+        spec = importlib.util.find_spec(module)
+        if spec is not None and spec.submodule_search_locations is not None:
+            spec = importlib.util.find_spec(f"{module}.__main__")  # a package runs its __main__
+    except ModuleNotFoundError:  # a parent package is missing or is a plain module
+        return False
+    return spec is not None
+
+
+def _module_problem(module: str) -> str | None:
+    if not all(part.isidentifier() for part in module.split(".")):
+        return "is not a module name"
+    if module.partition(".")[0] in _FIRST_PARTY and not _runnable(module):
+        return "is not a runnable module in this checkout"
+    return None
+
+
+def test_documented_python_modules_are_read_from_code_only() -> None:
+    text = textwrap.dedent("""\
+        The example runs `python -m` outside the checkout; python -m in prose is not a command.
+        Run `python -m tools.connector_reference`, `.venv/bin/python3 -m pip check`
+        or `python -m vllm.entrypoints…`.
+
+        ```bash
+        python -m shadowscan. signatures.validate && python -m tools.no_such_tool
+        python -I -m shadowscan.signatures.validate && python3 -X dev -m pip check
+        python3.12 -OO -Werror -m shadowscan.signatures.validat
+        python -u script.py -m not_a_module
+        ```
+        """)
+    modules = list(_python_modules(text))
+    assert modules == [
+        (2, "tools.connector_reference"),
+        (2, "pip"),
+        (3, "vllm.entrypoints"),
+        (6, "shadowscan."),
+        (6, "tools.no_such_tool"),
+        (7, "shadowscan.signatures.validate"),
+        (7, "pip"),
+        (8, "shadowscan.signatures.validat"),
+    ]
+    assert [module for _, module in modules if _module_problem(module)] == [
+        "shadowscan.",
+        "tools.no_such_tool",
+        "shadowscan.signatures.validat",
+    ]
+
+
+def test_documented_python_modules_exist() -> None:
+    """Every ``python -m`` command a document shows names a module, and a first-party one runs.
+
+    A stray space (``python -m shadowscan. signatures.validate``) still reads as
+    a command but fails for everyone who copies it. Third-party modules are only
+    checked for a well-formed name.
+    """
+    problems = [
+        f"{_relative(path)}:{number}: {module} {problem}"
+        for path in _markdown_files()
+        for number, module in _python_modules(_read(path))
+        if (problem := _module_problem(module)) is not None
+    ]
+    assert not problems, "documented `python -m` commands that cannot run:\n" + "\n".join(problems)
 
 
 def test_readme_quotes_a_declared_classifier() -> None:

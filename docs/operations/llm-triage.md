@@ -15,6 +15,7 @@ options:
     max_findings: 25             # 1 to 500, highest risk first
     min_level: medium            # lowest heuristic risk level triaged
     timeout_seconds: 30
+    budget_seconds: 300          # 1 to 3600, the whole triage run
 ```
 
 The key is read from the environment variable named by `api_key_env`
@@ -64,6 +65,32 @@ warning on the `engine.llm-triage` entry of the scan statistics. An API key
 that is not a valid header value, or any other triage failure, is a warning
 on that entry too; the key is never echoed. A triage
 failure is not a discovery gap, so it does not make the scan incomplete.
+
+A triage run is bounded. It sends no request after `budget_seconds` (default
+300) have passed since it started, and the HTTP client's retries,
+`Retry-After` waits, connection set-up and response reads end at the same
+time: a retry wait that would pass the budget fails the request instead.
+After three consecutive failed requests the run stops, so an endpoint that is
+down or rate-limited costs three failed requests, not one per selected
+finding. Selected findings that a stopped run did not reach are recorded as
+`status: skipped`, and the `engine.llm-triage` entry gets a warning that
+names the reason and how many findings were skipped. Raising `max_findings`
+usually needs a larger `budget_seconds` too; otherwise the later findings are
+recorded as skipped.
+
+In a CLI scan with a job deadline (`--job-deadline-seconds`, or
+`options.job_deadline_seconds` read by the CLI), triage also stops early
+enough to reserve time for writing the report before the deadline exits the
+process: 10% of the deadline, at least 5 and at most 60 seconds. When less
+than that is left after collection, triage is skipped: the selected findings
+are recorded as `status: skipped` and, if there are any, the entry carries a
+warning. The reserve is a heuristic: a collection or report write that
+outlasts it still reaches the deadline, which exits 3 as before. A library
+caller that stops its own process at a deadline passes it as
+`Engine.run(job_deadline=<time.monotonic() value>)`; the reserve is then 10%
+of `options.job_deadline_seconds` (5 to 60 seconds), or 5 seconds when that
+option is not set. `options.job_deadline_seconds` alone does not bound triage
+in a library scan.
 
 Model verdicts are not measured: no evaluation of triage accuracy is
 published. Treat a verdict as a reviewer's note, not as a label.

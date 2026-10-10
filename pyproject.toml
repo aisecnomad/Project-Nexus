@@ -118,6 +118,7 @@ module = [
     "botocore.*",
     "oci",
     "oci.*",
+    "google",
     "google.auth",
     "google.auth.*",
     "azure.identity",
