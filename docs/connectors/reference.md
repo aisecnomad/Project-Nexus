@@ -142,7 +142,7 @@ Also accepted: `label`.
 
 ### `identity.entra`
 
-Entra ID service principals, OAuth consent grants, app-only permissions and app registrations via Microsoft Graph.
+Entra ID service principals, OAuth consent grants, app-only permissions, app registrations, Agent ID agent identities and Microsoft Agent 365 packages via Microsoft Graph.
 
 Offline input: JSON / JSONL / YAML / CSV export.
 
@@ -151,9 +151,15 @@ Offline input: JSON / JSONL / YAML / CSV export.
 | `tenant_id` | env AZURE\_TENANT\_ID |
 | `client_id` | env AZURE\_CLIENT\_ID |
 | `client_secret` | env AZURE\_CLIENT\_SECRET |
-| `access_token` | pre-issued Graph token (env GRAPH\_ACCESS\_TOKEN) instead of client credentials |
+| `access_token` | pre-issued Graph token (env GRAPH\_ACCESS\_TOKEN) instead of client credentials; with include\_agent\_registry and tenant\_id, its tid claim must equal tenant\_id |
+| `auth_mode` | app-only (default: client credentials or access\_token) or delegated (a signed-in user's Graph token read from the environment variable named by delegated\_token\_env; never refreshed) |
+| `delegated_token_env` | name of the environment variable that holds the delegated Graph token (default GRAPH\_DELEGATED\_TOKEN); the token itself is never configuration |
 | `include_first_party` | include Microsoft first-party service principals (default false, Copilot SPs always kept) |
-| `max_app_role_lookups` | cap on per-SP appRoleAssignments calls (default 2000) |
+| `max_app_role_lookups` | cap on per-principal appRoleAssignments calls, agent identities included (default 2000) |
+| `include_agent_identities` | collect Entra Agent ID agent identities from the Graph beta API (default false) |
+| `include_agent_registry` | collect Microsoft Agent 365 catalog packages as registry records (default false; needs CopilotPackages.Read.All) |
+| `agent_registry_api` | Graph version for the Agent 365 package catalog: v1.0 (default) or beta |
+| `max_package_lookups` | cap on per-package detail calls (default 2000) |
 | `input` | offline: JSON export of Graph objects |
 | `max_input_bytes` | offline: maximum expanded bytes read across all input files (default 256 MiB, hard ceiling 512 MiB) |
 | `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |

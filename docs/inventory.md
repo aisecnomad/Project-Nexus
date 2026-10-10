@@ -403,6 +403,43 @@ registry without `allow_auto_approved` only when it has never auto-approved
 records. A configuration the connector does not recognize gives
 `approval_mode: unknown` and makes the scan incomplete.
 
+### Microsoft Agent 365
+
+`identity.entra` with `include_agent_registry: true` reports each package of the
+tenant's Agent 365 catalog as a `microsoft-agent-365` record whose registry id
+is the connector's `tenant_id`. Trust the tenant by that id:
+
+```yaml
+connectors:
+  - name: identity.entra
+    tenant_id: 00000000-0000-0000-0000-000000000000
+    include_agent_registry: true
+    include_agent_identities: true   # makes agent identity bindings in scope
+options:
+  trusted_registries:
+    - registry: microsoft-agent-365
+      id: 00000000-0000-0000-0000-000000000000
+```
+
+An approved package then approves its own record and the objects it binds: the
+agent identity (`entra:sp:<agentIdentityId>`), only when that id is a listed
+agent identity, and the app registration (`entra:app:<appId>`), only for an
+organization's own package. A package never binds any other service principal,
+and a Microsoft or partner package never binds an app registration of the
+tenant, whatever ids it declares. Blocked, pending, rejected, draft and unknown
+packages approve nothing.
+Only an organization's own package whose request a person approved has
+`approval_mode: manual`; an approved Microsoft or partner package has
+`approval_mode: unknown` and, in a trusted tenant, approves its record and a
+listed agent identity it names. Trust the
+tenant only when the packages allowed in its catalog are ones your organization
+has decided to sanction. Without `tenant_id` the records have an empty registry
+id and cannot be trusted; with it, a pre-issued `access_token` must carry that
+tenant in its `tid` claim. A delegated scan's listing is caller-scoped, so it
+never marks findings `observed-not-registered` or `registered-not-observed`. The
+[identity connector guide](connectors/identity.md#microsoft-agent-365-packages-opt-in)
+lists the status rules and binding coverage.
+
 ## Registry reconciliation statuses
 
 Whether or not a registry is trusted, the engine compares its records with the
