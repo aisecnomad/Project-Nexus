@@ -275,10 +275,12 @@ options:
       id: arn:aws:agent-registry:us-east-1:123456789012:registry/abcd1234abcd
       allow_auto_approved: false      # default
       allow_registered_only: false    # default
+      allow_offline_records: false    # default
 ```
 
 In a trusted registry, a record approves when its status is `approved` and its
-`approval_mode` is `manual`: the registry shows that a person approved it. Two
+`approval_mode` is `manual`: the registry shows that a person approved it, and
+the scan read it from the registry rather than from an offline export. Three
 optional per-registry switches widen that:
 
 - `allow_auto_approved: true` also accepts approved records whose approval no
@@ -286,8 +288,12 @@ optional per-registry switches widen that:
   every record without a person) and `approval_mode: unknown` (the connector
   could not establish how the registry approves records). Auto-approval is not
   human review.
-- `allow_registered_only: true` also accepts `registered` records of a registry
-  without an approval workflow.
+- `allow_registered_only: true` also accepts `registered` records: records of a
+  registry without an approval workflow, and records no approval was requested
+  for (an organization's own Agent 365 package with no request). Registration
+  is not human review either.
+- `allow_offline_records: true` also accepts records replayed from an offline
+  export (see [offline replays](#offline-replays)).
 
 Records these rules decline are counted in an advisory `engine.inventory`
 warning (`trusted registry <type> <id>: N auto-approved ... record(s) were not
@@ -302,7 +308,9 @@ approves records in that registry.
 Each record that approves:
 
 - registers its own record finding as `<registry>:<record_id>` (for example
-  `registry_match: aws-agent-registry:rec-123`); and
+  `registry_match: aws-agent-registry:rec-123`), through an entry for exactly
+  that finding that is matched like the others below, so a card that also
+  approves the record finding makes it ambiguous; and
 - becomes one inventory entry per usable binding. The entry approves exactly
   the bound resource, with glob characters escaped (a binding to `agent-*`
   approves only the literal `agent-*`, never `agent-x`). The binding's provider,
@@ -336,12 +344,24 @@ Nothing is cached. Every scan rebuilds the approvals from that scan's records,
 so a record that is revoked, rejected or deleted, or a registry removed from
 `trusted_registries`, stops approving on the next scan.
 
-Records replayed from an offline export (a connector's `input`) are treated
-like live records: the engine cannot tell an export of a trusted registry from
-a forged one, and an approved record in it approves the resources it binds.
-Offline exports are untrusted input, so before trusting a registry whose
-records you replay, keep its exports where only operators can write them, or
-scan that registry live.
+#### Offline replays
+
+Records replayed from an offline export (a connector configured with `input`)
+do not approve by default. The engine cannot tell an export of a trusted
+registry from a forged one: a line added to an export, such as an approved,
+auto-detected record whose provenance names any runtime, would otherwise
+sanction that runtime. The engine, not the connector, records which findings a
+job with `input` produced, so a connector cannot present an exported record as
+live. A record that would otherwise approve is counted in the advisory warning
+`trusted registry <type> <id>: N offline-replayed (set allow_offline_records to
+accept them) record(s) were not treated as sanctioned`. Replayed records still
+reconcile: `registry_reconciliation` statuses are computed as for live
+records. A record that the same scan reads both live and from an export counts
+as replayed.
+
+Set `allow_offline_records: true` on the trusted entry only when its exports
+are kept where only operators can write them; otherwise scan that registry
+live.
 
 ### Example: Google Agent Registry and Gemini Enterprise
 
@@ -363,8 +383,9 @@ options:
 ```
 
 An `ENABLED` agent of that app approves exactly the reasoning engine or
-Dialogflow CX agent it is bound to; a `PRIVATE`, draft, disabled or suspended
-agent approves nothing. Agent Registry has no approval workflow, so its
+Dialogflow CX agent it is bound to in the app's own project (`acme-ml`); a
+`PRIVATE`, draft, disabled or suspended agent approves nothing, and neither
+does an agent's reference to another project's engine. Agent Registry has no approval workflow, so its
 `registered` records approve only with `allow_registered_only: true` on an entry
 such as `{registry: google-agent-registry, id: projects/acme-ml/locations/global}`;
 listing an agent there is not a review. Trust one of the two for a given agent:
@@ -412,10 +433,11 @@ findings themselves. Records read through `registry_arns` have
 was approved.
 
 `approval_mode` reflects the registry's approval configuration when the scan
-reads it, not how each record was approved. A record approved while an
-auto-approval rule was on reports `manual` once the rule is removed, so trust a
-registry without `allow_auto_approved` only when it has never auto-approved
-records. A configuration the connector does not recognize gives
+reads it, not how each record was approved: a configuration change applies only
+to records submitted after it. A record approved while an auto-approval rule
+was on reports `manual` once the rule is removed, and one a person approved
+before a rule was added reports `auto`, so trust a registry without
+`allow_auto_approved` only when it has never auto-approved records. A configuration the connector does not recognize gives
 `approval_mode: unknown` and makes the scan incomplete.
 
 ### Microsoft Agent 365
@@ -436,23 +458,33 @@ options:
       id: 00000000-0000-0000-0000-000000000000
 ```
 
-An approved package then approves its own record and the objects it binds: the
-agent identity (`entra:sp:<agentIdentityId>`), only when that id is a listed
-agent identity, and the app registration (`entra:app:<appId>`), only for an
-organization's own package. A package never binds any other service principal,
-and a Microsoft or partner package never binds an app registration of the
-tenant, whatever ids it declares. Blocked, pending, rejected, draft and unknown
-packages approve nothing.
-Only an organization's own package whose request a person approved has
-`approval_mode: manual`; an approved Microsoft or partner package has
-`approval_mode: unknown` and approves nothing unless the tenant's entry sets
-`allow_auto_approved`, which then approves its record and a listed agent
-identity it names. Trust the
+A package the trust policy accepts approves its own record and the objects it
+binds: the agent identity (`entra:sp:<agentIdentityId>`), only when that id is
+a listed agent identity, and the app registration (`entra:app:<appId>`), only
+for an organization's own package (`type` `custom`, `shared` or `lob`). A
+package never binds any other service principal, and a Microsoft or partner
+package never binds an app registration of the tenant, whatever ids it
+declares. What each setting of the tenant's entry accepts:
+
+| Entry setting | Agent 365 packages it accepts |
+|---|---|
+| default (both switches off) | An organization's own package whose approval request a person approved (`approved`, `approval_mode: manual`). |
+| `allow_auto_approved: true` | Also an approved Microsoft or partner package (`approved`, `approval_mode: unknown`: no reviewer in this tenant is known); it approves its record and a listed agent identity it names, never an app registration. |
+| `allow_registered_only: true` | Also an organization's own package with no approval request, such as an agent a user shared (`registered`): no person approved it. It approves its record, a listed agent identity and its app registration. |
+
+`allow_auto_approved` never accepts a `registered` package, and
+`allow_registered_only` never accepts a vendor package. Blocked, pending,
+rejected, draft and unknown packages approve nothing under any setting; a
+package whose details were unavailable or capped is `unknown`, because its
+request status is read from the details, and binds nothing. Trust the
 tenant only when the packages allowed in its catalog are ones your organization
 has decided to sanction. Without `tenant_id` the records have an empty registry
 id and cannot be trusted; with it, a pre-issued `access_token` must carry that
-tenant in its `tid` claim. A delegated scan's listing is caller-scoped, so it
-never marks findings `observed-not-registered` or `registered-not-observed`. The
+tenant in its `tid` claim and an export replayed with another `tenant_id` than
+the one it was collected from has an empty registry id too. A delegated scan's
+listing, or one read with a pre-issued token that is not app-only, is
+caller-scoped: it never marks findings `observed-not-registered` or
+`registered-not-observed`, and it makes the scan incomplete (exit 3). The
 [identity connector guide](connectors/identity.md#microsoft-agent-365-packages-opt-in)
 lists the status rules and binding coverage.
 
@@ -464,19 +496,28 @@ observed findings (findings without a `registry_record`) and writes
 when the resources are equal and the binding's provider, account and region,
 where set, are equal too. Names never match.
 
+Only a record whose status is `approved`, `registered` or `pending` registers
+what it binds. A `draft`, `rejected`, `deprecated`, `blocked` or `unknown`
+record is not a registration: it is `not-comparable` with
+`reason: record-status`, and the findings it binds count as unregistered. Its
+bindings still define its registry's scope, so a running agent whose only
+record was rejected is `observed-not-registered` when the listing is complete.
+
 | Status | Set on | When |
 |---|---|---|
-| `registered-and-observed` | record and observed finding | A usable binding matches the observed finding. The record lists the matched finding ids in `observed`; the observed finding lists the record finding ids in `records` and the registries (`registry`, `registry_id`) in `registries`. |
-| `registered-not-observed` | record | Every usable binding has coverage `in-scope` and none matched: the scan collected where the agent should be and did not find it. |
-| `not-comparable` | record | No usable binding (`reason: no-usable-binding`), or no match and at least one binding outside the collected scope (`reason: binding-not-in-scope`). |
-| `observed-not-registered` | observed finding | An agent, workflow, bot or MCP server with an exact resource, provider and account, in the scope of an identified registry (the providers and accounts of its bindings) whose records all report `listing_complete: true`, that no registry matched. It is shadow with respect to the `registries` listed. |
+| `registered-and-observed` | record and observed finding | A usable binding of an `approved`, `registered` or `pending` record matches the observed finding. The record lists the matched finding ids in `observed`; the observed finding lists the record finding ids in `records` and the registries (`registry`, `registry_id`) in `registries`. |
+| `registered-not-observed` | record | An `approved`, `registered` or `pending` record whose usable bindings all have coverage `in-scope` and none matched: the scan collected where the agent should be and did not find it. |
+| `not-comparable` | record | The record's status registers nothing (`reason: record-status`), it has no usable binding (`reason: no-usable-binding`), or no binding matched and at least one is outside the collected scope (`reason: binding-not-in-scope`). |
+| `observed-not-registered` | observed finding | An agent, workflow, bot or MCP server with an exact resource, provider and account, in the scope of an identified registry (the providers and accounts of its bindings) whose records all report `listing_complete: true`, that no registry matched. The registry must be able to bind its resource type: AWS registries bind only AgentCore runtimes (`agentcore-runtime`) and gateways (`agentcore-gateway`), so a Bedrock agent is never absent from them; other registry types claim every such kind. It is shadow with respect to the `registries` listed. |
 
 A match in any registry wins over absence from another. A finding outside every
 registry's scope, one whose identity is redacted or unresolved, and one in the
 scope only of registries without a complete listing get no status: absence from
 a partial listing proves nothing. The lists hold at most 50 entries. When
 `min_confidence` drops a finding, links to it are removed and statuses stay as
-computed.
+computed. Record findings themselves are never dropped by `min_confidence`:
+their confidence is the fixed 0.5 of a declaration, and a record whose
+approvals apply stays in the report that relies on it.
 
 Statuses are informational: they do not change `shadow`, approval or risk.
 

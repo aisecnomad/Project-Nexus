@@ -743,12 +743,15 @@ def test_fixture_gemini_enterprise_agents(index):
         for record in records.values()
     )
     assert status(agents["negotiator"]) == "registered-and-observed"
-    assert status(findings[f"projects/{P}/locations/global/agents/abc"]) == "registered-and-observed"
+    # Only the draft helpdesk record binds this Dialogflow agent, and a draft registers nothing:
+    # the complete Agent Registry listing of its project does not hold it.
+    assert status(agents["helpdesk"]) == "not-comparable"
+    assert status(findings[f"projects/{P}/locations/global/agents/abc"]) == "observed-not-registered"
     forecaster = agents["forecaster"]
     assert forecaster.metadata[RECONCILIATION_KEY] == {
         "status": "not-comparable",
         "observed": [],
-        "reason": "binding-not-in-scope",
+        "reason": "record-status",
     }
     assert records["forecaster"]["bindings"][0]["coverage"] == "out-of-scope"
     # The associated registry was listed completely and does not hold these agents.
@@ -903,8 +906,9 @@ def test_records_the_offline_loader_drops_taint_every_completeness_claim(index, 
     assert record["listing_complete"] is False
     assert [binding["coverage"] for binding in record["bindings"]] == ["unknown"]
     statuses = {status(finding) for finding in findings.values() if RECONCILIATION_KEY in finding.metadata}
-    # Exact matches still reconcile; no claim rests on completeness.
-    assert statuses == {"not-comparable", "registered-and-observed"}
+    # No claim rests on completeness. (The only exact match left binds a draft, which registers
+    # nothing.)
+    assert statuses == {"not-comparable"}
     assert all(
         finding.metadata["catalog_presence"]["agent_registry"] != "absent"
         for finding in findings.values()
@@ -951,8 +955,13 @@ def test_registry_names_of_another_project_are_rejected(index, tmp_path, foreign
             "registry": "google-agent-registry",
             "id": "projects/victim/locations/global",
             "allow_registered_only": True,
+            "allow_offline_records": True,
         },
-        {"registry": "gemini-enterprise", "id": VICTIM_ENGINE.replace("999", "victim", 1)},
+        {
+            "registry": "gemini-enterprise",
+            "id": VICTIM_ENGINE.replace("999", "victim", 1),
+            "allow_offline_records": True,
+        },
     ]
     path = write_records(tmp_path, [*fixture_records(), *victim, foreign])
     result = scan(index, path, trusted_registries=trusted)
@@ -971,6 +980,162 @@ def test_registry_names_of_another_project_are_rejected(index, tmp_path, foreign
     # Like any unreadable record, it makes every registry claim of the scan not comparable.
     assert RECONCILIATION_KEY not in findings[RE_SHADOW].metadata
     assert status(findings[f"projects/{N}/locations/global/agents/retired-bot"]) == "not-comparable"
+
+
+VICTIM_RE_2 = "projects/999/locations/us-central1/reasoningEngines/8"
+
+
+def _victim_project(**coverage: Any) -> list[dict[str, Any]]:
+    """Another scanned project (payments-prod, number 999) with two observed reasoning engines."""
+    return [
+        {"_kind": "project", "project": "payments-prod", "ai_services": ["aiplatform.googleapis.com"]},
+        {"_kind": "project-number", "_project": "payments-prod", "project_number": "999"},
+        *(
+            {
+                "_kind": "reasoning-engine",
+                "_project": "payments-prod",
+                "_location": "us-central1",
+                "name": name,
+            }
+            for name in (VICTIM_RE, VICTIM_RE_2)
+        ),
+        {
+            "_kind": "registry-coverage",
+            "_project": "payments-prod",
+            "_location": "us-central1",
+            "catalog": "vertex-ai",
+            "collection": "reasoningEngines",
+            "api_version": "v1",
+            "complete": True,
+            "listing_scope": "project",
+        },
+        *([{**coverage, "_kind": "registry-coverage", "_project": "payments-prod"}] if coverage else []),
+    ]
+
+
+@pytest.mark.parametrize("numbers_known", [True, False], ids=["numbers-known", "numbers-unknown"])
+def test_a_trusted_gemini_enterprise_app_never_approves_another_projects_engine(
+    index, tmp_path, numbers_known
+):
+    agent = _foreign_record(
+        "gemini-enterprise-agent",
+        name=f"{ASSISTANT}/agents/wired",
+        state="ENABLED",
+        reasoning_engine=VICTIM_RE,
+    )
+    records = [*fixture_records(), *_victim_project(), agent]
+    if not numbers_known:
+        # Neither number is known: the engine belongs to the project whose listing returned it.
+        records = [record for record in records if record["_kind"] != "project-number"]
+    registry_id = GE_ID if numbers_known else ENGINE
+    result = scan(
+        index,
+        write_records(tmp_path, records),
+        # The export is replayed offline, so the entry opts in to offline records: the
+        # cross-project rule, not the offline default, must keep the victim unapproved.
+        trusted_registries=[
+            {"registry": "gemini-enterprise", "id": registry_id, "allow_offline_records": True}
+        ],
+    )
+    # A reference to another project's engine is no coverage gap.
+    assert result.complete
+    findings = by_resource(result.findings)
+    victim = findings[VICTIM_RE]
+    assert victim.shadow is True and victim.registry_match is None
+    wired = findings[agent["name"]]
+    assert wired.metadata[RECORD_KEY]["registry_id"] == registry_id
+    assert wired.metadata[RECORD_KEY]["bindings"] == []
+    assert wired.metadata["registry_join_hints"] == [
+        {"key": "cross-project-reference", "resource": VICTIM_RE}
+    ]
+    # The app's binding to its own project's engine still approves it.
+    assert findings[RE_OK].shadow is False
+
+
+@pytest.mark.parametrize(
+    "segment,hinted",
+    [
+        ("payments-prod", VICTIM_RE),
+        ("999", VICTIM_RE),
+        # A number this scan does not know is another project's: acme-ml's number is known.
+        ("555", "projects/555/locations/us-central1/reasoningEngines/7"),
+    ],
+)
+@pytest.mark.parametrize("victim_registry_denied", [False, True], ids=["no-registry", "registry-denied"])
+def test_agent_registry_records_never_bind_or_claim_another_projects_engines(
+    index, tmp_path, segment, hinted, victim_registry_denied
+):
+    coverage = {}
+    if victim_registry_denied:
+        # payments-prod's own Agent Registry listing was denied.
+        coverage = {
+            "_location": None,
+            "catalog": "google-agent-registry",
+            "collection": "locations",
+            "api_version": "v1alpha",
+            "complete": False,
+            "listing_scope": "project",
+            "locations": [],
+        }
+    record = _foreign_record(
+        "agent-registry-agent",
+        name=f"projects/{N}/locations/global/agents/wired",
+        runtime_reference=f"//aiplatform.googleapis.com/projects/{segment}/locations/us-central1/reasoningEngines/7",
+    )
+    trusted = [{"registry": "google-agent-registry", "id": AR_ID, "allow_registered_only": True}]
+    result = scan(
+        index,
+        write_records(tmp_path, [*fixture_records(), *_victim_project(**coverage), record]),
+        trusted_registries=trusted,
+    )
+    findings = by_resource(result.findings)
+    wired = findings[record["name"]]
+    assert wired.metadata[RECORD_KEY]["bindings"] == []
+    assert wired.metadata["registry_join_hints"] == [{"key": "cross-project-reference", "resource": hinted}]
+    for name in (VICTIM_RE, VICTIM_RE_2):
+        # Neither approved by acme-ml's registry nor reported missing from it.
+        assert findings[name].shadow is True
+        assert RECONCILIATION_KEY not in findings[name].metadata
+    # A registry that names another project's runtimes is never a complete listing of its own.
+    assert all(
+        finding.metadata[RECORD_KEY]["listing_complete"] is False
+        for finding in findings.values()
+        if finding.metadata.get(RECORD_KEY, {}).get("registry") == "google-agent-registry"
+    )
+    assert RECONCILIATION_KEY not in findings[RE_SHADOW].metadata
+    assert status(findings[RE_OK]) == "registered-and-observed"
+
+
+@pytest.mark.parametrize(
+    "changes,warning",
+    [
+        # Listed in another scanned project, named with acme-ml's number.
+        ({}, "name a project other than the one they were listed in"),
+        # Named with another project's id, or outside the location or collection it was listed in.
+        ({"name": f"projects/{P}/locations/global/publishers/acme"}, "invalid"),
+        ({"_project": P, "_location": "us-central1"}, "invalid"),
+        ({"_project": P, "name": f"projects/{N}/locations/global/skills/acme"}, "invalid"),
+    ],
+    ids=["another-projects-number", "another-projects-id", "location", "collection"],
+)
+def test_publishers_speak_only_for_the_project_they_were_listed_in(index, tmp_path, changes, warning):
+    spoof = _foreign_record(
+        "agent-registry-publisher",
+        **{
+            "_project": "sandbox-dev",
+            "displayName": "Security Team (verified)",
+            "publisherTier": "FIRST_PARTY",
+            **changes,
+        },
+    )
+    result = scan(index, write_records(tmp_path, [*fixture_records(), spoof]))
+    assert not result.complete
+    warnings = next(stats.warnings for stats in result.stats if stats.connector == "cloud.gcp")
+    assert any(warning in text for text in warnings)
+    skill = by_resource(result.findings)[f"projects/{N}/locations/global/skills/acme-contract-review"]
+    # The skill keeps the publisher its own project listed.
+    assert skill.metadata[RECORD_KEY]["publisher"] == "Acme platform team"
+    assert skill.metadata["publisher_tier"] == "PRIVATE"
 
 
 def test_project_numbers_tell_whose_name_a_segment_is():
@@ -1124,9 +1289,9 @@ def test_replayed_tools_and_skills_keep_only_bounded_names_and_boolean_hints(ind
 
 
 def test_trusted_gemini_enterprise_approval_sanctions_the_bound_engine(index):
-    result = scan(
-        index, REGISTRY_FIXTURE, trusted_registries=[{"registry": "gemini-enterprise", "id": GE_ID}]
-    )
+    # The fixture is an offline replay, whose records approve only for an entry that opts in.
+    trusted = {"registry": "gemini-enterprise", "id": GE_ID, "allow_offline_records": True}
+    result = scan(index, REGISTRY_FIXTURE, trusted_registries=[trusted])
     findings = by_resource(result.findings)
     engine = findings[RE_OK]
     assert engine.shadow is False
@@ -1137,7 +1302,7 @@ def test_trusted_gemini_enterprise_approval_sanctions_the_bound_engine(index):
 
 
 def test_agent_registry_records_approve_only_with_allow_registered_only(index):
-    trusted = {"registry": "google-agent-registry", "id": AR_ID}
+    trusted = {"registry": "google-agent-registry", "id": AR_ID, "allow_offline_records": True}
     result = scan(index, REGISTRY_FIXTURE, trusted_registries=[trusted])
     findings = by_resource(result.findings)
     assert findings[RE_OK].shadow is True
@@ -1246,6 +1411,65 @@ def test_dump_then_replay_reproduces_findings_and_statuses(index, tmp_path, monk
         assert secret not in text
 
 
+def _denied_second_page(params: dict[str, Any]) -> dict[str, Any]:
+    if not params.get("pageToken"):
+        return {"agents": [{"name": f"projects/{N}/locations/global/agents/first"}], "nextPageToken": "t1"}
+    raise HttpError(403, "https://agentregistry.googleapis.com", "denied")
+
+
+REPLAYED_GAP = "cloud.gcp: registry catalog listing incomplete in export; records may be missing"
+
+
+@pytest.mark.parametrize(
+    "failures",
+    [
+        {f"{AR_BASE}/locations/global/agents": _denied_second_page},
+        {f"{VERTEX}/reasoningEngines": HttpError(403, "https://aiplatform.googleapis.com", "denied")},
+        {
+            f"{AR_BASE}/locations/global/agents": _denied_second_page,
+            f"{VERTEX}/reasoningEngines": HttpError(403, "https://aiplatform.googleapis.com", "denied"),
+        },
+    ],
+    ids=["agent-registry-page", "vertex-ai", "both"],
+)
+def test_replayed_dump_of_an_incomplete_scan_stays_incomplete(index, tmp_path, monkeypatch, failures):
+    fake = FakeGoogle({**estate_routes("unused"), **failures})
+    monkeypatch.setattr(GcpConnector, "_auth", lambda self: setattr(self, "http", fake))
+    config = {"projects": [P], "locations": ["us-central1"], "agent_registry": True}
+    dumped = tmp_path / "dump"
+    live = Engine(
+        ScanConfig(connectors=[ConnectorSpec("cloud.gcp", config)], dump_records=str(dumped)), index
+    ).run()
+    (dump,) = dumped.glob("*.jsonl")
+    assert any(
+        record["_kind"] == "registry-coverage" and record["complete"] is False
+        for record in map(json.loads, dump.read_text().splitlines())
+    )
+    replay = scan(index, dump)
+    # The export records that a listing failed: replaying it is as incomplete as the live scan.
+    assert not live.complete and not replay.complete
+
+    def warnings(result: ScanResult) -> list[str]:
+        return next(stats.warnings for stats in result.stats if stats.connector == "cloud.gcp")
+
+    # Once per replay, however many listings failed; live collection already warned for each.
+    assert warnings(replay).count(REPLAYED_GAP) == 1
+    assert REPLAYED_GAP not in warnings(live)
+
+    def outcome(result: ScanResult) -> dict[str, Any]:
+        return {
+            finding.id: (finding.metadata.get(RECORD_KEY), finding.metadata.get(RECONCILIATION_KEY))
+            for finding in result.findings
+        }
+
+    # The warning voids no claim that live analysis made about the listings that completed.
+    assert outcome(live) == outcome(replay)
+    assert all(
+        RECONCILIATION_KEY not in finding.metadata or status(finding) != "observed-not-registered"
+        for finding in replay.findings
+    )
+
+
 def test_the_documented_gcp_registry_example_is_valid(index):
     text = (Path(__file__).parents[2] / "docs" / "inventory.md").read_text(encoding="utf-8")
     section = text.split("### Example: Google Agent Registry and Gemini Enterprise", 1)[1]
@@ -1295,3 +1519,81 @@ def test_only_a_vertex_reasoning_engine_reference_attributes_agent_engine(
     findings = by_resource(scan(index, write_records(tmp_path, records)).findings)
     negotiator = findings["projects/123/locations/global/agents/negotiator"]
     assert ("cloud.gcp-vertex-agent-engine" in negotiator.frameworks) is attributed
+
+
+UNRECOGNIZED = "cloud.gcp: Agent Registry runtime reference to Vertex AI or Dialogflow not recognized"
+
+
+@pytest.mark.parametrize(
+    "reference,recognized",
+    [
+        (f"//aiplatform.googleapis.com/v1/projects/{P}/locations/us-central1/reasoningEngines/789", False),
+        (f"https://us-central1-aiplatform.googleapis.com/v1/{RE_SHADOW}", False),
+        (f"//aiplatform.googleapis.com/{RE_SHADOW}/", False),
+        (f"//AIPLATFORM.googleapis.com/{RE_SHADOW}", False),
+        (f"//dialogflow.googleapis.com/projects/{P}/locations/global/agents/abc/flows/x", False),
+        # A plain resource name of a collection the scan does not observe names no engine.
+        (f"//aiplatform.googleapis.com/projects/{P}/locations/us-central1/endpoints/1", True),
+        # Neither Vertex AI nor Dialogflow.
+        (f"//container.googleapis.com/projects/{P}/locations/us-central1/clusters/c", True),
+        (f"https://aiplatform.googleapis.com.evil.example/{RE_SHADOW}", True),
+    ],
+)
+def test_unrecognized_vertex_or_dialogflow_runtime_references_are_never_complete(
+    index, tmp_path, reference, recognized
+):
+    template = next(record for record in fixture_records() if record["_kind"] == "agent-registry-agent")
+    added = [
+        {**template, "name": f"projects/{N}/locations/global/agents/{name}", "runtime_reference": reference}
+        for name in ("triage", "triage-copy")
+    ]
+    result = scan(index, write_records(tmp_path, [*fixture_records(), *added]))
+    warnings = next(stats.warnings for stats in result.stats if stats.connector == "cloud.gcp")
+    assert result.complete is recognized
+    # One warning however many records hold such a reference.
+    assert sum(warning.startswith(UNRECOGNIZED) for warning in warnings) == (0 if recognized else 1)
+    findings = by_resource(result.findings)
+    for record in added:
+        assert findings[record["name"]].metadata[RECORD_KEY]["bindings"] == []
+        assert findings[record["name"]].metadata[RECORD_KEY]["listing_complete"] is recognized
+    # The engine such a reference may register is never reported missing from the registry.
+    shadow = findings[RE_SHADOW].metadata.get(RECONCILIATION_KEY)
+    assert (shadow is not None and shadow["status"] == "observed-not-registered") is recognized
+
+
+def test_replayed_registry_strings_are_bounded_like_collected_ones(index):
+    name, display, agent_id = f"projects/{N}/locations/global/agents/long", "d" * 5000, "a" * 5000
+    framework, reference = "langgraph" + "f" * 5000, "//container.googleapis.com/" + "r" * 5000
+    item = {
+        "name": name,
+        "displayName": display,
+        "agentId": agent_id,
+        "attributes": {
+            "agentregistry.googleapis.com/system/Framework": {"framework": framework},
+            "agentregistry.googleapis.com/system/RuntimeReference": {"uri": reference},
+        },
+    }
+    scope = {"_kind": "agent-registry-agent", "_project": P, "_location": "global", "_api_version": "v1"}
+    collected = {**gcp_registry.normalize_ar_item("agents", item), **scope}
+    # An export written by hand (or by an older build) holds the same item unbounded.
+    replayed = {
+        "name": name,
+        "displayName": display,
+        "agentId": agent_id,
+        "framework": framework,
+        "runtime_reference": reference,
+        **scope,
+    }
+
+    def analyzed(record: dict[str, Any]) -> Finding:
+        scanner = GcpConnector(context(index))
+        (finding,) = scanner.analyze([record])
+        assert not scanner.ctx.stats.incomplete
+        return finding
+
+    live, replay = analyzed(collected), analyzed(replayed)
+    assert replay.title == live.title == "Agent Registry agent: " + "d" * 199 + "…"
+    for key, limit in (("agent_id", 256), ("framework", 512), ("runtime_reference", 512)):
+        assert replay.metadata[key] == live.metadata[key]
+        assert len(replay.metadata[key]) == limit
+    assert replay.metadata[RECORD_KEY] == live.metadata[RECORD_KEY]

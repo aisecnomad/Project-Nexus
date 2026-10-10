@@ -66,6 +66,7 @@ from shadowscan.connectors.cloud.gcp_registry import (
     VERTEX_CATALOG,
     RecordEntry,
     RegistryCatalogs,
+    bound_strings,
     clean_card,
     clean_texts,
     clean_tools,
@@ -911,6 +912,16 @@ class GcpConnector(BaseConnector):
                 f"cloud.gcp: {catalogs.foreign} registry record(s) name a project other than the "
                 "one they were listed in; registry claims not comparable"
             )
+        # Warned after the replay check above: these gaps already void the claims of the listings
+        # they concern, so a replay keeps the claims live analysis made about the others.
+        if catalogs.unrecognized:
+            self.ctx.warn(
+                "cloud.gcp: Agent Registry runtime reference to Vertex AI or Dialogflow not recognized; "
+                "that registry's listing is not complete"
+            )
+        if self.offline and catalogs.failed_listings:
+            # Live collection warned when the listing failed; the export only records that it did.
+            self.ctx.warn("cloud.gcp: registry catalog listing incomplete in export; records may be missing")
         yield from findings
 
     @staticmethod
@@ -1155,6 +1166,7 @@ class GcpConnector(BaseConnector):
 
     def _registry_finding(self, kind: str, rec: dict[str, Any]) -> tuple[Finding, RecordEntry]:
         """A registry record finding (its ``registry_record`` is written by ``RegistryCatalogs``)."""
+        rec = bound_strings(rec)
         entry = record_entry(kind, rec)
         finding_kind, label = _RECORD_FINDINGS[kind]
         display = rec.get("displayName") or entry.name.rsplit("/", 1)[-1]

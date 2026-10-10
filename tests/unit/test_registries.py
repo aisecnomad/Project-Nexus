@@ -379,6 +379,59 @@ def test_absence_covers_workflows_bots_and_mcp_servers(kind):
     assert status(unregistered) == "observed-not-registered"
 
 
+@pytest.mark.parametrize("record_status", ["draft", "rejected", "deprecated", "blocked", "unknown"])
+def test_a_record_that_is_not_a_registration_never_registers_what_it_binds(record_status):
+    # Regression: a REJECTED, DEPRECATED or DRAFT record bound to a running runtime made it
+    # registered-and-observed, which hid observed-not-registered and the registry-gap rule.
+    agent, rec = observed(), record_finding(record(status=record_status))
+    assert reconcile_registries([agent, rec]) == []
+    assert rec.metadata[RECONCILIATION_KEY] == {
+        "status": "not-comparable",
+        "observed": [],
+        "reason": "record-status",
+    }
+    # The record still shows the registry's complete listing covers the account.
+    assert agent.metadata[RECONCILIATION_KEY] == {
+        "status": "observed-not-registered",
+        "registries": [{"registry": REGISTRY, "registry_id": REGISTRY_ARN}],
+    }
+
+
+@pytest.mark.parametrize("record_status", ["approved", "registered", "pending"])
+def test_approved_registered_and_pending_records_register_what_they_bind(record_status):
+    agent, rec = observed(), record_finding(record(status=record_status))
+    reconcile_registries([agent, rec])
+    assert status(agent) == status(rec) == "registered-and-observed"
+
+
+def test_a_rejected_record_beside_an_approved_one_keeps_only_the_approved_registration():
+    agent = observed()
+    rejected = record_finding(record(record_id="rec-2", status="rejected"), "rec-2")
+    approved = record_finding()
+    reconcile_registries([agent, rejected, approved])
+    assert agent.metadata[RECONCILIATION_KEY]["records"] == [approved.id]
+
+
+def test_absence_is_claimed_only_for_resource_types_the_registry_can_bind():
+    # Regression: an AWS registry binds AgentCore runtimes and gateways only, yet a Bedrock agent
+    # in an account with one bound runtime was reported observed-not-registered.
+    bedrock = observed(
+        resource=f"arn:aws:bedrock:{REGION}:{ACCOUNT}:agent/AGENTX", resource_type="bedrock-agent"
+    )
+    gateway = observed(
+        resource=f"arn:aws:bedrock-agentcore:{REGION}:{ACCOUNT}:gateway/tools",
+        resource_type="agentcore-gateway",
+        kind=Kind.MCP_SERVER,
+    )
+    for registry in ("aws-agent-registry", "aws-agentcore-registry"):
+        reconcile_registries([bedrock, gateway, observed(), record_finding(record(registry=registry))])
+        assert RECONCILIATION_KEY not in bedrock.metadata
+        assert status(gateway) == "observed-not-registered"
+    # A registry type without declared bindable types keeps the provider and account scope.
+    reconcile_registries([bedrock, observed(), record_finding(record(registry="mcp-registry"))])
+    assert status(bedrock) == "observed-not-registered"
+
+
 def test_an_unidentified_registry_never_defines_a_scope():
     unregistered = observed(resource=f"{RUNTIME}-shadow")
     anonymous = record_finding(record(registry_id=""))
@@ -434,19 +487,35 @@ def test_an_approved_record_of_a_trusted_registry_approves_itself_and_its_exact_
     rec, agent = record_finding(), observed()
     approvals = TrustedApprovals([rec, agent], TRUSTED)
     assert approvals.entries == 1 and approvals.warnings() == []
-    assert approvals.approve_record(rec) and not approvals.approve_record(agent)
-    assert (rec.shadow, rec.registry_match, rec.owner) == (False, "aws-agent-registry:rec-1", "platform-team")
+    own = Inventory().match(rec, approvals.candidates(rec))
+    assert own is not None and own.agent_id == "aws-agent-registry:rec-1" and own.owner == "platform-team"
+    assert own.resources == [literal_resource_pattern(rec.resource)]
     entry = Inventory().match(agent, approvals.candidates(agent))
     assert entry is not None and entry.agent_id == "aws-agent-registry:rec-1"
     assert entry.owner == "platform-team" and entry.source == f"trusted-registry:{REGISTRY_ARN}"
     assert (entry.providers, entry.accounts, entry.regions) == (["aws"], [ACCOUNT], [REGION])
     assert entry.names == [] and entry.resources == [RUNTIME]
+    assert own not in approvals.candidates(agent)
 
 
-def test_a_record_approval_keeps_an_owner_the_finding_already_has():
-    rec = record_finding(owner="observed-owner")
-    TrustedApprovals([rec], TRUSTED).approve_record(rec)
-    assert rec.owner == "observed-owner"
+def test_the_entry_that_registers_a_record_is_offered_to_that_finding_alone():
+    rec = record_finding()
+    # Another finding with the record's resource, provider, account and region (another
+    # connector's view of the same ARN, say) is not the record.
+    lookalike = record_finding(value={}, connector="test.observed")
+    lookalike.metadata.clear()
+    approvals = TrustedApprovals([rec, lookalike], TRUSTED)
+    assert approvals.candidates(lookalike) == [] and len(approvals.candidates(rec)) == 1
+
+
+def test_an_approved_record_and_a_card_approving_the_record_finding_are_ambiguous():
+    # Regression: the record finding was registered before inventory matching, so a card
+    # approving it too was never ambiguous, unlike any other finding.
+    rec = record_finding()
+    card = InventoryEntry(agent_id="card", resources=[rec.resource])
+    assert Inventory([card]).match(rec, TrustedApprovals([rec], TRUSTED).candidates(rec)) is None
+    assert rec.metadata["registry_match_reason"] == "ambiguous-resource-approval"
+    assert rec.metadata["registry_suggestions"] == ["aws-agent-registry:rec-1", "card"]
 
 
 @pytest.mark.parametrize(
@@ -456,7 +525,7 @@ def test_records_that_are_not_approved_never_approve(record_status):
     rec, agent = record_finding(record(status=record_status)), observed()
     approvals = TrustedApprovals([rec, agent], TRUSTED)
     assert approvals.entries == 0 and approvals.warnings() == []
-    assert not approvals.approve_record(rec) and approvals.candidates(agent) == []
+    assert approvals.candidates(rec) == [] and approvals.candidates(agent) == []
 
 
 @pytest.mark.parametrize(
@@ -470,13 +539,17 @@ def test_records_that_are_not_approved_never_approve(record_status):
 def test_approval_in_an_untrusted_registry_never_approves(trusted):
     rec, agent = record_finding(), observed()
     approvals = TrustedApprovals([rec, agent], trusted)
-    assert not approvals.approve_record(rec) and approvals.candidates(agent) == []
+    assert approvals.candidates(rec) == [] and approvals.candidates(agent) == []
     assert rec.shadow is None and approvals.entries == 0
 
 
 def test_a_record_with_an_unusable_identity_never_approves():
     redacted = record_finding(record(record_id=f"rec-{REDACTED}"))
-    assert not TrustedApprovals([redacted], TRUSTED).approve_record(redacted)
+    assert TrustedApprovals([redacted], TRUSTED).candidates(redacted) == []
+    # A record finding whose own resource is redacted is refused by inventory matching.
+    hidden = record_finding(resource=f"{REGISTRY_ARN}/record/{REDACTED}")
+    assert Inventory().match(hidden, TrustedApprovals([hidden], TRUSTED).candidates(hidden)) is None
+    assert hidden.metadata["registry_match_reason"] == "redacted-or-missing-resource-identity"
 
 
 def test_unusable_and_duplicate_bindings_add_no_entries():

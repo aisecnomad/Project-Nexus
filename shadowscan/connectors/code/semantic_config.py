@@ -275,12 +275,19 @@ def bounded_metadata(value: Any, depth: int = 0) -> Any:
 
 
 def _interface_address(value: Any) -> str | None:
-    """An interface URL reduced to scheme, host, port and path, or a gRPC host:port."""
+    """An interface URL reduced to scheme, host, port and path, or a gRPC host:port.
+
+    None for a URL whose authority holds user information or a backslash: HTTP clients read
+    ``http://remote.example\\@localhost/`` as host remote.example, this parser as localhost, so
+    the host it reaches cannot be shown.
+    """
     if not _nonempty(value) or any(char.isspace() for char in value):
         return None
     try:
         parts = urlsplit(value)
         if parts.scheme.lower() in {"http", "https", "ws", "wss"} and parts.hostname:
+            if "@" in parts.netloc or "\\" in parts.netloc:
+                return None
             host = parts.hostname
             authority = f"[{host}]" if ":" in host else host
             if parts.port is not None:
@@ -342,9 +349,13 @@ def a2a_card_interfaces(card: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def a2a_plaintext_interfaces(card: dict[str, Any]) -> bool:
-    """Whether any declared interface is plaintext HTTP to a host other than loopback."""
+    """Whether any declared interface is plaintext HTTP to a host not known to be loopback.
+
+    The URL is read as declared, so one the projection leaves out because its host cannot
+    be shown still counts.
+    """
     return any(
-        (url := _interface_address(item.get("url"))) is not None and _plaintext_remote(url)
+        isinstance(url := item.get("url"), str) and _plaintext_remote(url)
         for item in _declared_interfaces(card)
     )
 

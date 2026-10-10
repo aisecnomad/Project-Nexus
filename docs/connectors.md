@@ -309,10 +309,13 @@ skills or capabilities but misses other required fields still gets its own
 the errors in `metadata.card_errors`, never an agent finding; the errors also
 keep the scan incomplete. A card's `metadata.agent_card` is the projection the
 [A2A Agent Card probe](connectors/endpoint.md#a2a-agent-card-probe) uses: A2A 1.0 `supportedInterfaces` and 0.3
-`url`/`additionalInterfaces` (scheme, host, port and path only), and a
+`url`/`additionalInterfaces` (scheme, host, port and path only; an interface
+URL with user information or a backslash before its host is left out, since
+HTTP clients can read another host from it), and a
 signature state of `absent`, `present-unverified` or `invalid` (card files are
 never verified). Cards are tagged `no-auth-declared`, `a2a-plaintext-interface`
-(an `http://` or `ws://` interface to a remote host) and
+(an `http://` or `ws://` interface to a host not known to be loopback, such an
+interface included) and
 `a2a-card-signature-invalid` (a malformed signature entry). A card that
 declares a protocol version other than 0.x or 1.x is still reported, with a
 warning that makes the scan incomplete. JSON/YAML descriptions are not
@@ -570,19 +573,25 @@ or `beta`) and reads each package's details, at most `max_package_lookups`
 (default 2000); each package becomes a vendor registry record finding
 (`microsoft-agent-365`, registry id `tenant_id`). It needs
 `CopilotPackages.Read.All`, and a pre-issued `access_token` must be a JWT whose
-`tid` claim is `tenant_id`. A package binds only a listed agent identity and,
-for an organization's own package, its app registration.
+`tid` claim is `tenant_id`. With an opt-in collection, a pre-issued token must
+be issued for Microsoft Graph (`aud`), and one that is not app-only (`scp`, or
+no `idtyp: app`) gives caller-scoped listings and an incomplete scan. A package
+binds only a listed agent identity and, for an organization's own package, its
+app registration; a package whose details are missing is `unknown` and binds
+nothing, and an organization's own package with no approval request is
+`registered`, not `approved`.
 `include_agent_identities: true` lists Entra Agent ID
 agent identities from the Graph beta API; they enrich the service principal
 finding of the same id or stand alone, and are always reported. Records of the
 deprecated Entra agent registry are read from offline exports only, as
 `deprecated` records that never approve. `auth_mode: delegated` reads a
 signed-in user's Graph token from the environment variable named by
-`delegated_token_env` (default `GRAPH_DELEGATED_TOKEN`), checks its tenant and
-delegated claims, never refreshes it and refuses `access_token`, `client_id`
-and `client_secret`; delegated package listings are caller-scoped and never
-complete. Statuses, bindings, coverage and the delegated token rules are in the
-[identity connector guide](connectors/identity.md#identityentra).
+`delegated_token_env` (default `GRAPH_DELEGATED_TOKEN`), checks its tenant,
+Graph audience and delegated claims, never refreshes it and refuses
+`access_token`, `client_id` and `client_secret`; delegated package listings are
+caller-scoped and never complete, so a delegated scan with an opt-in collection
+warns and exits 3. Statuses, bindings, coverage and the delegated token rules
+are in the [identity connector guide](connectors/identity.md#identityentra).
 
 ### `identity.google-workspace`
 Admin SDK `users/{id}/tokens` for every user, aggregated per OAuth client:
@@ -901,16 +910,17 @@ each as a finding with `metadata.registry_record` (registry types
 `aws-agent-registry` and `aws-agentcore-registry`). Statuses map onto the
 contract, the `DETECTED_FROM` provenance of a record the registry created by
 auto-detection binds the exact AgentCore runtime or gateway ARN (provenance
-written through the API binds nothing), `approval_mode` comes from the
-registry's auto-approval settings at scan time, and
-`listing_complete` is set only for a listing that finished without denial,
+written through the API, and an auto-detected draft, bind nothing),
+`approval_mode` comes from the registry's auto-approval settings at scan time,
+and `listing_complete` is set only for a listing that finished without denial,
 truncation or the `max_registry_records` cap (default 1000 per region and
-namespace). Descriptors are summarized during collection; raw documents and
-OAuth `customParameters` are never exported. `registry_arns` adds the approved
-records of other accounts' registries through the discovery API
-(`registry_coverage: approved-only`, never a complete listing). Auto-approval is
-not human review: such records approve through `trusted_registries` only with
-`allow_auto_approved`. See the
+namespace). Registry and `aws-registry-coverage` records keep listing gaps in
+an export, so its replay is incomplete too. Descriptors are summarized during
+collection; raw documents and OAuth `customParameters` are never exported.
+`registry_arns` adds the approved records of other accounts' registries
+through the discovery API (`registry_coverage: approved-only`, never a
+complete listing). Auto-approval is not human review: such records approve
+through `trusted_registries` only with `allow_auto_approved`. See the
 [cloud guide](connectors/cloud.md#aws-agent-registry-and-agentcore-registry-records).
 
 ECS uses exact task-definition ARNs
@@ -994,8 +1004,8 @@ and publishers; `agent_registry_locations` to limit the locations, which leaves
 the listing incomplete for reconciliation), and `gemini_enterprise: true` reads
 the agents of Gemini Enterprise apps (Discovery Engine `v1alpha`, a
 caller-scoped listing that is never complete). Records bind only to the exact
-reasoning engines and Dialogflow CX agents they reference, and carry
-`metadata.catalog_presence`. See
+reasoning engines and Dialogflow CX agents they reference in their own project,
+and carry `metadata.catalog_presence`. See
 [Agent Registry and Gemini Enterprise catalogs](connectors/cloud.md#agent-registry-and-gemini-enterprise-catalogs).
 
 ### `cloud.azure`

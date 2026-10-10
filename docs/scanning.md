@@ -775,24 +775,29 @@ source is named by its path below the reports' common directory
 (`host-a/report.json` for reports collected as `<host>/report.json`), or by
 its file name when the reports share a directory.
 
-Whatever the order of the sources, a merged finding is `shadow: true` when
-any source that reported it found it unregistered, `false` when one matched
-it to the inventory that scan was given, and `null` when none of the sources
-that reported it was given an inventory (by `--inventory`, the
-configuration's `inventory:` key, or `options.trusted_registries`). Scans made
-without any of these never make a finding look unregistered: in a mixed fleet,
-a finding seen only on machines scanned without one stays `null` although the
-merged `inventory_present` is true. The terminal table, Markdown and HTML
-reports label it `unassessed` and count such findings in the summary. A scan
-configured with `options.trusted_registries` reconciles its findings even when
-none of its connectors produced registry records, so it reports every
-unmatched finding as unregistered, and in a merge that wins over another
-source's match. Give such scans the same inventory files as the rest of the
-fleet, or configure trusted registries only on scans that run the connector
-that reads them. A registered finding keeps the first
-`registry_match` named by a source that matched it, in the order given. The
-merged `inventory_present` is true when any source had an inventory, even an
-empty one, and `inventory_size` is the largest source inventory.
+Registration counts only from sources that had an inventory
+(`inventory_present: true`: `--inventory`, the configuration's `inventory:`
+key or `trusted_registries`). Whatever the order of the sources, a merged
+finding is `shadow: true` when any such source found it unregistered, `false`
+when such sources matched it to the same agent, and `null` when none of the
+sources that reported it had an inventory. Sources that matched it to
+different agents make it ambiguous, as two matching inventory entries are in
+one scan: it is `shadow: true` with
+`registry_match_reason: ambiguous-resource-approval` and the candidates in
+`registry_suggestions`. The `shadow` and `registry_match` of a source without
+an inventory, and a `shadow: false` that names no `registry_match`, are
+ignored. Scans made without an inventory never make a finding look
+unregistered: in a mixed fleet, a finding seen only on machines scanned
+without one stays `null` although the merged `inventory_present` is true.
+The terminal table, Markdown and HTML reports label it `unassessed` and count
+such findings in the summary. A scan configured with
+`options.trusted_registries` reconciles its findings even when none of its
+connectors produced registry records, so it reports every unmatched finding
+as unregistered, and in a merge that wins over another source's match. Give
+such scans the same inventory files as the rest of the fleet, or configure
+trusted registries only on scans that run the connector that reads them.
+The merged `inventory_present` is true when any source had an inventory,
+even an empty one, and `inventory_size` is the largest source inventory.
 
 Report files are untrusted input. A finding id that another report already
 uses for a finding with another identity (resource, connector, account and

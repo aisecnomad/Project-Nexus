@@ -25,6 +25,7 @@ with ``shadowscan run cloud.aws --dump-records aws.jsonl``.
 
 from __future__ import annotations
 
+import copy
 import json
 import re
 from collections.abc import Iterable, Iterator
@@ -45,6 +46,7 @@ from shadowscan.connectors.base import (
 from shadowscan.connectors.cloud.aws_registry import (
     AGENT_REGISTRY,
     AGENTCORE_REGISTRY,
+    COVERAGE_KIND,
     DESCRIPTOR_TYPES,
     DISCOVERABLE_RECORD_KIND,
     KINDS,
@@ -92,6 +94,7 @@ from shadowscan.connectors.mcp_risk import record_server_risks
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.registries import RECORD_KEY, RECORD_SCHEMA, registry_evidence
 from shadowscan.utils.identity import has_aws_account_scope
+from shadowscan.utils.redaction import SanitizationLimitError
 from shadowscan.utils.safe_json import strict_json_loads
 from shadowscan.utils.text import truncate
 
@@ -223,6 +226,8 @@ _WORKLOAD_TRUST_SERVICES = (
 )
 # Resources whose ARN this connector generates from the account envelope.
 _ENVELOPE_ARN_TYPES = frozenset({"bedrock-logging", "qbusiness-application", "lex-bot", "ssm-parameter"})
+# Findings a registry record's provenance can bind (see aws_registry.binding).
+_BOUND_TYPES = frozenset({"agentcore-runtime", "agentcore-gateway"})
 _DENIED_CODES = frozenset({"AccessDenied", "AccessDeniedException", "UnauthorizedOperation"})
 _UNAVAILABLE_MARKERS = ("Could not connect to the endpoint", "UnknownServiceError", "EndpointConnectionError")
 # A provider error code is a fixed identifier (``AccessDeniedException``,
@@ -582,11 +587,12 @@ class AwsConnector(BaseConnector):
             if "bedrock" in self.services:
                 yield from self._collect_bedrock(region)
             if "agentcore" in self.services:
-                before = self._warnings_recorded()
+                before = self.ctx.diagnostics_recorded()
                 yield from self._collect_agentcore(region)
                 # Registry bindings to this region's runtimes and gateways are in scope only when
-                # nothing was denied, truncated or malformed here (including while analysing them).
-                if self._warnings_recorded() == before:
+                # nothing was denied, truncated or malformed here, including while exporting and
+                # analysing them (an export rejects a record it cannot sanitize with an error).
+                if self.ctx.diagnostics_recorded() == before:
                     self._agentcore_regions.add(region)
             if "lambda" in self.services:
                 yield from self._collect_lambda(region)
@@ -743,31 +749,51 @@ class AwsConnector(BaseConnector):
         return gw
 
     # ------------------------------------------------------------ registries
-    def _warnings_recorded(self) -> int:
-        """Warnings recorded so far, including those past the report's diagnostic limit.
+    @staticmethod
+    def _registry_coverage(api: RegistryApi, region: str, *, complete: bool, **extra: Any) -> dict[str, Any]:
+        """An ``aws-registry-coverage`` record: whether one listing finished without a gap.
 
-        Every denial, truncation and malformed item is a warning, so an unchanged count shows
-        that a listing finished without a coverage gap.
+        A denied listing or an SDK without the service leaves no registry or record to carry
+        the gap, so the export keeps it here and its replay is incomplete too.
         """
-        return self.ctx._diagnostic_counts.get("warnings", 0)
+        return {
+            "_kind": COVERAGE_KIND,
+            "_region": region,
+            "namespace": api.registry_type,
+            "complete": complete,
+            **extra,
+        }
 
     def _collect_registries(self, region: str) -> Iterator[dict[str, Any]]:
-        """Both registry namespaces through the control plane: records of every status."""
+        """Both registry namespaces through the control plane: records of every status.
+
+        Each namespace ends with a coverage record that is complete only when the SDK has the
+        service, ``ListRegistries`` finished without a gap, no registry was skipped and every
+        registry's record listing is complete.
+        """
         for api in (AGENT_REGISTRY, AGENTCORE_REGISTRY):
             try:
                 client = self._client(api.service, region)
             except Exception:  # noqa: BLE001 - an installed SDK without this service
                 self.ctx.warn(f"cloud.aws: {api.label} unavailable in installed SDK; collection incomplete")
+                yield self._registry_coverage(api, region, complete=False)
                 continue
-            for summary in self._list_items(client, "list_registries", "registries"):
+            before = self.ctx.diagnostics_recorded()
+            summaries = self._list_items(client, "list_registries", "registries")
+            complete = self.ctx.diagnostics_recorded() == before
+            for summary in summaries:
                 registry = guarded_record(
                     self, api.product, partial(self._registry, api, client, summary, region), noun="registry"
                 )
                 if registry is None:
+                    complete = False  # a skipped registry is missing from the listing
                     continue
                 self._listed_registries.add(registry["registryArn"])
+                records = self._registry_entries(api, client, registry, region)
+                complete = complete and registry["_listing_complete"]
                 yield registry
-                yield from self._registry_entries(api, client, registry, region)
+                yield from records
+            yield self._registry_coverage(api, region, complete=complete)
 
     def _registry(
         self, api: RegistryApi, client: Any, summary: dict[str, Any], region: str
@@ -803,6 +829,7 @@ class AwsConnector(BaseConnector):
             "updatedAt": merged.get("updatedAt"),
             # Only GetRegistry returns it: without the details the approval mode stays unknown.
             "approvalConfiguration": merged.get("approvalConfiguration") if detail is not None else None,
+            "_detail": "observed" if detail is not None else "unknown",
         }
 
     def _bounded_listing(
@@ -816,9 +843,9 @@ class AwsConnector(BaseConnector):
         key = (api.registry_type, region)
         used = self._registry_counts.get(key, 0)
         remaining = max(self.max_registry_records - used, 0)
-        before = self._warnings_recorded()
+        before = self.ctx.diagnostics_recorded()
         items: list[dict[str, Any]] = self._safe(lambda: list(islice(listing(), remaining + 1))) or []
-        complete = self._warnings_recorded() == before
+        complete = self.ctx.diagnostics_recorded() == before
         if len(items) > remaining:
             self.ctx.warn(f"cloud.aws: max_registry_records reached for {api.label} in {region}")
             items = items[:remaining]
@@ -828,7 +855,12 @@ class AwsConnector(BaseConnector):
 
     def _registry_entries(
         self, api: RegistryApi, client: Any, registry: dict[str, Any], region: str
-    ) -> Iterator[dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
+        """Every record of one registry; ``_listing_complete`` goes on the registry and its records.
+
+        The registry carries it too: a listing that failed or reached the cap before its first
+        record leaves no record to carry the gap into an export.
+        """
         listing = partial(
             self._paginate,
             client,
@@ -846,10 +878,10 @@ class AwsConnector(BaseConnector):
                 complete = False  # a skipped record is missing from the listing
             else:
                 records.append(record)
-        for record in records:
-            # Known only after every summary was read, so it is set before any record is emitted.
-            record["_listing_complete"] = complete
-            yield record
+        # Known only after every summary was read, so it is set before anything is emitted.
+        for item in (registry, *records):
+            item["_listing_complete"] = complete
+        return records
 
     def _registry_entry(
         self,
@@ -927,7 +959,9 @@ class AwsConnector(BaseConnector):
 
         A registry the control plane listed in this run is skipped: that listing already holds
         every record of every status (and the data plane cannot read a registry that uses a
-        JWT authorizer with AWS credentials).
+        JWT authorizer with AWS credentials). Each registry read ends with a coverage record
+        naming it; its ``complete`` says only that the listing finished, never that an
+        approved-only listing is complete for reconciliation.
         """
         for arn in self.registry_arns:
             if arn in self._listed_registries:
@@ -939,6 +973,7 @@ class AwsConnector(BaseConnector):
                 self.ctx.warn(
                     "cloud.aws: Agent Registry discovery unavailable in installed SDK; collection incomplete"
                 )
+                yield self._registry_coverage(AGENT_REGISTRY, region, complete=False, registryArn=arn)
                 return
             yield from self._discoverable_records(client, arn, region)
 
@@ -987,6 +1022,7 @@ class AwsConnector(BaseConnector):
         for record in records:
             record["_listing_complete"] = complete
             yield record
+        yield self._registry_coverage(AGENT_REGISTRY, region, complete=complete, registryArn=arn)
 
     def _discoverable_record(
         self, arn: str, summary: dict[str, Any], details: dict[str, dict[str, Any]], region: str
@@ -1323,9 +1359,39 @@ class AwsConnector(BaseConnector):
         for f in pending:
             self.ctx.check_deadline()
             self._resolve_finding_account(f, expected_account)
+        self._unbind_unreported_regions(pending)
+        for f in pending:
+            self.ctx.check_deadline()
             yield f
         if failure is not None:
             raise failure
+
+    def _unbind_unreported_regions(self, findings: list[Finding]) -> None:
+        """Take registry bindings out of scope in a region whose runtime or gateway cannot be reported.
+
+        ``run`` omits a finding that fails sanitization (with an error), so an in-scope binding
+        to that region could match nothing and read as registered but not observed.
+        """
+        bindings = [
+            item
+            for finding in findings
+            for item in sequence(mapping(finding.metadata.get(RECORD_KEY)).get("bindings"))
+            if mapping(item).get("coverage") == "in-scope"
+        ]
+        if not bindings:
+            return
+        unreported: set[tuple[str | None, str | None]] = set()
+        for finding in findings:
+            if finding.resource_type in _BOUND_TYPES:
+                try:
+                    # A copy: a failed pass leaves fields half redacted, and run() must still see
+                    # the original finding to omit and report it.
+                    copy.deepcopy(finding).sanitize()
+                except SanitizationLimitError:
+                    unreported.add((finding.account, finding.region))
+        for item in bindings:
+            if (item.get("account"), item.get("region")) in unreported:
+                item["coverage"] = "out-of-scope"
 
     def _resolve_finding_account(self, finding: Finding, expected_account: str | None) -> None:
         # These resources have connector-generated ARNs, so their account is an
@@ -1788,17 +1854,46 @@ class AwsConnector(BaseConnector):
         )
         return done(f, self.index, Kind.SERVICE_IDENTITY)
 
-    def _h_agent_registry(self, rec: dict[str, Any]) -> Finding | None:
-        return self._registry_container(AGENT_REGISTRY, rec)
+    def _h_agent_registry(self, rec: dict[str, Any]) -> None:
+        self._registry_container(AGENT_REGISTRY, rec)
 
-    def _h_agentcore_registry(self, rec: dict[str, Any]) -> Finding | None:
-        return self._registry_container(AGENTCORE_REGISTRY, rec)
+    def _h_agentcore_registry(self, rec: dict[str, Any]) -> None:
+        self._registry_container(AGENTCORE_REGISTRY, rec)
 
-    @staticmethod
-    def _registry_container(api: RegistryApi, rec: dict[str, Any]) -> None:
-        """A registry is reported through its records; its own record only has to be well formed."""
+    def _registry_container(self, api: RegistryApi, rec: dict[str, Any]) -> None:
+        """A registry is reported through its records; its own record carries its coverage gaps.
+
+        A record listing that failed, or a ``GetRegistry`` that failed, may leave no record to
+        carry the gap, so the registry's record does. A registry record without these markers
+        (an export written before they existed) has unknown coverage and is incomplete too.
+        """
         if not api.is_registry_arn(rec.get("registryArn")):
             raise ValueError("invalid registry ARN")
+        if rec.get("_listing_complete") is not True:
+            self._registry_gap("cloud.aws: registry record listing incomplete; records may be missing")
+        if rec.get("_detail") != "observed":
+            self._registry_gap("cloud.aws: registry details unavailable; approval mode unknown")
+
+    def _h_aws_registry_coverage(self, rec: dict[str, Any]) -> None:
+        """Whether one registry listing finished: a gap that may have left no record to carry it."""
+        namespace, region, arn = rec.get("namespace"), rec.get("_region"), rec.get("registryArn")
+        if (
+            namespace not in self.registry_record_types
+            or not isinstance(region, str)
+            or re.fullmatch(r"[a-z0-9-]+", region) is None
+            or type(rec.get("complete")) is not bool
+            or (
+                arn is not None
+                and not (
+                    namespace == AGENT_REGISTRY.registry_type
+                    and AGENT_REGISTRY.is_registry_arn(arn)
+                    and arn.split(":")[3] == region
+                )
+            )
+        ):
+            raise ValueError("invalid registry coverage record")
+        if not rec["complete"]:
+            self._registry_gap("cloud.aws: registry listing incomplete; registries or records may be missing")
 
     def _h_agent_registry_record(self, rec: dict[str, Any]) -> Finding:
         return self._registry_record_finding(AGENT_REGISTRY, rec, discoverable=False)
@@ -1889,8 +1984,13 @@ class AwsConnector(BaseConnector):
             f.add_framework("protocol.a2a")
         review = ""
         if status == "approved" and mode == "auto":
-            # AGENTS.md: an automatic approval is not a human review.
-            review = "; approved automatically by a registry rule, not reviewed by a person"
+            # AGENTS.md: an automatic approval is not a human review. The mode is the registry's
+            # setting at scan time, and a change applies only to records submitted after it, so
+            # it cannot say how this record was approved.
+            review = (
+                "; the registry currently auto-approves records; "
+                "this record may not have been reviewed by a person"
+            )
         scope = "; listed by the discovery API, which returns approved records only" if discoverable else ""
         f.add_evidence(
             registry_evidence(

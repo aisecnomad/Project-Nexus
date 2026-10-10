@@ -61,6 +61,7 @@ options:
       id: arn:aws:agent-registry:us-east-1:123456789012:registry/abcd1234abcd
       allow_auto_approved: false        # optional, default false
       allow_registered_only: false      # optional, default false
+      allow_offline_records: false      # optional, default false
 ```
 
 Each entry names exactly one registry: `registry` is one of
@@ -68,9 +69,10 @@ Each entry names exactly one registry: `registry` is one of
 `google-agent-registry`, `gemini-enterprise`, `mcp-registry` or `a2a-card`
 (the deprecated `entra-agent-registry` source cannot be trusted), and `id` is
 that registry's exact identity as the connector reports it in
-`registry_record.registry_id`. `allow_auto_approved` and
-`allow_registered_only` must be YAML booleans; they accept auto-approved and
-registered-only records of that registry. Wildcards (`*`, `?`,
+`registry_record.registry_id`. `allow_auto_approved`, `allow_registered_only`
+and `allow_offline_records` must be YAML booleans; they accept auto-approved,
+registered-only and offline-replayed records (from a connector's `input`
+export) of that registry. Wildcards (`*`, `?`,
 `[`), surrounding whitespace, control characters, unknown keys, duplicate
 entries, more than 64 entries and ids that report redaction would change are
 rejected before anything is scanned. Trusting a registry type as a whole is not

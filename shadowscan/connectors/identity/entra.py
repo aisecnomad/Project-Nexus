@@ -24,8 +24,11 @@ Auth (``auth_mode: app-only``, the default): client credentials (``tenant_id`` /
 ``client_id`` / ``client_secret``) with ``Application.Read.All`` +
 ``DelegatedPermissionGrant.Read.All`` + ``Directory.Read.All``, or a pre-issued
 ``access_token`` (whose ``tid`` must be ``tenant_id`` when Agent 365 records are
-collected). ``auth_mode: delegated`` reads a signed-in user's Graph token from
-the environment variable named by ``delegated_token_env``; it is never refreshed.
+collected; with an opt-in collection, a decodable token must be issued for Microsoft
+Graph, and one that is not app-only makes the agent listings caller-scoped).
+``auth_mode: delegated`` reads a signed-in user's Graph token from the environment
+variable named by ``delegated_token_env``; it is never refreshed. Caller-scoped agent
+listings show one user's view, so they make the scan incomplete.
 
 Offline export: any mix of Graph objects (servicePrincipal, oauth2PermissionGrant,
 appRoleAssignment, application, agentIdentity, copilotPackage, agentInstance,
@@ -69,11 +72,17 @@ DEPRECATED_REGISTRY = "entra-agent-registry"
 AUTH_MODES = ("app-only", "delegated")
 DEFAULT_DELEGATED_TOKEN_ENV = "GRAPH_DELEGATED_TOKEN"
 MAX_DELEGATED_TOKEN_CHARS = 16 * 1024
+# The audiences of a Microsoft Graph access token: v1 tokens name the resource URI, v2 tokens its appId.
+GRAPH_AUDIENCES = frozenset(
+    {"https://graph.microsoft.com", "https://graph.microsoft.com/", "00000003-0000-0000-c000-000000000000"}
+)
 # The coverage marker a live collection appends when an opt-in collection ran; it survives export,
 # so a replay knows which collections were complete.
 COVERAGE_KIND = "agentRegistryCoverage"
 COVERAGE_STATES = ("complete", "incomplete", "not-collected")
 PACKAGE_DETAIL_STATES = ("observed", "unavailable", "limit")
+# Detail states of a package whose detail call failed or was capped: its request status is unknown.
+_MISSING_DETAIL = frozenset({"unavailable", "limit"})
 FIRST_PARTY_OWNER = "f8cdef31-a31e-4b4a-93e4-5f571e91255a"  # Microsoft services tenant
 MAX_CONFLICTING_SNAPSHOTS = 16
 MAX_CONFLICTING_EVIDENCE = 64
@@ -228,6 +237,10 @@ class _Coverage:
     agent_identities: str = "unknown"
     applications: str = "unknown"
     listing_scope: str = "registry"
+    # A rejected record may be the object a binding names, so no binding is known to be in scope.
+    rejected: bool = False
+    # The export names another tenant than tenant_id: its records are not attributed to tenant_id.
+    foreign_tenant: bool = False
 
 
 class EntraConnector(BaseConnector):
@@ -247,7 +260,9 @@ class EntraConnector(BaseConnector):
         "client_secret": "env AZURE_CLIENT_SECRET",
         "access_token": (
             "pre-issued Graph token (env GRAPH_ACCESS_TOKEN) instead of client credentials; with "
-            "include_agent_registry and tenant_id, its tid claim must equal tenant_id"
+            "include_agent_registry and tenant_id, its tid claim must equal tenant_id; with an opt-in "
+            "agent collection, a decodable token must be a Microsoft Graph token (aud), and one that is "
+            "not app-only (idtyp app, no scp) gives caller-scoped listings and an incomplete scan"
         ),
         "auth_mode": (
             "app-only (default: client credentials or access_token) or delegated (a signed-in user's Graph "
@@ -317,6 +332,12 @@ class EntraConnector(BaseConnector):
             if not isinstance(self.tenant, str) or not self.tenant.strip():
                 raise ConnectorError("identity.entra: auth_mode delegated requires tenant_id")
         self.http: HttpClient | None = None
+        # Whether agent listings show only what one user may see: always for a delegated token, and
+        # for a pre-issued access_token that is not an app-only token.
+        self._caller_scoped = self.auth_mode == "delegated"
+        # The tenant the credential is bound to: a checked tid, or the tenant client credentials were
+        # minted for. The coverage marker records it, so a replay cannot attribute records elsewhere.
+        self._bound_tenant: str | None = None
         # Paths whose collection failed in this run.
         self._failed: set[str] = set()
         # Principals whose appRoleAssignments were requested; their number is capped by max_lookups.
@@ -333,10 +354,8 @@ class EntraConnector(BaseConnector):
             )
             return
         token = self.ctx.get("access_token", env="GRAPH_ACCESS_TOKEN")
-        if token and self.include_agent_registry and self._binding_account():
-            # Registry records are attributed to tenant_id, which operators trust; a token
-            # of another tenant must not produce them. A minted token is bound by its request.
-            self._check_token_tenant(token, "the access_token")
+        if token and (self.include_agent_registry or self.include_agent_identities):
+            self._check_app_only_token(token)
         if not token:
             cid = self.ctx.get("client_id", env="AZURE_CLIENT_ID")
             secret = self.ctx.get("client_secret", env="AZURE_CLIENT_SECRET")
@@ -355,6 +374,8 @@ class EntraConnector(BaseConnector):
                 },
             )
             token = client.read_json_response(resp)["access_token"]
+            # Requested from the tenant's own token endpoint, so the token is bound to tenant_id.
+            self._bound_tenant = str(self.tenant)
         self.http = HttpClient(
             GRAPH, headers={"Authorization": f"Bearer {token}", "ConsistencyLevel": "eventual"}
         )
@@ -364,8 +385,9 @@ class EntraConnector(BaseConnector):
 
         Graph access tokens cannot be signature-verified by a client, so the claims are read
         unverified and serve as scope bindings only: the token must be a delegated (``scp``,
-        not ``idtyp: app``) token of ``tenant_id`` that has not expired. Failures use fixed
-        text; neither the token nor its claims enter a message.
+        not ``idtyp: app``) Microsoft Graph token (``aud``) of ``tenant_id`` that has not
+        expired. Failures use fixed text; neither the token nor its claims enter a message.
+        The checked tenant becomes the bound tenant that the coverage marker records.
         """
         name = self.delegated_token_env
         token = self.ctx.secret_env(name)
@@ -376,13 +398,37 @@ class EntraConnector(BaseConnector):
                 f"identity.entra: environment variable {name} does not hold a usable access token"
             )
         claims = self._check_token_tenant(token, "the delegated token")
+        _check_graph_audience(claims, "the delegated token")
         scopes = claims.get("scp")
         if claims.get("idtyp") == "app" or not isinstance(scopes, str) or not scopes.strip():
             raise ConnectorError("identity.entra: the delegated token is not a delegated user token")
         expires = claims.get("exp")
         if isinstance(expires, (int, float)) and not isinstance(expires, bool) and expires <= time.time():
             raise ConnectorError("identity.entra: the delegated token has expired")
+        self._bound_tenant = claims["tid"]
         return token
+
+    def _check_app_only_token(self, token: Any) -> None:
+        """Bind a pre-issued ``access_token`` before an opt-in agent collection sends any request.
+
+        Registry records are attributed to ``tenant_id``, which operators trust, so with
+        ``include_agent_registry`` a token of another tenant must not produce them (a minted
+        token is bound by its request). A decodable token must be a Microsoft Graph token. A
+        token that is not app-only (it has ``scp``, its ``idtyp`` is not ``app``, or it cannot
+        be decoded) lists only what its user may see: its agent listings are caller-scoped,
+        never a complete registry.
+        """
+        if self.include_agent_registry and self._binding_account():
+            claims: dict[str, Any] | None = self._check_token_tenant(token, "the access_token")
+        else:
+            claims = _unverified_claims(token) if isinstance(token, str) else None
+        if claims is not None:
+            _check_graph_audience(claims, "the access_token")
+            tenant, account = claims.get("tid"), self._binding_account()
+            if isinstance(tenant, str) and account and tenant.lower() == account.strip().lower():
+                self._bound_tenant = tenant
+        if claims is None or "scp" in claims or claims.get("idtyp") != "app":
+            self._caller_scoped = True
 
     def _check_token_tenant(self, token: Any, label: str) -> dict[str, Any]:
         """The unverified claims of a pre-issued token whose tenant (``tid``) must be ``tenant_id``.
@@ -449,6 +495,18 @@ class EntraConnector(BaseConnector):
             yield app
         if not (self.include_agent_identities or self.include_agent_registry):
             return
+        # What one user may see is never the whole registry: the scan must not look complete.
+        if self.auth_mode == "delegated":
+            self.ctx.warn(
+                "identity.entra: auth_mode delegated lists only the agent identities and packages the "
+                "signed-in user can see; agent registry coverage incomplete"
+            )
+        elif self._caller_scoped:
+            self.ctx.warn(
+                "identity.entra: the access_token is not a decodable app-only token, so agent listings "
+                "show only what its user can see; agent registry coverage incomplete (use auth_mode: "
+                "delegated for a signed-in user's token)"
+            )
         identities = "not-collected"
         if self.include_agent_identities:
             agent_identities = list(self._pages(AGENT_IDENTITIES))
@@ -465,14 +523,17 @@ class EntraConnector(BaseConnector):
         packages = "not-collected"
         if self.include_agent_registry:
             packages = "complete" if (yield from self._collect_packages()) else "incomplete"
-        yield {
+        marker = {
             "_kind": COVERAGE_KIND,
             "packages": packages,
             "agentIdentities": identities,
             "applications": "incomplete" if "/applications" in self._failed else "complete",
             # The Graph returns what the signed-in user may see: never a complete registry listing.
-            "listingScope": "caller" if self.auth_mode == "delegated" else "registry",
+            "listingScope": "caller" if self._caller_scoped else "registry",
         }
+        if self._bound_tenant and len(self._bound_tenant) <= MAX_IDENTIFIER_LENGTH:
+            marker["tenantId"] = self._bound_tenant
+        yield marker
 
     def _app_role_assignments(self, principal_ids: Iterable[str]) -> Iterator[dict[str, Any]]:
         """Each principal's app role assignments, once per principal, within ``max_app_role_lookups``."""
@@ -549,10 +610,11 @@ class EntraConnector(BaseConnector):
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
         graph = self._index_records(records)
         coverage = self._coverage(graph)
+        # Packages whose records bind objects: neither conflicting nor missing their details.
         packages = {
             package_id: package
             for package_id, package in graph.packages.items()
-            if package_id not in graph.conflicting_packages
+            if package_id not in graph.conflicting_packages and package.get("_detail") not in _MISSING_DETAIL
         }
         # Objects an Agent 365 package binds are reported even without AI signals of their own,
         # so its bindings can match them.
@@ -692,22 +754,33 @@ class EntraConnector(BaseConnector):
         """Combine the export's coverage markers; replays re-report incomplete collections.
 
         Without a marker (an export written by hand, or by a run without opt-in collections)
-        nothing is known to be complete. Markers that disagree count as incomplete.
+        nothing is known to be complete. Markers that disagree count as incomplete. A marker
+        naming another tenant (``tenantId``) than ``tenant_id`` leaves the records unattributed;
+        an older marker without it is attributed to ``tenant_id`` as before.
         """
         markers = graph.coverage_markers
         if not markers:
-            return _Coverage()
+            return _Coverage(rejected=graph.rejected)
 
         def combined(field: str) -> str:
             values = {marker[field] for marker in markers}
             return values.pop() if len(values) == 1 else "incomplete"
 
+        account = self._binding_account()
+        tenants = {m["tenantId"].strip().lower() for m in markers if isinstance(m.get("tenantId"), str)}
         coverage = _Coverage(
             packages=combined("packages"),
             agent_identities=combined("agentIdentities"),
             applications=combined("applications"),
             listing_scope="caller" if any(m["listingScope"] == "caller" for m in markers) else "registry",
+            rejected=graph.rejected,
+            foreign_tenant=account is not None and any(t != account.strip().lower() for t in tenants),
         )
+        if coverage.foreign_tenant:
+            self.ctx.warn(
+                "identity.entra: the export was collected from another tenant than tenant_id; its "
+                "registry records are not attributed to tenant_id and coverage is incomplete"
+            )
         if self.offline:
             # Live collection warned already; a replay must not look complete.
             for state, collection in (
@@ -719,10 +792,15 @@ class EntraConnector(BaseConnector):
                     self.ctx.warn(
                         f"identity.entra: exported {collection} was incomplete; coverage incomplete"
                     )
-            if any(package.get("_detail") in ("unavailable", "limit") for package in graph.packages.values()):
+            if any(package.get("_detail") in _MISSING_DETAIL for package in graph.packages.values()):
                 self.ctx.warn(
                     "identity.entra: exported package details were unavailable or capped; registry "
                     "coverage incomplete"
+                )
+            if coverage.listing_scope == "caller":
+                self.ctx.warn(
+                    "identity.entra: exported agent listings were caller-scoped (one user's view); "
+                    "agent registry coverage incomplete"
                 )
         return coverage
 
@@ -1319,10 +1397,17 @@ class EntraConnector(BaseConnector):
         listing_scope: str = "registry",
         publisher: Any = None,
         updated_at: Any = None,
+        attributed: bool = True,
     ) -> dict[str, Any]:
-        """A ``shadowscan.registry-record/v1`` block; the registry id is the tenant ("" when unknown)."""
+        """A ``shadowscan.registry-record/v1`` block; the registry id is the tenant.
+
+        It is "" when the tenant is unknown or the records are not ``attributed`` to it (an
+        export collected from another tenant).
+        """
         tenant = (
-            self.tenant if isinstance(self.tenant, str) and len(self.tenant) <= MAX_IDENTIFIER_LENGTH else ""
+            self.tenant
+            if attributed and isinstance(self.tenant, str) and len(self.tenant) <= MAX_IDENTIFIER_LENGTH
+            else ""
         )
         record: dict[str, Any] = {
             "schema": RECORD_SCHEMA,
@@ -1405,7 +1490,14 @@ class EntraConnector(BaseConnector):
                 {
                     "identity_unresolved": True,
                     "conflicting_package_snapshots": len(snapshots),
-                    RECORD_KEY: self._registry_record(AGENT_365, package_id, "unknown", "package", []),
+                    RECORD_KEY: self._registry_record(
+                        AGENT_365,
+                        package_id,
+                        "unknown",
+                        "package",
+                        [],
+                        attributed=not coverage.foreign_tenant,
+                    ),
                 }
             )
             finalize(f, self.index)
@@ -1424,8 +1516,12 @@ class EntraConnector(BaseConnector):
             ),
             client_id=package.get("appId"),
         )
-        bindings = self._principal_binding(package.get("agentIdentityId"), graph, coverage)
-        app_id = _bindable_app_id(package)
+        # A package whose details are missing has an unknown status and binds nothing.
+        detailed = package.get("_detail") not in _MISSING_DETAIL
+        bindings = (
+            self._principal_binding(package.get("agentIdentityId"), graph, coverage) if detailed else []
+        )
+        app_id = _bindable_app_id(package) if detailed else None
         if app_id:
             bindings.append(
                 {
@@ -1493,11 +1589,14 @@ class EntraConnector(BaseConnector):
                     bindings,
                     listing_complete=listing_complete,
                     approval_mode="manual"
-                    if org_published and _enum(package.get("requestStatus")) == "approved"
+                    if status == "approved"
+                    and org_published
+                    and _enum(package.get("requestStatus")) == "approved"
                     else "unknown",
                     listing_scope=coverage.listing_scope,
                     publisher=package.get("publisher"),
                     updated_at=package.get("lastModifiedDateTime"),
+                    attributed=not coverage.foreign_tenant,
                 ),
             }
         )
@@ -1703,11 +1802,14 @@ def _bounded_ids(rec: dict[str, Any], *fields: str) -> bool:
 
 
 def _valid_coverage(rec: dict[str, Any]) -> bool:
+    tenant = rec.get("tenantId")
     return (
         rec.get("packages") in COVERAGE_STATES
         and rec.get("agentIdentities") in COVERAGE_STATES
         and rec.get("applications") in ("complete", "incomplete")
         and rec.get("listingScope") in LISTING_SCOPES
+        # Optional: an older export names no tenant.
+        and (tenant is None or (isinstance(tenant, str) and 0 < len(tenant.strip()) <= MAX_IDENTIFIER_LENGTH))
     )
 
 
@@ -1731,13 +1833,18 @@ def _access_counts(package: dict[str, Any]) -> dict[str, int]:
 def _package_status(package: dict[str, Any]) -> str:
     """The registry status of an Agent 365 package.
 
-    Blocked, then an open or rejected request, then a package available to nobody (draft).
-    Otherwise a package explicitly not blocked and available to all or some users, with no
-    request or an approved one, is approved; any other combination (a missing flag, an
-    unknown enum member) is unknown.
+    Blocked, then a package whose details are missing (its request status is unknown), then
+    an open or rejected request, then a package available to nobody (draft). Otherwise a
+    package explicitly not blocked and available to all or some users is approved when its
+    request was approved. With no request, an organization's own package (shared, custom,
+    lob) is only registered, since no person is known to have approved it, and a vendor
+    package is approved (made available by the tenant). Any other combination (a missing
+    flag, an unknown enum member) is unknown.
     """
     if package.get("isBlocked") is True:
         return "blocked"
+    if package.get("_detail") in _MISSING_DETAIL:
+        return "unknown"
     request = _enum(package.get("requestStatus"))
     if request == "pending":
         return "pending"
@@ -1746,8 +1853,11 @@ def _package_status(package: dict[str, Any]) -> str:
     available = _enum(package.get("availableTo"))
     if available in _AVAILABLE_TO_NONE:
         return "draft"
-    if package.get("isBlocked") is False and available in _AVAILABLE and request in (None, "approved"):
-        return "approved"
+    if package.get("isBlocked") is False and available in _AVAILABLE:
+        if request == "approved":
+            return "approved"
+        if request is None:
+            return "registered" if _enum(package.get("type")) in _ORG_PUBLISHED_TYPES else "approved"
     return "unknown"
 
 
@@ -1761,8 +1871,20 @@ def _bindable_app_id(package: dict[str, Any]) -> str | None:
 
 
 def _binding_coverage(state: str, coverage: _Coverage) -> str:
-    """``in-scope`` only for a collection that finished complete over the whole tenant."""
-    return "in-scope" if state == "complete" and coverage.listing_scope == "registry" else "unknown"
+    """``in-scope`` only for a collection that finished complete over the whole tenant.
+
+    Any rejected record leaves coverage unknown: the bound object may be the one rejected.
+    """
+    if state == "complete" and coverage.listing_scope == "registry" and not coverage.rejected:
+        return "in-scope"
+    return "unknown"
+
+
+def _check_graph_audience(claims: dict[str, Any], label: str) -> None:
+    """Refuse a token issued for another resource; ``label`` is fixed text, claims are never shown."""
+    audience = claims.get("aud")
+    if not isinstance(audience, str) or audience not in GRAPH_AUDIENCES:
+        raise ConnectorError(f"identity.entra: {label} is not a Microsoft Graph token (aud)")
 
 
 def _agentic_package(package: dict[str, Any]) -> bool:

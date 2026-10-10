@@ -125,18 +125,21 @@ fields `record_status`, `record_type`, `record_version`, `registry_arn`,
 | `status` `APPROVED`, `PENDING_APPROVAL`, `DRAFT`, `REJECTED`, `DEPRECATED` | `approved`, `pending`, `draft`, `rejected`, `deprecated`; anything else (`CREATING`, `UPDATING`, the failed states) is `unknown` |
 | `recordType` or `descriptorType` `MCP` or `GATEWAY`, `AGENT`, `A2A`, `SKILL` or `AGENT_SKILLS`, `CUSTOM` | `mcp` (an MCP server finding), `agent` and `a2a` (agent), `agent-skills` (agent configuration), `custom` (cloud resource). An unrecognized type is `custom` and makes the scan incomplete. |
 | The registry's `approvalConfiguration` at scan time | `approval_mode: auto` when Agent Registry `autoApprovalRules` holds any rule (such as `APPROVE_ALL`) or AgentCore `autoApproval` is true, whatever else the configuration holds (a true value of an unexpected type counts too); `manual` when the rules are empty or absent, or `autoApproval` is false or absent, and the configuration holds no other setting; `unknown` when the registry details were denied or carry no approval configuration, and when the configuration has a shape or a setting this release does not recognize, which also makes the scan incomplete |
-| Provenance `sourceId` with relation `DETECTED_FROM`, on a record the registry created by auto-detection (`createdByAutoDetection: true`) | One binding to that exact ARN, as the runtime or gateway finding carries it. Its coverage is `in-scope` only when the `agentcore` service ran in that region for the scanned account in the same scan without a warning; otherwise `out-of-scope`. Records without such provenance have no binding. Provenance on a record created through the API is kept in `metadata.provenance` but binds nothing. A relation other than `DETECTED_FROM`, or none, binds nothing and makes the scan incomplete. |
+| Provenance `sourceId` with relation `DETECTED_FROM`, on a record the registry created by auto-detection (`createdByAutoDetection: true`) that is not a draft | One binding to that exact ARN, as the runtime or gateway finding carries it. Its coverage is `in-scope` only when the `agentcore` service ran in that region for the scanned account in the same scan without a warning or error (an export that rejects a runtime or gateway record is an error), and every runtime and gateway finding of that region could be reported; otherwise `out-of-scope`. Records without such provenance have no binding. An auto-detected record in `DRAFT` binds nothing: the registry wrote it from what it detected and nobody submitted it, so it registers nothing; it is still reported, with its provenance. Provenance on a record created through the API is kept in `metadata.provenance` but binds nothing. A relation other than `DETECTED_FROM`, or none, binds nothing and makes the scan incomplete. |
 
-Auto-approval is not human review. A record approved by an auto-approval rule
-says so in its evidence (`approved automatically by a registry rule, not
+Auto-approval is not human review. An approved record of a registry that
+auto-approves records when the scan reads it says so in its evidence (`the
+registry currently auto-approves records; this record may not have been
 reviewed by a person`) and approves nothing through
 [`trusted_registries`](../inventory.md#trusting-a-registry) unless the trusted
 entry sets `allow_auto_approved: true`.
 
 `approval_mode` describes the registry's approval configuration when the scan
-reads it, not how each record was approved: the APIs do not say. A record
+reads it, not how each record was approved: the APIs do not say, and a change
+to the configuration applies only to records submitted after it. A record
 approved while an auto-approval rule was on reports `manual` after the rule is
-removed. Trust a registry without `allow_auto_approved` only when it has never
+removed, and a record a person approved before a rule was added reports `auto`.
+Trust a registry without `allow_auto_approved` only when it has never
 auto-approved records, or set `allow_auto_approved` deliberately.
 
 Provenance is not only written by the registry. `CreateRegistryRecord` and
@@ -165,7 +168,8 @@ identifiers and tool names; A2A card name, URL, protocol version, interfaces
 (URL, protocol binding and version of each of up to 10 `supportedInterfaces`
 of a 1.0 card or `additionalInterfaces` of a 0.3 card; a 1.0 card's URL and
 protocol version are its first interface's), version, skills, capability and
-security scheme names; schema versions; and each descriptor source URL with its
+security scheme names (credentials redacted, each cut to 64 characters);
+schema versions; and each descriptor source URL with its
 credential provider ARN, grant type, scopes or IAM role. The raw `data` and
 `inlineContent` documents, authorizer settings and OAuth `customParameters` are
 never exported or reported, and no descriptor URL becomes a finding resource.
@@ -189,12 +193,25 @@ API, which marks the scan incomplete. Per-record batch errors report only their
 error codes. The connector never calls `SearchDiscoverableRegistryRecords`,
 `InvokeRegistryMcp` or any write operation.
 
-Registry exports replay with the same identities; a replayed record that was
-listed incompletely, lacks its details, had an invalid descriptor, or carries
-an approval configuration or provenance relation this release does not
-recognize makes the replay incomplete again. The registry responses in the
-tests and in `aws_registry_records.jsonl` are synthetic, modeled on the
-installed SDK models; they were not validated against a live account.
+Registry exports replay with the same identities, and a gap of the live scan
+makes the replay incomplete again. A record carries its own gaps: listed
+incompletely, without its details, with an invalid descriptor, or with an
+approval configuration or provenance relation this release does not recognize.
+A gap can also leave no record behind, so the registry's own record carries
+`_listing_complete` (its record listing finished) and `_detail` (`GetRegistry`
+returned), and every listing writes an `aws-registry-coverage` record (export
+only, never a finding) with its namespace, region and `complete`. `complete` is
+false when the SDK lacks the service, `ListRegistries` was denied, failed or
+truncated (an unsupported region, for example), a malformed registry was
+skipped, or a registry's record listing was incomplete, including through the
+`max_registry_records` cap that an earlier registry used up. Each
+`registry_arns` registry has its own coverage record (with `registryArn`);
+there `complete` says only that the discovery listing finished, never that an
+approved-only listing is complete. A registry record without these markers, as
+in exports written before they existed, replays as incomplete: regenerate such
+exports. The registry responses in the tests and in `aws_registry_records.jsonl`
+are synthetic, modeled on the installed SDK models; they were not validated
+against a live account.
 
 ## `cloud.gcp`
 Service Usage (AI APIs enabled), Vertex AI reasoning engines (Agent Engine)
@@ -279,7 +296,8 @@ and approve nothing unless the trusted registry entry sets
 they are never a complete listing: an observed agent is never reported
 `observed-not-registered` against Gemini Enterprise.
 
-**Bindings.** A record binds only to an exact resource:
+**Bindings.** A record binds only to an exact resource in the project it was
+listed in:
 
 - a reasoning engine named by an Agent Registry `RuntimeReference`
   (`//aiplatform.googleapis.com/projects/.../reasoningEngines/<id>`) or by a
@@ -288,24 +306,34 @@ they are never a complete listing: an observed agent is never reported
   (`//dialogflow.googleapis.com/...`) or by a Gemini Enterprise Dialogflow agent.
 
 When the scan observed that resource (comparing the project number and the
-project id), the binding carries the observed finding's exact resource, project
-and location. Its coverage is `in-scope` only when this scan's Vertex AI (or
-Dialogflow CX) listing for that project and location completed, `unknown` when
-that listing was incomplete or the project number is unknown, and `out-of-scope`
-otherwise (a location outside `locations`, a project not scanned or without the
-API). Other runtime references (a GKE deployment, for example) bind nothing. A
-runtime identity that equals a reasoning engine's `effective_identity`, or an
-interface URL that equals a Cloud Run service URI, is recorded in
-`metadata.registry_join_hints`: a hint, never a binding or an approval.
+project id), the binding carries the observed finding's exact resource and
+location; its project is always the record's own. Its coverage is `in-scope`
+only when this scan's Vertex AI (or Dialogflow CX) listing for that project and
+location completed, `unknown` when that listing was incomplete or the project
+number is unknown, and `out-of-scope` otherwise (a location outside `locations`,
+or a project without the API). A reference to a reasoning engine or Dialogflow
+CX agent of another project (by its id, or by a project number that is not the
+record's own) binds and approves nothing, even in a trusted registry; it is
+recorded in `metadata.registry_join_hints` as a `cross-project-reference`. When
+the scan knows neither project's number, an observed resource belongs to the
+project whose listing returned it. Other runtime references (a GKE deployment or
+a Vertex AI endpoint, for example) bind nothing. A runtime identity that equals
+a reasoning engine's `effective_identity`, or an interface URL that equals a
+Cloud Run service URI, is also recorded in `metadata.registry_join_hints`: a
+hint, never a binding or an approval.
 
 **Complete listings.** An Agent Registry record is `listing_complete` only when
 the project's registry locations were enumerated (not set with
 `agent_registry_locations`), that enumeration and every location's agents, MCP
 servers and endpoints (and skills with `v1alpha`) listings completed, and every
-runtime reference of the project's records names a project the scan can
-resolve. Only then can an observed reasoning engine, Dialogflow CX agent or
-chat engine in that project that no record binds be reported
-`observed-not-registered`. Records bind only reasoning engines and Dialogflow CX
+runtime reference of the project's records names a resource of that project,
+in a form and with a project number the scan can read. Only then can an
+observed reasoning engine, Dialogflow CX agent or chat engine in that project
+that no record binds be reported `observed-not-registered`. A runtime reference
+on a Vertex AI or Dialogflow host that is not a plain resource name (an
+`https:` URL, an API version segment or a trailing slash, for example) also
+makes the scan incomplete (exit 3): it may register an engine that would
+otherwise look unregistered. Records bind only reasoning engines and Dialogflow CX
 agents, so a chat engine is never `registered-and-observed` through a record:
 check the Dialogflow CX agent behind it before treating it as unregistered.
 Engines that are not chat engines, Gemini Enterprise apps included, are cloud
@@ -326,20 +354,25 @@ is never reported.
 never a finding) that says whether it completed. A denied or failed request, an
 invalid page, unreachable locations, an invalid or repeated page token or the
 page cap makes that listing incomplete and the scan incomplete (exit 3); the
-items already read are kept. Engine, assistant and location names from responses
-become request paths only after validation (an engine in another project,
-location or collection is skipped with a warning). A record that analysis cannot
-read, including a malformed coverage record or an unsupported `_kind`, makes
-every binding's coverage `unknown`, every listing incomplete and every presence
-`unknown` for that scan. So does anything that makes an offline replay
-incomplete, such as a record the loader drops before analysis (an invalid JSON
-line, a provider error record, a file skipped by a limit), and any registry
-record whose name carries the number of a project other than the one it was
-listed in: that record is dropped with a warning, so it cannot claim the other
-project's registry identity.
+items already read are kept. A record dump keeps those coverage records, so
+replaying the dump of an incomplete scan is incomplete again (one warning) and
+voids the claims of the listings that failed, as the live scan did. Engine,
+assistant and location names from responses become request paths only after
+validation (an engine in another project, location or collection is skipped with
+a warning). A record that analysis cannot read, including a malformed coverage
+record, an unsupported `_kind` or a publisher that is not named as a publisher
+of the project and location it was listed in, makes every binding's coverage
+`unknown`, every listing incomplete and every presence `unknown` for that scan.
+So does anything else that makes an offline replay incomplete, such as a record
+the loader drops before analysis (an invalid JSON line, a provider error record,
+a file skipped by a limit), and any registry record or publisher whose name
+carries the number of a project other than the one it was listed in: it is
+dropped with a warning, so it cannot claim the other project's registry identity
+or name a skill's publisher.
 
 **What is kept.** Items are reduced when collected, so a record dump replays what
-live analysis saw. An agent card becomes a summary (name, URL, version, protocol
+live analysis saw; analysis bounds the text fields of a replayed record to the
+same lengths. An agent card becomes a summary (name, URL, version, protocol
 version, skill ids, capability flags, security scheme names and types, and counts
 of security requirements and signatures); interface URLs lose userinfo, query and
 fragment; icons, starter prompts, assistant instructions and authorization values
@@ -424,7 +457,7 @@ run rather than writing records by hand.
 
 | Connector | Accepted `_kind` values |
 | --- | --- |
-| `cloud.aws` | `account`, `bedrock-agent`, `bedrock-knowledge-base`, `bedrock-flow`, `bedrock-logging`, `bedrock-guardrail`, `bedrock-custom-model`, `agentcore-runtime`, `agentcore-gateway`, `agentcore-memory`, `agentcore-browser`, `agentcore-code-interpreter`, `agentcore-workload-identity`, `agent-registry`, `agent-registry-record`, `agent-registry-discoverable-record`, `agentcore-registry`, `agentcore-registry-record`, `lambda`, `ecs-task-definition`, `sagemaker-endpoint`, `state-machine`, `qbusiness-application`, `lex-bot`, `secret-name`, `ssm-parameter`, `iam-principal`, `cloudtrail-event` |
+| `cloud.aws` | `account`, `bedrock-agent`, `bedrock-knowledge-base`, `bedrock-flow`, `bedrock-logging`, `bedrock-guardrail`, `bedrock-custom-model`, `agentcore-runtime`, `agentcore-gateway`, `agentcore-memory`, `agentcore-browser`, `agentcore-code-interpreter`, `agentcore-workload-identity`, `agent-registry`, `agent-registry-record`, `agent-registry-discoverable-record`, `agentcore-registry`, `agentcore-registry-record`, `aws-registry-coverage`, `lambda`, `ecs-task-definition`, `sagemaker-endpoint`, `state-machine`, `qbusiness-application`, `lex-bot`, `secret-name`, `ssm-parameter`, `iam-principal`, `cloudtrail-event` |
 | `cloud.gcp` | `project`, `reasoning-engine`, `vertex-endpoint`, `dialogflow-agent`, `discovery-engine`, `cloud-run-service`, `cloud-function`, `iam-policy`, `service-account`, `api-key`, `secret-name`, `audit-event`, and with the opt-in catalogs `project-number`, `registry-coverage`, `agent-registry-agent`, `agent-registry-mcp-server`, `agent-registry-endpoint`, `agent-registry-skill`, `agent-registry-publisher`, `gemini-enterprise-agent` |
 | `cloud.azure` | `resource`, `deployment`, `diagnostics`, `foundry-agent`, `logicapp-definition`, `appsettings`, `role-assignment` |
 | `cloud.oci` | `tenancy`, `genai-agent`, `genai-agent-endpoint`, `genai-knowledge-base`, `genai-endpoint`, `genai-cluster`, `genai-custom-model`, `oda-instance`, `model-deployment`, `function`, `container-instance`, `secret-name`, `policy`, `dynamic-group` |
@@ -434,7 +467,7 @@ unsupported or non-string `_kind`, or with fields that do not fit its kind, is
 reported as a warning and makes the scan incomplete; the remaining records are
 still analyzed. Envelope records (`account`, `tenancy`) and related records
 (Azure deployments and diagnostic settings, OCI agent endpoints, AWS registry
-containers) are resolved before findings are emitted. CloudTrail events become one gateway-caller
+containers and coverage records) are resolved before findings are emitted. CloudTrail events become one gateway-caller
 finding per principal, and Cloud Audit Log events one per principal and
 project, with event counts and the first and last event time.
 

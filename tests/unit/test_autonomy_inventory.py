@@ -10,7 +10,7 @@ import pytest
 import yaml
 from click.testing import CliRunner
 
-from shadowscan.autonomy import SCHEMA, UNDERSTATED_TAG, classify, valid_autonomy
+from shadowscan.autonomy import SCHEMA, UNDERSTATED_TAG, classify, merge_autonomy, valid_autonomy
 from shadowscan.cli import main
 from shadowscan.config import ConfigValidationError, ConnectorSpec, ScanConfig
 from shadowscan.engine import Engine
@@ -466,6 +466,72 @@ def test_fleet_merge_keeps_a_declared_level_only_for_registered_findings(tmp_pat
     [agent] = merge_reports([("first.json", registered), ("other.json", unregistered)]).findings
     assert agent.shadow is True and "declared" not in agent.metadata["autonomy"]
     assert UNDERSTATED_TAG not in agent.tags
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_fleet_merge_keeps_the_lowest_declared_level_in_either_order(tmp_path, index, reverse):
+    # Regression: merge kept only the first source's declared level, so `merge low high` kept
+    # autonomy-understated and `merge high low` dropped it.
+    low = _gated_report(
+        tmp_path, index, [write(tmp_path, card(schema_version=2, autonomy_profile={"level": 0}), "low.yaml")]
+    )
+    high = _gated_report(
+        tmp_path, index, [write(tmp_path, card(schema_version=2, autonomy_profile={"level": 5}), "high.yaml")]
+    )
+    sources = [("low.json", low), ("high.json", high)]
+    [agent] = merge_reports(sources[::-1] if reverse else sources).findings
+    autonomy = agent.metadata["autonomy"]
+    assert agent.shadow is False and valid_autonomy(autonomy)
+    assert (autonomy["declared"], autonomy["declared_source"]) == (0, "refunds-agent")
+    assert autonomy["floor"] > 0 and UNDERSTATED_TAG in agent.tags
+    assert "declared-above-ceiling" not in {item["rule"] for item in autonomy["basis"]}
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_fleet_merge_of_conflicting_registrations_declares_nothing(tmp_path, index, reverse):
+    low = _gated_report(
+        tmp_path, index, [write(tmp_path, card(schema_version=2, autonomy_profile={"level": 0}), "low.yaml")]
+    )
+    other = card(schema_version=2, autonomy_profile={"level": 5})
+    other["metadata"] = {"agent_id": "billing-agent", "owner_team": "payments"}
+    high = _gated_report(tmp_path, index, [write(tmp_path, other, "high.yaml")])
+    sources = [("low.json", low), ("high.json", high)]
+    [agent] = merge_reports(sources[::-1] if reverse else sources).findings
+    # Two inventories registered it to different agents: ambiguous, so no declared level applies.
+    assert agent.shadow is True and agent.metadata["registry_match_reason"] == "ambiguous-resource-approval"
+    assert "declared" not in agent.metadata["autonomy"] and UNDERSTATED_TAG not in agent.tags
+
+
+def test_fleet_merge_applies_combination_rules_across_reports():
+    # Regression: bounds widened one by one skipped the combination rules, so approval bypassed
+    # in one report and a schedule trigger in another merged to L4 instead of L5.
+    def agent(*tags: str) -> Finding:
+        return Finding(
+            surface=Surface.CLOUD,
+            connector="cloud.aws",
+            kind=Kind.AGENT,
+            title="Bedrock Agent: refunds",
+            resource=AGENT_ARN,
+            resource_type="bedrock-agent",
+            capabilities=["saas-actions"],
+            tags=list(tags),
+        )
+
+    bypassed, scheduled = classify(agent("posture-permissions-bypassed")), classify(agent("scheduled"))
+    assert bypassed is not None and scheduled is not None
+    assert (bypassed["floor"], bypassed["initiation"]) == (4, "unknown")
+    assert (scheduled["floor"], scheduled["oversight"]) == (2, "unknown")
+    merged = agent()
+    merge_autonomy(merged, [bypassed, scheduled])
+    autonomy = merged.metadata["autonomy"]
+    assert valid_autonomy(autonomy)
+    assert (autonomy["floor"], autonomy["ceiling"]) == (5, 5)
+    assert (autonomy["oversight"], autonomy["initiation"]) == ("bypassed", "schedule")
+    assert {"bound": "floor", "rule": "self-initiated", "value": 5} in autonomy["basis"]
+    assert {"bound": "initiation", "rule": "schedule-trigger", "value": "schedule"} in autonomy["basis"]
+    # The same evidence observed together classifies the same way.
+    together = classify(agent("posture-permissions-bypassed", "scheduled"))
+    assert together is not None and together["floor"] == autonomy["floor"]
 
 
 def test_fleet_merge_notes_a_declared_level_above_the_merged_ceiling(tmp_path, index):

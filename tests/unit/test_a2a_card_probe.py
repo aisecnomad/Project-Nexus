@@ -695,6 +695,34 @@ def test_a_card_signed_in_the_specification_form_verifies_when_served_with_empty
     assert finding.metadata["agent_card"]["signature"] == "verified"
 
 
+@pytest.mark.parametrize(
+    "added",
+    [
+        {"securitySchemes": {"oauth2": {}}},
+        {"authentication": {"schemes": []}},
+        {"securitySchemes": {"oauth2": {"oauth2SecurityScheme": {"flows": {}}}}},
+    ],
+)
+def test_a_verified_card_is_read_as_its_signature_covers_it(signer, trusted_keys, added) -> None:
+    card = copy.deepcopy(CARD_V1)
+    del card["securitySchemes"]
+    card.pop("securityRequirements", None)
+    signed = copy.deepcopy(card)
+    card["signatures"] = [_sign_bytes(signer, canonicalize(_clean_empty_reference(copy.deepcopy(signed))))]
+    (genuine,), _ = _analyze(card, agent_card_jwks_url=JWKS_URL)
+    assert genuine.metadata["agent_card"]["signature"] == "verified"
+    assert "no-auth-declared" in genuine.tags
+    # Empty values added after signing keep the signature valid, and they decide nothing.
+    (tampered,), ctx = _analyze({**card, **added}, agent_card_jwks_url=JWKS_URL)
+    agent_card = tampered.metadata["agent_card"]
+    assert agent_card["signature"] == "verified" and agent_card["security_schemes"] is None
+    assert "no-auth-declared" in tampered.tags and not ctx.stats.incomplete
+    # The forms differ only by empty values, and the one a signature covers is returned with it.
+    forms = a2a.signed_forms({**card, **added})
+    assert [payload for _, payload in forms] == a2a.signed_payloads({**card, **added})
+    assert all(canonicalize(form) == payload for form, payload in forms)
+
+
 def test_the_specification_default_value_example_is_a_signed_payload() -> None:
     fragment = {
         "name": "Example Agent",

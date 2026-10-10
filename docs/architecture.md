@@ -71,7 +71,8 @@
    (`metadata.autonomy`, compared with a matched entry's declared level) and
    **scores** risk. Findings below
    `min_confidence` are then dropped, together with the `related` links that
-   name them.
+   name them; vendor registry record findings are kept whatever their
+   confidence, since their approvals apply regardless.
 5. Reporters render. SARIF carries `file:line` for code findings and logical
    locations elsewhere; HTML is self-contained.
 

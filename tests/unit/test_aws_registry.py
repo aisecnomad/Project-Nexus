@@ -6,6 +6,7 @@ validated against a live account.
 
 from __future__ import annotations
 
+import base64
 import json
 import re
 from datetime import UTC, datetime
@@ -35,8 +36,9 @@ from shadowscan.connectors.cloud.aws_registry import (
     unrecognized_relation,
 )
 from shadowscan.engine import Engine
-from shadowscan.models import Kind, ScanResult, ScanStats
+from shadowscan.models import Finding, Kind, ScanResult, ScanStats
 from shadowscan.registries import RECONCILIATION_KEY, RECORD_KEY, parse_registry_record
+from shadowscan.utils.redaction import SanitizationLimitError
 
 ACCOUNT = "123456789012"
 OTHER_ACCOUNT = "210987654321"
@@ -508,6 +510,80 @@ def test_bindings_are_out_of_scope_without_clean_agentcore_collection(index):
     assert partial.ctx.stats.incomplete
 
 
+class AgentCoreClient(FakeClient):
+    """The AgentCore control plane of one region, holding the runtime the registry record names."""
+
+    def __init__(self) -> None:
+        runtime = {
+            "agentRuntimeId": "support_agent-AbCdE12345",
+            "agentRuntimeArn": RUNTIME_ARN,
+            "agentRuntimeName": "support_agent",
+            "status": "READY",
+        }
+        super().__init__(listings={"list_agent_runtimes": [{"agentRuntimes": [runtime]}]})
+
+    def get_agent_runtime(self, *, agentRuntimeId: str) -> dict[str, Any]:
+        self.calls.append(("get_agent_runtime", {"agentRuntimeId": agentRuntimeId}))
+        return {"agentRuntimeArn": RUNTIME_ARN, "roleArn": f"arn:aws:iam::{ACCOUNT}:role/agentcore-support"}
+
+
+def _runtime_and_its_record(index: Any, **config: Any) -> AwsConnector:
+    clients = {
+        "agent-registry-control": agent_registry_client(),
+        "bedrock-agentcore-control": AgentCoreClient(),
+    }
+    return connector(index, clients, **config)
+
+
+def _binding_coverage(findings: list[Any]) -> str:
+    [record] = [finding for finding in findings if RECORD_KEY in finding.metadata]
+    [item] = record.metadata[RECORD_KEY]["bindings"]
+    assert item["resource"] == RUNTIME_ARN
+    return item["coverage"]
+
+
+def test_runtime_record_the_export_rejects_leaves_its_region_out_of_scope(tmp_path, index):
+    clean = _runtime_and_its_record(index)
+    findings = clean.run()
+    assert not clean.ctx.stats.incomplete and RUNTIME_ARN in {f.resource for f in findings}
+    assert _binding_coverage(findings) == "in-scope"
+    instance = _runtime_and_its_record(index, _dump_path=str(tmp_path / "aws.jsonl"))
+    export = instance._export_record
+
+    def reject_runtimes(record: dict[str, Any]) -> dict[str, Any]:
+        if record["_kind"] == "agentcore-runtime":
+            raise SanitizationLimitError("synthetic")
+        return export(record)
+
+    instance._export_record = reject_runtimes  # type: ignore[method-assign]
+    findings = instance.run()
+    # The rejection is an error, not a warning; the runtime never reaches analysis, so a binding
+    # still in scope would read as registered but not observed.
+    assert instance.ctx.stats.errors == [
+        "cloud.aws: export record rejected: sanitization safety limit exceeded"
+    ]
+    assert RUNTIME_ARN not in {f.resource for f in findings}
+    assert _binding_coverage(findings) == "out-of-scope"
+
+
+def test_runtime_finding_the_report_omits_leaves_its_region_out_of_scope(index):
+    sanitize = Finding.sanitize
+
+    def fail_for_runtimes(finding: Finding) -> None:
+        # A new finding is sanitized when built; this one fails only once it holds its evidence.
+        if finding.resource_type == "agentcore-runtime" and finding.evidence:
+            raise SanitizationLimitError("synthetic")
+        sanitize(finding)
+
+    instance = _runtime_and_its_record(index)
+    with mock.patch.object(Finding, "sanitize", fail_for_runtimes):
+        findings = instance.run()
+    # run() omits the runtime after analysis: the binding cannot stay in scope.
+    assert instance.ctx.stats.errors == ["cloud.aws: finding omitted: sanitization safety limit exceeded"]
+    assert RUNTIME_ARN not in {f.resource for f in findings}
+    assert _binding_coverage(findings) == "out-of-scope"
+
+
 @pytest.mark.parametrize("relation", [{"relation": "CONSUMED_BY"}, {}])
 def test_provenance_of_another_relation_binds_nothing_and_is_incomplete(index, relation):
     detail = record_detail()
@@ -539,6 +615,27 @@ def test_provenance_of_a_record_created_through_the_api_binds_nothing(index):
     # The asserted lineage stays visible as vendor metadata.
     assert finding.metadata["provenance"][0]["sourceId"] == RUNTIME_ARN
     assert not warnings(instance)
+
+
+def test_auto_detected_draft_record_binds_nothing(index):
+    # The registry wrote the draft from the runtime it detected and nobody submitted it, so it
+    # registers nothing: the record is reported, the runtime stays unregistered.
+    summary = record_summary(status="DRAFT")
+    client = agent_registry_client(
+        listings={"list_registry_records": [{"registryRecords": [summary]}]},
+        records={"rec000000001": record_detail(status="DRAFT")},
+    )
+    instance = connector(index, {"agent-registry-control": client, "bedrock-agentcore-control": FakeClient()})
+    [finding] = analyze(instance, collect(instance))
+    contract = finding.metadata[RECORD_KEY]
+    assert (contract["status"], contract["bindings"]) == ("draft", [])
+    assert finding.metadata["created_by_auto_detection"] is True
+    assert finding.metadata["provenance"][0]["sourceId"] == RUNTIME_ARN
+    assert not [e for e in finding.evidence if e.signal == "aws:registry-record-reference"]
+    assert not warnings(instance)
+    # Any other status of the same auto-detected record binds its runtime.
+    pending = {**record_detail(), "status": "PENDING_APPROVAL"}
+    assert provenance_binds(pending) and not provenance_binds({**pending, "status": "DRAFT"})
 
 
 def test_source_coverage_and_bindings_need_an_exact_agentcore_arn():
@@ -671,7 +768,13 @@ def test_agentcore_registry_records_use_their_own_namespace_and_auto_approval(in
         [],
     )
     assert finding.metadata["registry_auto_approval"] is True
-    assert "not reviewed by a person" in finding.evidence[0].description
+    # The mode is the registry's setting at scan time; a change applies only to records submitted
+    # after it, so the evidence never claims how this record was approved.
+    description = finding.evidence[0].description
+    assert description.endswith(
+        "; the registry currently auto-approves records; this record may not have been reviewed by a person"
+    )
+    assert "approved automatically" not in description
     assert "mcp-insecure-transport" in finding.tags
     # The synchronization role is a weightless correlation location, never the resource.
     roles = [e.location for e in finding.evidence if e.signal == "aws:registry-record-reference"]
@@ -747,7 +850,11 @@ def test_unsupported_region_and_missing_sdk_service_are_incomplete(index):
 
     instance = connector(index, {}, services=("registry",))
     instance._client = old_sdk  # type: ignore[method-assign]
-    assert collect(instance) == []
+    # No registry or record is left to carry the gap, so a coverage record does.
+    assert collect(instance) == [
+        {"_kind": "aws-registry-coverage", "_region": REGION, "namespace": namespace, "complete": False}
+        for namespace in ("aws-agent-registry", "aws-agentcore-registry")
+    ]
     assert warnings(instance) == [
         "cloud.aws: Agent Registry unavailable in installed SDK; collection incomplete",
         "cloud.aws: AgentCore registry unavailable in installed SDK; collection incomplete",
@@ -894,6 +1001,30 @@ def test_a2a_card_without_security_is_tagged(index):
     instance = connector(index, {"agent-registry-control": client, "bedrock-agentcore-control": FakeClient()})
     [finding] = analyze(instance, collect(instance))
     assert "no-auth-declared" in finding.tags
+
+
+def test_a2a_card_member_names_are_redacted_and_bounded(index):
+    # Built at run time: the repository holds no credential-shaped literal.
+    def segment(value: Any) -> str:
+        return base64.urlsafe_b64encode(json.dumps(value).encode()).decode().rstrip("=")
+
+    token = f"{segment({'alg': 'HS256'})}.{segment({'sub': '1234567890'})}.{'s' * 43}"
+    huge = "k" * 90_000
+    document = card(securitySchemes={f"Bearer {token}": {"type": "http"}}, capabilities={huge: True})
+    summary, parse = descriptor_summary(AGENT_REGISTRY, {"a2aAgentCard": {"data": document}})
+    assert parse == "ok"
+    assert summary["a2a"]["security_schemes"] == ["Bearer [REDACTED]"]
+    [capability] = summary["a2a"]["capabilities"]
+    assert len(capability) == 64 and capability.startswith("kkk")
+    # Collected records and findings never carry the raw names.
+    detail = record_detail()
+    detail["descriptors"]["a2aAgentCard"]["data"] = document
+    client = agent_registry_client(records={"rec000000001": detail})
+    instance = connector(index, {"agent-registry-control": client, "bedrock-agentcore-control": FakeClient()})
+    records = collect(instance)
+    [finding] = analyze(instance, records)
+    for shown in (json.dumps(records, default=str), json.dumps(finding.metadata["descriptor"])):
+        assert token not in shown and "k" * 65 not in shown
 
 
 def test_malformed_record_is_skipped_and_its_registry_listing_is_partial(index):
@@ -1055,10 +1186,11 @@ def test_record_fields_that_break_the_record_shape_are_invalid(index, change):
 def test_registry_container_records_need_a_namespace_arn(index, kind):
     instance = AwsConnector(context(index))
     arn = REGISTRY_ARN if kind == "agent-registry" else CORE_REGISTRY_ARN
-    assert analyze(instance, [{"_kind": kind, "registryArn": arn}]) == []
+    markers = {"_listing_complete": True, "_detail": "observed"}
+    assert analyze(instance, [{"_kind": kind, "registryArn": arn, **markers}]) == []
     assert not warnings(instance)
     wrong = CORE_REGISTRY_ARN if kind == "agent-registry" else REGISTRY_ARN
-    assert analyze(instance, [{"_kind": kind, "registryArn": wrong}]) == []
+    assert analyze(instance, [{"_kind": kind, "registryArn": wrong, **markers}]) == []
     assert warnings(instance) == ["cloud.aws: record has invalid fields for its _kind"]
 
 
@@ -1216,7 +1348,15 @@ def test_jwt_registry_rejects_the_discovery_api_and_the_scan_is_incomplete(index
 def test_discovery_without_sdk_support_is_incomplete(index):
     clients = {"agent-registry-control": FakeClient(), "bedrock-agentcore-control": FakeClient()}
     instance = connector(index, clients, services=("registry",), registry_arns=[FOREIGN_REGISTRY_ARN])
-    assert collect(instance) == []
+    records = collect(instance)
+    assert {record["_kind"] for record in records} == {"aws-registry-coverage"}
+    assert records[-1] == {
+        "_kind": "aws-registry-coverage",
+        "_region": REGION,
+        "namespace": "aws-agent-registry",
+        "complete": False,
+        "registryArn": FOREIGN_REGISTRY_ARN,
+    }
     assert (
         "cloud.aws: Agent Registry discovery unavailable in installed SDK; collection incomplete"
         in warnings(instance)
@@ -1246,38 +1386,174 @@ def test_registry_export_round_trip_keeps_identity_and_withholds_custom_paramete
     ]
 
 
+LISTING_GAP = "cloud.aws: registry record listing incomplete; records may be missing"
+REGISTRY_DETAIL_GAP = "cloud.aws: registry details unavailable; approval mode unknown"
+COVERAGE_GAP = "cloud.aws: registry listing incomplete; registries or records may be missing"
+CONTAINERS = ("agent-registry", "agentcore-registry")
+
+
 @pytest.mark.parametrize(
-    "marker,warning",
+    "kinds,marker,expected",
     [
+        (("agent-registry-record",), {"_listing_complete": False}, [LISTING_GAP]),
         (
-            {"_listing_complete": False},
-            "cloud.aws: registry record listing incomplete; records may be missing",
-        ),
-        (
+            ("agent-registry-record",),
             {"_detail": "unknown"},
-            "cloud.aws: registry record details unavailable; descriptor coverage unknown",
+            ["cloud.aws: registry record details unavailable; descriptor coverage unknown"],
         ),
         (
+            ("agent-registry-record",),
             {"_descriptor_parse": "invalid"},
-            "cloud.aws: registry record descriptor invalid; descriptor coverage unknown",
+            ["cloud.aws: registry record descriptor invalid; descriptor coverage unknown"],
         ),
+        # Gaps that can leave no record behind travel on the registries and coverage records.
+        (CONTAINERS, {"_listing_complete": False}, [LISTING_GAP]),
+        (CONTAINERS, {"_detail": "unknown"}, [REGISTRY_DETAIL_GAP]),
+        (("aws-registry-coverage",), {"complete": False}, [COVERAGE_GAP]),
+        # An export written before the markers existed has unknown coverage.
+        (CONTAINERS, {"_listing_complete": None, "_detail": None}, [LISTING_GAP, REGISTRY_DETAIL_GAP]),
     ],
 )
-def test_replayed_coverage_gaps_stay_incomplete(tmp_path, index, marker, warning):
-    lines = FIXTURE.read_text().splitlines()
-    records = [json.loads(line) for line in lines]
-    for record in records[6:8]:
-        record.update(marker)
+def test_replayed_coverage_gaps_stay_incomplete(tmp_path, index, kinds, marker, expected):
+    records = [json.loads(line) for line in FIXTURE.read_text().splitlines()]
+    for record in records:
+        if record["_kind"] in kinds:
+            record.update(marker)
+            for key in [key for key, value in marker.items() if value is None]:
+                del record[key]
     export = tmp_path / "export.jsonl"
     export.write_text("\n".join(json.dumps(record) for record in records))
     ctx = context(index, input=str(export))
     AwsConnector(ctx).run()
     # One warning per kind of gap, however many records carry it.
-    assert ctx.stats.incomplete and ctx.stats.warnings == [warning]
+    assert ctx.stats.incomplete and ctx.stats.warnings == expected
+
+
+def _two_registries_client() -> FakeClient:
+    """Two registries of one record each: the first uses up a cap of one."""
+    second_id = "zzzz1234zzzz"
+    second_arn = REGISTRY_ARN.replace(REGISTRY_ID, second_id)
+    return agent_registry_client(
+        listings={
+            "list_registries": [
+                {"registries": [registry_summary(), registry_summary(second_id, second_arn)]}
+            ],
+            ("list_registry_records", second_id): [
+                {"registryRecords": [record_summary("rec000000009", registry_arn=second_arn)]}
+            ],
+        },
+        registries={REGISTRY_ID: registry_detail(), second_id: registry_detail(registryArn=second_arn)},
+    )
+
+
+@pytest.mark.parametrize(
+    "clients,config,expected",
+    [
+        pytest.param(
+            lambda: {
+                "agent-registry-control": agent_registry_client(
+                    registries={REGISTRY_ID: SDKError("AccessDeniedException")}
+                )
+            },
+            {},
+            [REGISTRY_DETAIL_GAP],
+            id="get-registry-denied",
+        ),
+        pytest.param(
+            lambda: {
+                "agent-registry-control": agent_registry_client(
+                    listings={"list_registry_records": [SDKError("AccessDeniedException")]}
+                )
+            },
+            {},
+            [LISTING_GAP, COVERAGE_GAP],
+            id="list-registry-records-denied",
+        ),
+        pytest.param(
+            lambda: {
+                "agent-registry-control": agent_registry_client(
+                    listings={"list_registries": [SDKError("AccessDeniedException")]}
+                )
+            },
+            {},
+            [COVERAGE_GAP],
+            id="list-registries-denied",
+        ),
+        pytest.param(
+            lambda: {
+                "agent-registry-control": agent_registry_client(
+                    listings={"list_registries": [EndpointConnectionError("no endpoint")]}
+                )
+            },
+            {},
+            [COVERAGE_GAP],
+            id="unsupported-region",
+        ),
+        # None: an installed SDK without the service.
+        pytest.param(
+            lambda: {"agent-registry-control": None, "bedrock-agentcore-control": None},
+            {},
+            [COVERAGE_GAP],
+            id="sdk-without-the-services",
+        ),
+        pytest.param(
+            lambda: {"agent-registry-control": _two_registries_client()},
+            {"max_registry_records": 1},
+            [LISTING_GAP, COVERAGE_GAP],
+            id="cap-used-by-an-earlier-registry",
+        ),
+        pytest.param(
+            lambda: {"agent-registry": discovery_client(pages=[SDKError("UnauthorizedException")])},
+            {"registry_arns": [FOREIGN_REGISTRY_ARN]},
+            [COVERAGE_GAP],
+            id="discovery-denied",
+        ),
+        pytest.param(
+            lambda: {"agent-registry": None},
+            {"registry_arns": [FOREIGN_REGISTRY_ARN]},
+            [COVERAGE_GAP],
+            id="discovery-sdk-without-the-service",
+        ),
+    ],
+)
+def test_live_registry_gaps_replay_incomplete(tmp_path, index, clients, config, expected):
+    """A live gap that leaves no record to carry it replays incomplete, never complete and empty."""
+    pytest.importorskip("boto3")
+    available = {
+        "agent-registry-control": FakeClient(),
+        "bedrock-agentcore-control": FakeClient(),
+        **clients(),
+    }
+
+    def client(service: str, region: str | None = None) -> Any:
+        if available.get(service) is None:
+            raise RuntimeError("UnknownServiceError")
+        return available[service]
+
+    dump = tmp_path / "aws.jsonl"
+    ctx = context(
+        index, account_id=ACCOUNT, services=["registry"], regions=[REGION], _dump_path=str(dump), **config
+    )
+    instance = AwsConnector(ctx)
+    with (
+        mock.patch.object(instance, "_session_", lambda: None),
+        mock.patch.object(instance, "_client", client),
+    ):
+        instance.run()
+    assert ctx.stats.incomplete
+    replay = context(index, input=str(dump))
+    AwsConnector(replay).run()
+    assert replay.stats.incomplete
+    assert [
+        w for w in replay.stats.warnings if w in (LISTING_GAP, REGISTRY_DETAIL_GAP, COVERAGE_GAP)
+    ] == expected
 
 
 def _engine_run(index: Any, *, fixture: Path = FIXTURE, **options: Any) -> ScanResult:
     spec = ConnectorSpec("cloud.aws", {"input": str(fixture)})
+    # The fixture is an offline replay, whose records approve only for an entry that opts in.
+    trusted = options.pop("trusted_registries", [])
+    options["trusted_registries"] = [{**entry, "allow_offline_records": True} for entry in trusted]
     return Engine(ScanConfig(connectors=[spec], **options), index).run()
 
 
@@ -1305,14 +1581,15 @@ def test_trusted_registry_sanctions_only_the_runtime_of_an_approved_manual_recor
     shadow = findings[RUNTIME_ARN.replace("support_agent-AbCdE12345", "shadow_agent-KlMnO13579")]
     gateway = findings[GATEWAY_ARN]
     assert (support.shadow, support.registry_match) == (False, "aws-agent-registry:rec000000001")
-    # Pending and draft records bind their objects but never approve them.
+    # A pending record binds its object but never approves it; an auto-detected draft binds nothing.
     assert billing.shadow is True and billing.registry_match is None
     assert gateway.shadow is True and gateway.registry_match is None
     assert shadow.shadow is True
     assert support.metadata[RECONCILIATION_KEY]["status"] == "registered-and-observed"
     assert billing.metadata[RECONCILIATION_KEY]["status"] == "registered-and-observed"
-    # The registry's listing is complete, so an unlisted runtime in its account is reported.
+    # The registry's listing is complete, so an unlisted runtime or gateway in its account is reported.
     assert shadow.metadata[RECONCILIATION_KEY]["status"] == "observed-not-registered"
+    assert gateway.metadata[RECONCILIATION_KEY]["status"] == "observed-not-registered"
     record = findings[f"{REGISTRY_ARN}/record/rec000000001"]
     assert (record.shadow, record.registry_match) == (False, "aws-agent-registry:rec000000001")
 
@@ -1375,7 +1652,8 @@ def test_unrecognized_approval_configuration_leaves_a_trusted_scan_incomplete(tm
     result = _engine_run(
         index, fixture=export, trusted_registries=[{"registry": "aws-agent-registry", "id": REGISTRY_ARN}]
     )
-    # An unknown approval mode approves in a trusted registry, so the scan is never complete.
+    # An unrecognized configuration hides how records are approved, so the scan is never complete
+    # (an unknown approval mode approves only with allow_auto_approved).
     assert not result.complete
     assert _by_resource(result)[f"{REGISTRY_ARN}/record/rec000000001"].metadata[RECORD_KEY][
         "approval_mode"

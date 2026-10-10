@@ -1002,7 +1002,7 @@ def _json_object(text: str | None) -> dict[str, Any] | None:
 
 
 _SERVER_STRINGS = ("name", "transport", "command", "url", "location")
-_SERVER_STRING_LISTS = ("args", "urls", "env_names", "headers", "risks", "secret_locations")
+_SERVER_STRING_LISTS = ("args", "urls", "env_names", "headers", "risks", "secret_locations", "launch_context")
 
 
 def _valid_server(server: Any) -> bool:

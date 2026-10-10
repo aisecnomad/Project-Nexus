@@ -593,3 +593,9 @@ def test_replayed_manifest_packages_must_have_the_parsed_shape(packages, valid):
     if packages is not None:
         server["packages"] = packages
     assert _valid_server(server) is valid
+
+
+@pytest.mark.parametrize(("context", "valid"), [(["cwd", "envFile"], True), ("cwd", False), ([1], False)])
+def test_replayed_launch_context_must_have_the_parsed_shape(context, valid):
+    server = {"name": "files", "transport": "stdio", "command": "npx", "launch_context": context}
+    assert _valid_server(server) is valid

@@ -390,10 +390,13 @@ skills or capabilities but misses other required fields still gets its own
 the errors in `metadata.card_errors`, never an agent finding; the errors also
 keep the scan incomplete. A card's `metadata.agent_card` is the projection the
 [A2A Agent Card probe](endpoint.md#a2a-agent-card-probe) uses: A2A 1.0 `supportedInterfaces` and 0.3
-`url`/`additionalInterfaces` (scheme, host, port and path only), and a
+`url`/`additionalInterfaces` (scheme, host, port and path only; an interface
+URL with user information or a backslash before its host is left out, since
+HTTP clients can read another host from it), and a
 signature state of `absent`, `present-unverified` or `invalid` (card files are
 never verified). Cards are tagged `no-auth-declared`, `a2a-plaintext-interface`
-(an `http://` or `ws://` interface to a remote host) and
+(an `http://` or `ws://` interface to a host not known to be loopback, such an
+interface included) and
 `a2a-card-signature-invalid` (a malformed signature entry). A card that
 declares a protocol version other than 0.x or 1.x is still reported, with a
 warning that makes the scan incomplete. JSON/YAML descriptions are not
@@ -704,41 +707,75 @@ configurations and, by server URL, to `endpoint.mcp` tool findings; it reads no
 file and contacts no registry. Each server is matched by what its client fetches
 or connects to, and by nothing else:
 
-1. a server started by a command (transport `stdio`, or no transport and no
-   URL): the package its launch fetches (`npx`, `bunx`, `pnpm dlx`, `yarn dlx`,
-   `bun x`, `uvx`, `uv tool run`, `pipx run`, `docker run`, `podman run`, also
-   as `npx.cmd` or `uvx.exe` and inside `cmd /c`), compared by registry type
-   and identifier: npm names lowercased, PyPI names normalized as PEP 503 does,
-   OCI images without tag or digest and with Docker Hub spelled `docker.io`.
-   The exact version or image tag the launch pins is the configured version; a
-   range or a moving tag such as `latest` pins none. A URL field on such a
-   server is not where its client connects and is not compared;
-2. a server reached over a remote transport (`http`, `sse`, `streamable-http`,
-   or no transport and no command): its URL, compared with the scheme and host
-   lowercased and the default port, query, fragment and trailing `/` removed. A
-   command field on such a server is not compared;
+1. a server started by a command and no URL (transport `stdio`, or no
+   transport): the package its launch fetches (`npx`, `bunx`, `pnpm dlx`,
+   `yarn dlx`, `bun x`, `uvx`, `uv tool run`, `pipx run`, `docker run`,
+   `podman run`, also as `npx.cmd` or `uvx.exe` and inside `cmd /c`), compared
+   by registry type and identifier: npm names lowercased, PyPI names normalized
+   as PEP 503 does, OCI images without tag or digest and with Docker Hub
+   spelled `docker.io`. The exact version or image tag the launch pins is the
+   configured version; a range or a moving tag such as `latest` pins none;
+2. a server reached at a URL and with no command (a remote transport such as
+   `http`, `sse` or `streamable-http`, or no transport): its URL, compared with
+   the scheme and host lowercased and the default port, query, fragment and
+   trailing `/` removed;
 3. an MCP server manifest (a `server.json` document with a top-level `name`
    and `packages` or `remotes`, not a server table): every package and remote
    URL it declares, which one registry name must list together.
 
 The first identity that applies is the only one used: an unlisted package
-never falls back to the server's URL or name. A server has no identity when
-its launch names no registry package or could fetch or run something else:
-`node ./server.js`, a shell command line, a local path, a Git, URL or file
-source, an npm alias (`name@npm:other`), more than one `-p`/`--package` or a
-command that is not the package's own, another registry, index, configuration
-file, cache or extra package (`--registry`, `--userconfig`, `--index-url`,
-`--with`, `--pip-args`, `--entrypoint`, an option the parser does not know, or
-an environment variable such as `npm_config_registry`, `UV_INDEX_URL`,
-`PIP_INDEX_URL` or `DOCKER_HOST`). So does a URL that is templated, carries
-user information (redacted when the configuration is parsed, and able to name
-another host to the client: `https://evil.example\@host/` reaches
-`evil.example`) or does not parse, an unknown transport with both a command and
-a URL, and a manifest package or remote that cannot be compared. Client-side
-files such as `.npmrc` are not read. A manifest without an identity is still
-looked up by its own `name`, which gives provenance hints (`match: name`) and
-never counts as listed in an approved registry; a client configuration chooses
-its server names freely, so its names are never looked up.
+never falls back to the server's URL or name. A server with both a command and
+a URL has no identity, whatever its transport says: clients differ on which one
+they use (some ignore the transport), so an approved URL does not vouch for the
+command, nor an approved command for the URL. A server also has no identity
+when its launch names no registry package or could fetch or run something else:
+
+- the launcher is not a bare program name or an absolute path: `./npx`,
+  `tools/uvx` or `.\npx.cmd` runs a file of the server's working directory,
+  usually the scanned repository, and a UNC path a file on another host;
+- `node ./server.js`, a shell command line, a local path, a Git, URL or file
+  source, an npm alias (`name@npm:other`), more than one `-p`/`--package` or a
+  command that is not the package's own;
+- another registry, index, configuration file, cache or extra package
+  (`--registry`, `--userconfig`, `--index-url`, `--with`, `--pip-args`,
+  `--entrypoint`, or an option the parser does not know);
+- a working directory or environment file (`cwd`, `workingDirectory`,
+  `envFile`, `env_file`): the record keeps only those field names, as
+  `launch_context`;
+- an environment variable in a launcher, package manager, interpreter or
+  container namespace (`npm_*`, `NODE_*`, `BUN_*`, `YARN_*`, `PNPM_*`,
+  `COREPACK_*`, `UV_*`, `PIP_*`, `PIPX_*`, `PYTHON*`, `DOCKER_*`,
+  `CONTAINER(S)_*`, `PODMAN_*`, `REGISTRY_*`), or one that changes where
+  programs and configuration are found or how they load (`PATH`, `PATHEXT`,
+  `HOME`, `USERPROFILE`, `APPDATA`, `LOCALAPPDATA`, `PROGRAMDATA`, `XDG_*`,
+  `TMPDIR`, `TEMP`, `TMP`, `LD_*`, `DYLD_*`, `COMSPEC`, `SHELL`, `BASH_ENV`,
+  `ENV`, `SSL_*`, `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE`). `NODE_ENV`,
+  `PYTHONUNBUFFERED`, `PYTHONIOENCODING`, `PYTHONDONTWRITEBYTECODE` and
+  `PYTHONUTF8` change neither, and credentials such as `GITHUB_TOKEN` are not
+  in these namespaces;
+- a `docker run` or `podman run` mount, working directory or environment file
+  (`-v`, `--volume`, `--mount`, `--volumes-from`, `-w`, `--workdir`,
+  `--env-file`), or `-e`/`--env` setting one of the variables above inside the
+  container (`-e NODE_OPTIONS=...`, `-e PYTHONPATH=...`, `-e LD_PRELOAD=...`).
+  Containerized servers that mount a data directory are therefore unidentified
+  too: a mount can replace the code the image runs, and which paths hold code
+  cannot be told from the configuration;
+- a `cmd /c` command line, or the arguments of a batch file (`npx.cmd`), that
+  holds an operator, quote or a `%VAR%` or `!VAR!` reference: cmd.exe expands
+  variables before it reads operators, so a variable can hold `& command`.
+
+So does a URL that is templated, carries user information (redacted when the
+configuration is parsed, and able to name another host to the client:
+`https://evil.example\@host/` reaches `evil.example`) or does not parse, and a
+manifest package or remote that cannot be compared. Files the launcher reads
+from the directory a client starts it in are not read: a repository's
+`.npmrc`, `bunfig.toml`, `.yarnrc.yml`, `uv.toml` or `pip.conf` can name
+another registry for a launch that is still identified, and on Windows a
+launcher named without a path is also looked up in that directory. A manifest
+without an identity is still looked up by its own `name`, which gives
+provenance hints (`match: name`) and never counts as listed in an approved
+registry; a client configuration chooses its server names freely, so its names
+are never looked up.
 
 An identified or named server gets `registry`: one entry per registry that
 lists it, sorted by registry id, with `registry`, `name`, `namespace`, `match`
@@ -770,7 +807,12 @@ approved MCP catalog. When at least one is configured and every approved registr
 approved registry lists by their identity, or lists only as deleted, and every
 enabled server without an identity: an allowlist cannot vouch for what it
 cannot identify. Scoring then adds the governance factor
-`mcp-not-in-approved-registry` (15; see [risk](../concepts/risk.md)). A server
+`mcp-not-in-approved-registry` (15; see [risk](../concepts/risk.md)). "Lists
+only as deleted" reads the version the server is matched to: the latest
+version when it lists the server's package (its pinned version, when the
+launch pins one) or URL, otherwise the newest version that does. A package or
+URL several catalog names list counts as listed only when one of those names
+lists it so, other than as deleted; versions that do not carry it never count. A server
 whose pinned version the catalog does not list still counts as listed and is
 tagged `mcp-registry-version-unpublished`. A catalog package listed with a
 `registryBaseUrl` other than its type's public registry (npm

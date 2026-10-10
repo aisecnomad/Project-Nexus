@@ -231,6 +231,13 @@ class ConnectorContext:
             self.stats.incomplete = True
         self._diagnostic(msg, warning=False)
 
+    def diagnostics_recorded(self) -> int:
+        """Warnings and errors recorded so far, including those past the report's diagnostic limit.
+
+        A step whose count is unchanged recorded no coverage gap, warning or error.
+        """
+        return sum(self._diagnostic_counts.values())
+
     def _diagnostic(self, msg: str, *, warning: bool) -> None:
         channel = "warnings" if warning else "errors"
         count = self._diagnostic_counts.get(channel, 0) + 1

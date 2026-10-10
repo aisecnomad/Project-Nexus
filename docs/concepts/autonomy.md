@@ -283,20 +283,28 @@ read from `metadata.autonomy`, and counts toward `danger_score`. See
 ## Merged reports
 
 `shadowscan merge` classifies each merged finding again from its merged
-capabilities, tags, evidence and metadata, then widens the interval so it
-admits at least what every source's block admits: the highest floor and the
-highest ceiling, oversight `bypassed` over `unknown` over `gated`, and
-initiation `schedule` over `event` over `unknown` over `human`. A widened bound
-keeps the basis rules of the source block that set it. Approval-bypass evidence
-that only a later source recorded therefore raises the merged interval, and an
-approval gate that only one source recorded cannot lower it below another
-source's block. The first declared level is kept while the merged finding is
-registered (some source matched it to its inventory and no source found it
-unregistered; a source scanned without an inventory does not count either
-way) and is compared with the merged interval
-again (`autonomy-understated`, `declared-above-ceiling`); a merged finding that
-any source left unregistered carries no declared level. Risk keeps the highest
-source score and is not rescored. A source whose autonomy block is malformed
+capabilities, tags, evidence and metadata, together with the widest oversight
+and initiation any source's block records, so the combination rules apply
+across sources: approval bypassed in one source, a side-effecting capability
+and a schedule trigger recorded by another give floor L5
+(`unapproved-side-effects`, `self-initiated`), as they would in one scan. It
+then widens the interval so it admits at least what every source's block
+admits: the highest floor and the highest ceiling, oversight `bypassed` over
+`unknown` over `gated`, and initiation `schedule` over `event` over `unknown`
+over `human`. A widened bound keeps the basis rules of the source block that
+set it. Approval-bypass evidence that only a later source recorded therefore
+raises the merged interval, and an approval gate that only one source recorded
+cannot lower it below another source's block. A declared level applies only
+while the merged finding is registered (sources with an inventory matched it
+to one agent and none found it unregistered; see
+[fleet merge](../scanning.md#fleet-merge)). The lowest level any source
+declares for that agent is kept, whatever the order of the sources, and is
+compared with the merged interval again (`autonomy-understated`,
+`declared-above-ceiling`). A merged finding that a source left unregistered,
+or that sources matched to different agents (ambiguous), carries no declared
+level. Risk keeps the highest source score and is not rescored, so its factors
+can still include `tag:autonomy-understated` from a source whose own match
+was registered. A source whose autonomy block is malformed
 is rejected ("rescan before merging"). Findings from reports written before
 this field existed are classified from the merged finding alone.
 

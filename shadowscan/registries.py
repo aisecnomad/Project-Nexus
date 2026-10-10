@@ -44,17 +44,19 @@ The engine then, keyed only on this metadata:
 * for registries the operator lists in ``options.trusted_registries`` (exact registry identity,
   never by type), turns approved records into exact-resource inventory approvals for that run
   (:class:`TrustedApprovals`). Nothing is cached: a revoked approval stops applying on the next
-  scan.
+  scan. Records replayed from an offline export (a connector run with ``input``) still
+  reconcile, but approve only for an entry that sets ``allow_offline_records``: the engine, not
+  the connector, records which findings came from an export.
 """
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 from typing import Any
 
 from shadowscan.models import Evidence, Finding, Kind
-from shadowscan.registry import InventoryEntry, clear_match_state, literal_resource_pattern
+from shadowscan.registry import InventoryEntry, literal_resource_pattern
 from shadowscan.utils.redaction import REDACTED, sanitize_text
 
 RECORD_SCHEMA = "shadowscan.registry-record/v1"
@@ -80,10 +82,22 @@ RECORD_STATUSES = (
     "blocked",
     "unknown",
 )
+# Statuses under which a record registers what it binds: the registry lists the agent as
+# approved, registered or awaiting approval. A draft, rejected, deprecated, blocked or unknown
+# record is not a registration, so it never makes an observed finding registered.
+REGISTERING_STATUSES = frozenset({"approved", "registered", "pending"})
 APPROVAL_MODES = ("auto", "manual", "none", "unknown")
 LISTING_SCOPES = ("registry", "caller")
 # Records of a deprecated source never approve, so the source cannot be trusted.
 UNTRUSTABLE_REGISTRY_TYPES = frozenset({"entra-agent-registry"})
+# The resource types of the observed findings a registry type's records can bind. A registry
+# can list only these, so only these are reported absent from it (``observed-not-registered``):
+# an AWS registry binds AgentCore runtimes and gateways, never a Bedrock agent in the same
+# account. A registry type without an entry may bind any reconciled kind.
+BINDABLE_RESOURCE_TYPES: dict[str, frozenset[str]] = {
+    "aws-agent-registry": frozenset({"agentcore-runtime", "agentcore-gateway"}),
+    "aws-agentcore-registry": frozenset({"agentcore-runtime", "agentcore-gateway"}),
+}
 DESCRIPTOR_TYPES = ("agent", "mcp", "a2a", "custom", "agent-skills", "package")
 COVERAGE_VALUES = ("in-scope", "out-of-scope", "unknown")
 RECONCILIATION_STATUSES = (
@@ -290,17 +304,26 @@ def _references(references: set[tuple[str, str]]) -> list[dict[str, str]]:
     return [{"registry": registry, "registry_id": rid} for registry, rid in sorted(references)[:MAX_LINKS]]
 
 
+def _bindable(registry: str, finding: Finding) -> bool:
+    """Whether records of the registry type could bind ``finding``, so its absence means something."""
+    types = BINDABLE_RESOURCE_TYPES.get(registry)
+    return types is None or finding.resource_type in types
+
+
 def reconcile_registries(findings: Sequence[Finding]) -> list[str]:
     """Write ``metadata["registry_reconciliation"]`` from registry records; return warnings.
 
-    Observed findings are those without a registry record. A record whose usable binding
-    matches an observed finding exactly is ``registered-and-observed``, and so is that
-    finding. A record is ``registered-not-observed`` only when every usable binding was
-    in scope of the emitting connector's collection and none matched; otherwise it is
-    ``not-comparable``. An unmatched observed agent, workflow, bot or MCP server in a
-    registry's provider and account scope is ``observed-not-registered`` only when every
-    record of that registry says its listing was complete; a match in any registry wins.
-    The pass removes earlier values first, so it can run again on the same findings.
+    Observed findings are those without a registry record. A record whose status is in
+    :data:`REGISTERING_STATUSES` and whose usable binding matches an observed finding exactly
+    is ``registered-and-observed``, and so is that finding. Such a record is
+    ``registered-not-observed`` only when every usable binding was in scope of the emitting
+    connector's collection and none matched; otherwise it is ``not-comparable``. A record of any
+    other status registers nothing: it is ``not-comparable`` (``reason: record-status``) and
+    the findings it binds count as unregistered. An unmatched observed agent, workflow, bot or
+    MCP server in a registry's provider and account scope, of a resource type the registry can
+    bind (:data:`BINDABLE_RESOURCE_TYPES`), is ``observed-not-registered`` only when every
+    record of that registry says its listing was complete; a match in any registry wins. The
+    pass removes earlier values first, so it can run again on the same findings.
     """
     for finding in findings:
         finding.metadata.pop(RECONCILIATION_KEY, None)
@@ -316,6 +339,19 @@ def reconcile_registries(findings: Sequence[Finding]) -> list[str]:
     complete: dict[tuple[str, str], bool] = {}
     for record_finding, record in records:
         usable = [binding for binding in record.bindings if binding.usable]
+        if record.identified:
+            # Every record of a registry, whatever its status, shows what its listing covers.
+            complete[record.key] = complete.get(record.key, True) and record.listing_complete
+            pairs = scopes.setdefault(record.key, set())
+            pairs.update((b.provider, b.account) for b in usable if b.provider and b.account)
+        if record.status not in REGISTERING_STATUSES:
+            # A draft, rejected, deprecated, blocked or unknown record registers nothing.
+            record_finding.metadata[RECONCILIATION_KEY] = {
+                "status": "not-comparable",
+                "observed": [],
+                "reason": "record-status",
+            }
+            continue
         hits: dict[int, Finding] = {}
         unmatched_in_scope = 0
         for binding in usable:
@@ -335,10 +371,6 @@ def reconcile_registries(findings: Sequence[Finding]) -> list[str]:
             reason = "binding-not-in-scope" if usable else "no-usable-binding"
             block = {"status": "not-comparable", "observed": [], "reason": reason}
         record_finding.metadata[RECONCILIATION_KEY] = block
-        if record.identified:
-            complete[record.key] = complete.get(record.key, True) and record.listing_complete
-            pairs = scopes.setdefault(record.key, set())
-            pairs.update((b.provider, b.account) for b in usable if b.provider and b.account)
     for finding in observed:
         key = id(finding)
         if key in matched_records:
@@ -357,7 +389,9 @@ def reconcile_registries(findings: Sequence[Finding]) -> list[str]:
             continue
         scope = (finding.provider, finding.account)
         absent_from = {
-            registry for registry, pairs in scopes.items() if complete[registry] and scope in pairs
+            registry
+            for registry, pairs in scopes.items()
+            if complete[registry] and scope in pairs and _bindable(registry[0], finding)
         }
         if absent_from:
             finding.metadata[RECONCILIATION_KEY] = {
@@ -386,14 +420,18 @@ class TrustedRegistry:
 
     ``allow_auto_approved`` also accepts approved records of a registry that approves every
     record without a person (``approval_mode: auto``); ``allow_registered_only`` also accepts
-    ``registered`` records of a registry without an approval workflow. Both default to false:
-    neither kind of record shows that a person reviewed the agent.
+    ``registered`` records (of a registry without an approval workflow, or that no approval was
+    requested for). Both default to false: neither kind of record shows that a person reviewed
+    the agent. ``allow_offline_records`` also accepts records replayed from an offline export (a
+    connector's ``input``); it defaults to false because an export is untrusted input that anyone
+    who can write it can forge.
     """
 
     registry: str
     id: str
     allow_auto_approved: bool = False
     allow_registered_only: bool = False
+    allow_offline_records: bool = False
 
 
 def shown_registry_id(registry_id: str) -> str:
@@ -409,26 +447,39 @@ class TrustedApprovals:
     deleted record stops approving on the next scan. Only a record whose registry type and exact
     id are trusted approves anything, and only when its status is ``approved`` with
     ``approval_mode: manual`` (any other approval mode only if the trusted entry sets
-    ``allow_auto_approved``) or ``registered`` with ``allow_registered_only`` set. Records of
+    ``allow_auto_approved``) or ``registered`` with ``allow_registered_only`` set. A record
+    finding whose id is in ``offline`` (the engine's list of records replayed from an offline
+    export) approves only if the entry sets ``allow_offline_records``. Records of
     :data:`UNTRUSTABLE_REGISTRY_TYPES` never approve:
 
-    * the record finding itself is registered as ``<registry>:<record_id>``; and
+    * the record finding itself gets an inventory entry ``<registry>:<record_id>`` for exactly
+      its resource, provider, account and region, offered to that finding alone; and
     * each usable binding becomes an inventory entry for exactly that resource (glob
-      metacharacters escaped) and the binding's provider, account and region, matched together
-      with the loaded inventory, so all of its fail-closed rules still apply. Entries of one
-      record count as one approval there.
+      metacharacters escaped) and the binding's provider, account and region.
+
+    :meth:`candidates` offers these entries to :meth:`Inventory.match`, which matches them
+    together with the loaded inventory, so all of its fail-closed rules apply and a card that
+    approves the same finding, record finding included, makes the approval ambiguous. Entries
+    of one record count as one approval there.
 
     ``entries`` counts the approved records, one inventory item each, whatever their bindings.
     """
 
-    def __init__(self, findings: Sequence[Finding], trusted: Sequence[TrustedRegistry]) -> None:
+    def __init__(
+        self,
+        findings: Sequence[Finding],
+        trusted: Sequence[TrustedRegistry],
+        *,
+        offline: Collection[str] = frozenset(),
+    ) -> None:
         policies = {
             (item.registry, item.id): item
             for item in trusted
             if item.registry not in UNTRUSTABLE_REGISTRY_TYPES
         }
         self._trusted = list(trusted)
-        self._approved: dict[int, RegistryRecord] = {}
+        # The entry that registers an approved record finding, keyed by that finding object.
+        self._own: dict[int, InventoryEntry] = {}
         self._by_resource: dict[str, list[InventoryEntry]] = {}
         self._produced: set[tuple[str, str]] = set()
         self._withheld: dict[tuple[str, str], dict[str, int]] = {}
@@ -441,13 +492,20 @@ class TrustedApprovals:
                 continue
             self._produced.add(record.key)
             withheld = _withheld_reason(record, policy)
+            approves = withheld is None and _approves(record, policy) and _usable(record.record_id)
+            if approves and finding.id in offline and not policy.allow_offline_records:
+                # An export is untrusted input: a forged line must not sanction a resource.
+                withheld = OFFLINE_WITHHELD
             if withheld:
                 counts = self._withheld.setdefault(record.key, {})
                 counts[withheld] = counts.get(withheld, 0) + 1
                 continue
-            if not _approves(record, policy) or not _usable(record.record_id):
+            if not approves:
                 continue
-            self._approved[id(finding)] = record
+            if finding.resource.strip():
+                self._own[id(finding)] = _entry(
+                    record, finding.resource, finding.provider, finding.account, finding.region
+                )
             approved.add((record.agent_id, record.registry_id))
             for binding in record.bindings:
                 identity = (
@@ -462,33 +520,17 @@ class TrustedApprovals:
                     continue
                 seen.add(identity)
                 self._by_resource.setdefault(binding.resource, []).append(
-                    InventoryEntry(
-                        agent_id=record.agent_id,
-                        owner=record.publisher,
-                        resources=[literal_resource_pattern(binding.resource)],
-                        providers=[binding.provider] if binding.provider else [],
-                        accounts=[binding.account] if binding.account else [],
-                        regions=[binding.region] if binding.region else [],
-                        source=TRUSTED_SOURCE_PREFIX + record.registry_id,
-                    )
+                    _entry(record, binding.resource, binding.provider, binding.account, binding.region)
                 )
         self.entries = len(approved)
 
-    def approve_record(self, finding: Finding) -> bool:
-        """Register an approved record finding of a trusted registry; False for any other finding."""
-        record = self._approved.get(id(finding))
-        if record is None:
-            return False
-        clear_match_state(finding)
-        finding.registry_match = record.agent_id
-        finding.shadow = False
-        if not finding.owner and record.publisher:
-            finding.owner = record.publisher
-        return True
-
     def candidates(self, finding: Finding) -> list[InventoryEntry]:
-        """Entries whose literal resource equals the finding's; the inventory checks everything else."""
-        return self._by_resource.get(finding.resource, [])
+        """Entries whose literal resource equals the finding's; the inventory checks everything else.
+
+        An approved record finding also gets the entry that registers it, and no other finding does.
+        """
+        own = self._own.get(id(finding))
+        return [*self._by_resource.get(finding.resource, []), *([own] if own is not None else [])]
 
     def warnings(self) -> list[str]:
         """Advisory notices: trusted registries without records, and records withheld by policy."""
@@ -505,6 +547,26 @@ class TrustedApprovals:
                     "record(s) were not treated as sanctioned"
                 )
         return notices
+
+
+def _entry(
+    record: RegistryRecord, resource: str, provider: str | None, account: str | None, region: str | None
+) -> InventoryEntry:
+    """An approval of exactly ``resource`` (glob metacharacters escaped) in the given scope."""
+    return InventoryEntry(
+        agent_id=record.agent_id,
+        owner=record.publisher,
+        resources=[literal_resource_pattern(resource)],
+        # A blank value adds no constraint (an entry cannot hold one); the inventory refuses blank
+        # resources and redacted identities itself.
+        providers=[provider] if provider and provider.strip() else [],
+        accounts=[account] if account and account.strip() else [],
+        regions=[region] if region and region.strip() else [],
+        source=TRUSTED_SOURCE_PREFIX + record.registry_id,
+    )
+
+
+OFFLINE_WITHHELD = "offline-replayed (set allow_offline_records to accept them)"
 
 
 def _withheld_reason(record: RegistryRecord, policy: TrustedRegistry) -> str | None:

@@ -185,7 +185,19 @@ def test_agent_registry_fixture(run_connector, fixtures):
         ({"requestStatus": "Rejected"}, "rejected"),
         ({"availableTo": "none"}, "draft"),
         ({"availableTo": "allowedForNone"}, "draft"),
-        ({"availableTo": "all", "requestStatus": None}, "approved"),
+        # Without a request no person is known to have approved an organization's own package.
+        ({"availableTo": "all", "requestStatus": None}, "registered"),
+        ({"type": "shared", "requestStatus": None}, "registered"),
+        ({"type": "LOB", "requestStatus": None}, "registered"),
+        ({"type": "external", "requestStatus": None}, "approved"),
+        ({"type": "microsoft", "requestStatus": None}, "approved"),
+        ({"type": "shared", "requestStatus": "approved"}, "approved"),
+        # Without its details a package's request status is unknown, so it is never approved.
+        ({"_detail": "unavailable", "requestStatus": None}, "unknown"),
+        ({"_detail": "limit", "type": "external", "requestStatus": None}, "unknown"),
+        ({"_detail": "unavailable"}, "unknown"),
+        ({"_detail": "limit", "isBlocked": True}, "blocked"),
+        ({"_detail": "observed", "requestStatus": None, "type": "external"}, "approved"),
         ({"availableTo": "AllowedForSome"}, "approved"),
         ({"availableTo": "some"}, "approved"),
         ({"isBlocked": None}, "unknown"),
@@ -345,7 +357,12 @@ def test_caller_scoped_listing_is_never_complete(tmp_path, run_connector):
     }
     package = _package(appId="app-1", agentIdentityId="ai-1")
     findings, ctx = _offline(tmp_path, run_connector, [marker, package, identity], tenant_id=TENANT)
-    assert not ctx.stats.incomplete
+    # A replayed caller-scoped listing is one user's view: the scan must not look complete.
+    _assert_incomplete(ctx, findings)
+    assert [w for w in ctx.stats.warnings if "caller-scoped" in w] == [
+        "identity.entra: exported agent listings were caller-scoped (one user's view); agent registry "
+        "coverage incomplete"
+    ]
     finding = _by_resource(findings)["entra:copilot-package:P_1"]
     record = registry_record(finding)
     assert record is not None and record.listing_scope == "caller" and not record.listing_complete
@@ -447,6 +464,8 @@ def test_coverage_marker_alone_is_a_clean_export(tmp_path, run_connector):
         {"_kind": "agentCardManifest", "id": "c-1", "defaultInputModes": [1]},
         {**COMPLETE_MARKER, "packages": "maybe"},
         {**COMPLETE_MARKER, "listingScope": "tenant"},
+        {**COMPLETE_MARKER, "tenantId": ""},
+        {**COMPLETE_MARKER, "tenantId": 5},
     ],
 )
 def test_malformed_agent_records_keep_neighbors_and_close_the_listing(tmp_path, run_connector, record):
@@ -498,8 +517,15 @@ def test_conflicting_deprecated_records_are_unresolved(tmp_path, run_connector):
 
 
 # ------------------------------------------------------------------ engine: trust and reconciliation
-def _scan(index, source, *, trusted=True, allow_auto_approved=False, **config):
-    entry = {"registry": "microsoft-agent-365", "id": TENANT, "allow_auto_approved": allow_auto_approved}
+def _scan(index, source, *, trusted=True, allow_auto_approved=False, allow_registered_only=False, **config):
+    entry = {
+        "registry": "microsoft-agent-365",
+        "id": TENANT,
+        "allow_auto_approved": allow_auto_approved,
+        # The source is an offline export, whose records approve only for an entry that opts in.
+        "allow_offline_records": True,
+        "allow_registered_only": allow_registered_only,
+    }
     options = {"trusted_registries": [entry]} if trusted else {}
     cfg = ScanConfig.from_dict(
         {
@@ -597,6 +623,46 @@ def test_vendor_packages_never_approve_tenant_objects(index, tmp_path, package_t
         for resource in ("entra:app:app-tenant", "entra:sp:sp-priv"):
             assert by[resource].shadow is True and by[resource].registry_match is None
             assert "registry_bound" not in by[resource].metadata
+
+
+@pytest.mark.parametrize("package_type", ["shared", "custom", "lob"])
+def test_org_packages_without_a_request_are_registered_not_approved(index, tmp_path, package_type):
+    # A package a user shared (or one published without a request) was approved by no one: it is
+    # registered, so allow_auto_approved does not accept it and only allow_registered_only does.
+    identity = {
+        "_kind": "agentIdentity",
+        "id": "ai-1",
+        "displayName": "Helper",
+        "agentIdentityBlueprintId": "bp",
+    }
+    package = _package(
+        "P_org", type=package_type, requestStatus=None, appId="app-tenant", agentIdentityId="ai-1"
+    )
+    source = tmp_path / "entra.json"
+    source.write_text(json.dumps([COMPLETE_MARKER, *_TENANT_APP, identity, package]), encoding="utf-8")
+    approved = "microsoft-agent-365:P_org"
+    for auto, registered, expected in ((True, False, None), (False, True, approved)):
+        result = _scan(index, source, allow_auto_approved=auto, allow_registered_only=registered)
+        assert result.complete
+        by = _by_resource(result.findings)
+        record = registry_record(by["entra:copilot-package:P_org"])
+        assert record is not None and (record.status, record.approval_mode) == ("registered", "unknown")
+        for resource in ("entra:copilot-package:P_org", "entra:app:app-tenant", "entra:sp:ai-1"):
+            assert by[resource].registry_match == expected, (auto, registered, resource)
+        assert by["entra:sp:sp-priv"].registry_match is None
+
+
+def test_rejected_records_leave_binding_coverage_unknown(index, tmp_path):
+    # The app registration the package names is in the export but malformed: it was rejected, so
+    # the package must not be reported registered-not-observed for an object that was there.
+    malformed_app = {"_kind": "application", "id": "reg-1", "appId": "app-1", "tags": "not-a-list"}
+    source = tmp_path / "entra.json"
+    source.write_text(json.dumps([COMPLETE_MARKER, malformed_app, _package(appId="app-1")]), encoding="utf-8")
+    result = _scan(index, source, trusted=False)
+    assert not result.complete
+    package = _by_resource(result.findings)["entra:copilot-package:P_1"]
+    assert [b["coverage"] for b in _record(package)["bindings"]] == ["unknown"]
+    assert package.metadata["registry_reconciliation"]["status"] == "not-comparable"
 
 
 def test_vendor_package_binds_a_listed_agent_identity(tmp_path, run_connector):
@@ -899,12 +965,15 @@ def test_unusable_package_detail_keeps_the_listed_package(index, detail, warning
     assert warning in " ".join(ctx.stats.warnings)
     [package] = findings
     assert package.metadata["package_detail"] == "unavailable"
-    assert _record(package)["listing_complete"] is False and _record(package)["status"] == "approved"
+    # The request status is read from the details: without them nothing is approved or bound.
+    record = _record(package)
+    assert record["listing_complete"] is False and record["status"] == "unknown"
+    assert record["bindings"] == [] and record["approval_mode"] == "unknown"
 
 
 def test_package_detail_cap_is_incomplete(index):
-    second = {**_LISTED, "id": "P_2"}
-    third = {**_LISTED, "id": "P_3"}
+    second = {**_LISTED, "id": "P_2", "appId": "app-2"}
+    third = {**_LISTED, "id": "P_3", "type": "external"}
     graph = _registry_graph(pages={LISTING: [_LISTED, second, third]})
     connector, ctx = _live(index, graph, include_agent_registry=True, max_package_lookups=1)
     findings = connector.run()
@@ -912,6 +981,32 @@ def test_package_detail_cap_is_incomplete(index):
     assert graph.fetched == [f"{LISTING}/P_1"]
     assert sum("max_package_lookups reached" in w for w in ctx.stats.warnings) == 1
     assert {f.metadata["package_detail"] for f in findings} == {"observed", "limit"}
+    statuses = {f.resource: (_record(f)["status"], _record(f)["bindings"]) for f in findings}
+    assert statuses["entra:copilot-package:P_2"] == ("unknown", [])
+    assert statuses["entra:copilot-package:P_3"] == ("unknown", [])
+
+
+@pytest.mark.parametrize("detail", ["unavailable", "limit"])
+def test_packages_without_details_never_approve_what_they_name(index, tmp_path, detail):
+    # Only the details carry requestStatus: a listed package whose details are missing might have
+    # a pending request, so even allow_auto_approved must not approve it or a tenant app it names.
+    identity = {
+        "_kind": "agentIdentity",
+        "id": "ai-1",
+        "displayName": "Helper",
+        "agentIdentityBlueprintId": "bp",
+    }
+    package = _package(_detail=detail, requestStatus=None, appId="app-tenant", agentIdentityId="ai-1")
+    source = tmp_path / "entra.json"
+    source.write_text(json.dumps([COMPLETE_MARKER, *_TENANT_APP, identity, package]), encoding="utf-8")
+    result = _scan(index, source, allow_auto_approved=True, allow_registered_only=True)
+    assert not result.complete
+    by = _by_resource(result.findings)
+    record = registry_record(by["entra:copilot-package:P_1"])
+    assert record is not None and record.status == "unknown" and record.bindings == ()
+    for resource in ("entra:copilot-package:P_1", "entra:app:app-tenant", "entra:sp:ai-1"):
+        assert by[resource].shadow is True and by[resource].registry_match is None
+    assert "registry_bound" not in by["entra:app:app-tenant"].metadata
 
 
 def test_listed_package_without_an_id_is_incomplete(index):
@@ -942,8 +1037,20 @@ def test_agent_registry_export_round_trip(index, tmp_path, run_connector):
 
 
 # ------------------------------------------------------------------ delegated auth
+DELEGATED_WARNING = (
+    "identity.entra: auth_mode delegated lists only the agent identities and packages the signed-in user "
+    "can see; agent registry coverage incomplete"
+)
+USER_TOKEN_WARNING = (
+    "identity.entra: the access_token is not a decodable app-only token, so agent listings show only "
+    "what its user can see; agent registry coverage incomplete (use auth_mode: delegated for a "
+    "signed-in user's token)"
+)
+
+
 def _token(**claims):
     payload = {
+        "aud": "https://graph.microsoft.com",
         "tid": TENANT,
         "scp": "CopilotPackages.Read.All Application.Read.All",
         "exp": int(time.time()) + 3600,
@@ -994,7 +1101,9 @@ def test_delegated_token_comes_only_from_the_named_environment_variable(monkeypa
         include_agent_identities=True,
     )
     findings = EntraConnector(ctx).run()
-    assert not ctx.stats.incomplete, ctx.stats.warnings
+    # The only diagnostic: a delegated listing is one user's view, so the scan is incomplete.
+    assert ctx.stats.warnings == [DELEGATED_WARNING] and not ctx.stats.errors
+    _assert_incomplete(ctx, findings)
     assert responses.calls and all(call.request.method == "GET" for call in responses.calls)
     assert {call.request.headers["Authorization"] for call in responses.calls} == {f"Bearer {token}"}
     assert not any("login.microsoftonline.com" in call.request.url for call in responses.calls)
@@ -1015,6 +1124,139 @@ def test_delegated_token_expiring_mid_scan_is_incomplete(monkeypatch, index):
     _assert_incomplete(ctx, findings)
     assert "HTTP 401" in " ".join(ctx.stats.warnings)
     assert [f.resource for f in findings] == ["entra:copilot-package:P_1"]
+
+
+@responses.activate
+@pytest.mark.parametrize(
+    "collections",
+    [
+        {"include_agent_registry": True},
+        {"include_agent_identities": True},
+        {"include_agent_registry": True, "include_agent_identities": True},
+    ],
+)
+def test_empty_delegated_listing_is_incomplete_not_empty(monkeypatch, index, collections):
+    # The signed-in user sees no package and no agent identity. That is one user's view of the
+    # tenant, not an empty registry: the scan must exit 3, with one fixed warning.
+    monkeypatch.setenv("GRAPH_DELEGATED_TOKEN", _token())
+    for path in ("/servicePrincipals", "/oauth2PermissionGrants", "/applications", COPILOT_PACKAGES):
+        responses.get(GRAPH + path, json={"value": []})
+    responses.get(AGENT_IDENTITIES, json={"value": []})
+    cfg = ScanConfig.from_dict(
+        {
+            "connectors": [
+                {"name": "identity.entra", "tenant_id": TENANT, "auth_mode": "delegated", **collections}
+            ]
+        }
+    )
+    result = Engine(cfg, index).run()
+    assert result.findings == [] and not result.complete
+    assert _exit_code(result, None) == 3
+    [stats] = [s for s in result.stats if s.connector == "identity.entra"]
+    assert stats.warnings == [DELEGATED_WARNING] and not stats.errors
+
+
+@responses.activate
+def test_delegated_scan_without_agent_collections_has_no_caller_scope_warning(monkeypatch, index):
+    monkeypatch.setenv("GRAPH_DELEGATED_TOKEN", _token())
+    for path in ("/servicePrincipals", "/oauth2PermissionGrants", "/applications"):
+        responses.get(GRAPH + path, json={"value": []})
+    ctx = _context(index, tenant_id=TENANT, auth_mode="delegated")
+    assert EntraConnector(ctx).run() == []
+    assert not ctx.stats.incomplete and not ctx.stats.warnings
+
+
+@responses.activate
+@pytest.mark.parametrize(
+    "claims",
+    [
+        # What `az account get-access-token --resource-type ms-graph` gives a signed-in user.
+        {"idtyp": "user"},
+        {"idtyp": None},
+        {"idtyp": "app"},
+        {"scp": None, "idtyp": None, "roles": ["CopilotPackages.Read.All"]},
+        {"scp": None, "idtyp": "user", "roles": ["CopilotPackages.Read.All"]},
+    ],
+)
+def test_user_token_as_app_only_access_token_is_caller_scoped(monkeypatch, index, claims):
+    # Only a token that shows it is app-only (idtyp app, no scp) lists the whole registry.
+    token = _token(**claims)
+    monkeypatch.setenv("GRAPH_ACCESS_TOKEN", token)
+    _mock_graph()
+    ctx = _context(index, tenant_id=TENANT, include_agent_registry=True, include_agent_identities=True)
+    connector = EntraConnector(ctx)
+    records = list(connector.collect())
+    findings = list(connector.analyze(records))
+    _assert_incomplete(ctx, findings)
+    assert ctx.stats.warnings == [USER_TOKEN_WARNING]
+    assert records[-1]["listingScope"] == "caller"
+    record = _record(_by_resource(findings)["entra:copilot-package:P_1"])
+    assert record["listing_scope"] == "caller" and record["listing_complete"] is False
+    assert [(b["resource"], b["coverage"]) for b in record["bindings"]] == [
+        ("entra:sp:ai-1", "unknown"),
+        ("entra:app:app-1", "unknown"),
+    ]
+    diagnostics = " ".join([*ctx.stats.errors, *ctx.stats.warnings])
+    assert all(segment not in diagnostics for segment in token.split("."))
+
+
+@responses.activate
+def test_undecodable_access_token_without_tenant_is_caller_scoped(monkeypatch, index):
+    # Without tenant_id the tenant is not checked, but an opaque token cannot show it is app-only.
+    monkeypatch.delenv("AZURE_TENANT_ID", raising=False)
+    monkeypatch.setenv("GRAPH_ACCESS_TOKEN", "opaque-app-only-value")
+    _mock_graph()
+    ctx = _context(index, include_agent_identities=True)
+    findings = EntraConnector(ctx).run()
+    _assert_incomplete(ctx, findings)
+    assert ctx.stats.warnings == [USER_TOKEN_WARNING]
+
+
+@responses.activate
+@pytest.mark.parametrize(
+    "mode,claims",
+    [
+        ("delegated", {"aud": "https://management.azure.com/"}),
+        ("delegated", {"aud": "https://graph.microsoft.com.evil.example"}),
+        ("delegated", {"aud": None}),
+        ("delegated", {"aud": ["https://graph.microsoft.com"]}),
+        ("app-only", {"aud": "https://vault.azure.net", "scp": None, "idtyp": "app"}),
+        ("app-only", {"aud": None, "scp": None, "idtyp": "app"}),
+    ],
+)
+def test_tokens_for_another_resource_are_refused_before_any_request(monkeypatch, index, mode, claims):
+    # A same-tenant token issued for another API must not be sent to Microsoft Graph.
+    token = _token(**claims)
+    if mode == "delegated":
+        monkeypatch.setenv("GRAPH_DELEGATED_TOKEN", token)
+        config = {"auth_mode": "delegated", "include_agent_registry": True}
+        label = "the delegated token"
+    else:
+        monkeypatch.setenv("GRAPH_ACCESS_TOKEN", token)
+        config = {"include_agent_registry": True}
+        label = "the access_token"
+    ctx = _context(index, tenant_id=TENANT, **config)
+    findings = EntraConnector(ctx).run()
+    assert findings == [] and ctx.stats.skipped
+    _assert_incomplete(ctx, findings)
+    assert ctx.stats.skip_reason == f"identity.entra: {label} is not a Microsoft Graph token (aud)"
+    diagnostics = " ".join([ctx.stats.skip_reason, *ctx.stats.errors, *ctx.stats.warnings])
+    assert all(segment not in diagnostics for segment in token.split("."))
+    assert len(responses.calls) == 0
+
+
+@responses.activate
+@pytest.mark.parametrize(
+    "audience",
+    ["https://graph.microsoft.com", "https://graph.microsoft.com/", "00000003-0000-0000-c000-000000000000"],
+)
+def test_graph_token_audiences_are_accepted(monkeypatch, index, audience):
+    monkeypatch.setenv("GRAPH_DELEGATED_TOKEN", _token(aud=audience))
+    _mock_graph()
+    ctx = _context(index, tenant_id=TENANT, auth_mode="delegated", include_agent_registry=True)
+    findings = EntraConnector(ctx).run()
+    assert not ctx.stats.skipped and ctx.stats.warnings == [DELEGATED_WARNING]
+    assert "entra:copilot-package:P_1" in _by_resource(findings)
 
 
 @responses.activate
@@ -1099,10 +1341,92 @@ def test_pre_issued_token_tenant_is_checked_only_for_attributed_registry_records
     _mock_graph()
     ctx = _context(index, **config)
     findings = EntraConnector(ctx).run()
-    assert not ctx.stats.skipped and not ctx.stats.incomplete, ctx.stats.warnings
+    assert not ctx.stats.skipped
     records = [registry_record(f) for f in findings if "registry_record" in f.metadata]
     assert all(record is not None and record.registry_id == "" for record in records)
     assert bool(records) == bool(config.get("include_agent_registry"))
+    # An opaque token cannot show it is app-only, so its agent listings are caller-scoped.
+    collected = bool(config.get("include_agent_registry"))
+    assert ctx.stats.warnings == ([USER_TOKEN_WARNING] if collected else [])
+    assert ctx.stats.incomplete is collected
+    assert all(record is not None and record.listing_scope == "caller" for record in records)
+
+
+def _client_credentials(monkeypatch):
+    for name in ("GRAPH_ACCESS_TOKEN", "AZURE_TENANT_ID", "AZURE_CLIENT_ID", "AZURE_CLIENT_SECRET"):
+        monkeypatch.delenv(name, raising=False)
+    responses.post(
+        f"https://login.microsoftonline.com/{TENANT}/oauth2/v2.0/token", json={"access_token": "minted-value"}
+    )
+    return {"client_id": "client", "client_secret": "synthetic-client-secret-value"}
+
+
+@responses.activate
+@pytest.mark.parametrize("credential", ["access_token", "client_credentials", "delegated"])
+def test_coverage_marker_records_the_bound_tenant(monkeypatch, index, credential):
+    _mock_graph()
+    config: dict[str, Any] = {"tenant_id": TENANT, "include_agent_registry": True}
+    if credential == "access_token":
+        monkeypatch.setenv("GRAPH_ACCESS_TOKEN", _token(scp=None, idtyp="app", tid=TENANT.upper()))
+    elif credential == "client_credentials":
+        config.update(_client_credentials(monkeypatch))
+    else:
+        monkeypatch.setenv("GRAPH_DELEGATED_TOKEN", _token())
+        config["auth_mode"] = "delegated"
+    connector = EntraConnector(_context(index, **config))
+    marker = list(connector.collect())[-1]
+    assert marker["_kind"] == COVERAGE_KIND
+    # The checked tid, or the tenant whose token endpoint minted the token.
+    assert marker["tenantId"] == (TENANT.upper() if credential == "access_token" else TENANT)
+
+
+@responses.activate
+def test_bound_tenant_survives_export_and_binds_the_replay(monkeypatch, index, tmp_path, run_connector):
+    monkeypatch.setenv("GRAPH_ACCESS_TOKEN", _token(scp=None, idtyp="app"))
+    _mock_graph()
+    dump = tmp_path / "entra.jsonl"
+    ctx = _context(index, tenant_id=TENANT, include_agent_registry=True, _dump_path=str(dump))
+    EntraConnector(ctx).run()
+    assert not ctx.stats.incomplete, ctx.stats.warnings
+    exported = [json.loads(line) for line in dump.read_text(encoding="utf-8").splitlines()]
+    assert [r.get("tenantId") for r in exported if r.get("_kind") == COVERAGE_KIND] == [TENANT]
+    same, same_ctx = run_connector("identity.entra", input=str(dump), tenant_id=TENANT.upper())
+    assert not same_ctx.stats.incomplete and not same_ctx.stats.warnings
+    assert {_record(f)["registry_id"] for f in same} == {TENANT.upper()}
+    other, other_ctx = run_connector("identity.entra", input=str(dump), tenant_id="other-tenant")
+    _assert_incomplete(other_ctx, other)
+    assert other_ctx.stats.warnings == [FOREIGN_TENANT_WARNING]
+    assert {_record(f)["registry_id"] for f in other} == {""}
+
+
+FOREIGN_TENANT_WARNING = (
+    "identity.entra: the export was collected from another tenant than tenant_id; its registry records "
+    "are not attributed to tenant_id and coverage is incomplete"
+)
+
+
+def test_replay_of_another_tenants_export_never_approves(index, tmp_path):
+    # An export of tenant A replayed with tenant_id B must not let B's trusted entry approve A's
+    # packages or the objects they name.
+    marker = {**COMPLETE_MARKER, "tenantId": "tenant-a"}
+    package = _package(appId="app-tenant")
+    source = tmp_path / "entra.json"
+    source.write_text(json.dumps([marker, *_TENANT_APP, package]), encoding="utf-8")
+    result = _scan(index, source, allow_auto_approved=True, allow_registered_only=True)
+    assert not result.complete
+    [stats] = [s for s in result.stats if s.connector == "identity.entra"]
+    assert stats.warnings == [FOREIGN_TENANT_WARNING]
+    by = _by_resource(result.findings)
+    record = registry_record(by["entra:copilot-package:P_1"])
+    assert record is not None and record.registry_id == "" and not record.identified
+    assert by["entra:copilot-package:P_1"].registry_match is None
+    assert by["entra:app:app-tenant"].shadow is True and by["entra:app:app-tenant"].registry_match is None
+
+
+def test_replay_of_an_export_without_a_tenant_is_attributed_as_before(tmp_path, run_connector):
+    findings, ctx = _offline(tmp_path, run_connector, [COMPLETE_MARKER, _package()], tenant_id=TENANT)
+    assert not ctx.stats.incomplete and not ctx.stats.warnings
+    assert _record(findings[0])["registry_id"] == TENANT
 
 
 @pytest.mark.parametrize(

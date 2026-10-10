@@ -95,14 +95,24 @@ summarizes each release for people who install and operate ShadowScan.
   Shadow status now merges in three states, whatever the order of the
   sources: `true` when any source found the finding unregistered, `false` when
   a source matched it to the inventory that scan was given, and `null` when no
-  source that reported it had an inventory. A registered finding keeps the
-  first non-empty `registry_match` of a source that matched it; a shadow or
-  unassessed finding has none. The merged report carries `inventory_present`
+  source that reported it had an inventory. A shadow or unassessed finding has
+  no `registry_match`. The merged report carries `inventory_present`
   (true when any source had an inventory, even an empty one), and a source
   whose `inventory_present` is not a boolean is refused (exit 1).
   The terminal table, Markdown and HTML reports label such a finding
   `unassessed` and count them in the summary when the merged report has an
   inventory, instead of leaving a blank cell that reads as registered.
+- Registration claims need an inventory. A scan without an inventory or
+  trusted registries passed through the `shadow` and `registry_match` a
+  connector or plugin set, and `merge` then counted such a finding as
+  registered. The engine now clears that match state (`shadow` and
+  `registry_match` become `null`), and `merge` reads registration only from
+  sources whose `inventory_present` is true and treats `shadow: false` without
+  a `registry_match` as unassessed. Sources that matched a finding to
+  different agents make it ambiguous, as two matching inventory entries are in
+  one scan (`shadow: true`, `registry_match_reason:
+  ambiguous-resource-approval`, the candidates in `registry_suggestions`),
+  instead of the first source's match winning.
 - LLM triage is bounded. `options.llm_triage.budget_seconds` (default 300,
   1 to 3600) limits one triage run, and the HTTP client's retries,
   `Retry-After` waits, connection set-up and response reads stop at the same
@@ -198,8 +208,7 @@ summarizes each release for people who install and operate ShadowScan.
 - Only a built-in connector that declares the new `emits_registry_records`
   engine hook may emit records. The engine drops `registry_record` from other
   connectors' findings, including cached ones and those of a plugin that
-  declares the hook, and notes the drop in their stats. Records replayed from
-  an offline export count like live records.
+  declares the hook, and notes the drop in their stats.
 - The engine writes `metadata.registry_reconciliation`:
   `registered-and-observed` and `registered-not-observed` or `not-comparable`
   on records, and `registered-and-observed` or `observed-not-registered` on
@@ -233,6 +242,34 @@ summarizes each release for people who install and operate ShadowScan.
   cannot be trusted.
 - A connector that emits records also declares the registry types it reads
   (`registry_record_types` engine hook); records of other types are removed.
+- Records replayed from an offline export no longer approve. They counted for
+  `trusted_registries` exactly like live records, so a forged export line (an
+  approved, auto-detected record with `DETECTED_FROM` provenance naming any
+  runtime) sanctioned that runtime. The engine now records which findings came
+  from a job with `input`, so a connector cannot present them as live; such
+  records still reconcile, and approve only for a trusted entry that sets the
+  new boolean `allow_offline_records: true`. A replayed record that would
+  otherwise approve is counted in an advisory `engine.inventory` warning, and
+  a record read both live and from an export in one scan counts as replayed.
+- An approved record of a trusted registry registers its own finding through
+  an inventory entry for exactly that finding, matched with the loaded
+  inventory. It was registered before inventory matching, so a card that also
+  approved the record finding was not ambiguous, contrary to the documented
+  rule; it now is, and the record finding is held to the same fail-closed
+  identity rules (a redacted resource is not registered).
+  `TrustedApprovals.approve_record` is removed; `candidates()` offers that
+  entry to the record finding alone.
+- `min_confidence` no longer removes registry record findings. Their evidence
+  has a fixed weight of 0.5, so a threshold above 0.5 dropped every record
+  from the report while the approvals they conferred stayed in force.
+- Only `approved`, `registered` and `pending` records register what they bind.
+  A `draft`, `rejected`, `deprecated`, `blocked` or `unknown` record bound to a
+  running agent made it `registered-and-observed`, hiding
+  `observed-not-registered` and the `registry-gap` control rule; such a record
+  is now `not-comparable` (`reason: record-status`) and its bound agent counts
+  as unregistered. AWS registries report absence only for the resource types
+  their records can bind (AgentCore runtimes and gateways), so a Bedrock agent
+  in an account with a bound runtime is no longer `observed-not-registered`.
 - The records in the tests are synthetic; nothing was validated against a live
   registry.
 
@@ -309,6 +346,38 @@ summarizes each release for people who install and operate ShadowScan.
   ASI04 and ATLAS AML.T0010.005, and to NIST AI RMF GOVERN 6.1 and ISO/IEC
   42001 A.10.3, as author-written evidence references. The governance factor
   is not mapped, because mapping rules cannot read risk factors.
+- A launch is no longer identified when something outside its package
+  arguments can change what runs: a launcher named by a relative path
+  (`./npx`, `tools/uvx`, `.\npx.cmd`) or a UNC path; a `cwd`,
+  `workingDirectory`, `envFile` or `env_file` field (kept in the server record
+  as `launch_context`, field names only); an environment variable in a
+  launcher, package manager, interpreter or container namespace (`NODE_*`
+  other than `NODE_ENV`, `BUN_*`, `YARN_*`, `PNPM_*`, `COREPACK_*`, every
+  `UV_*`, `PYTHON*` other than output settings, `DOCKER_*`, `CONTAINERS_*`,
+  `PODMAN_*`, `REGISTRY_*`), or one that moves the program search path, home,
+  configuration or temporary directory, loader or TLS trust (`PATH`, `HOME`,
+  `USERPROFILE`, `APPDATA`, `XDG_*`, `TMPDIR`, `LD_*`, `DYLD_*`, `COMSPEC`,
+  `SHELL`, `SSL_*`, `REQUESTS_CA_BUNDLE`); a `docker run` or `podman run` mount,
+  `--volumes-from`, working directory, `--env-file`, or `-e` of such a
+  variable (`-e NODE_OPTIONS=...`); and a `cmd /c` command line or batch-file
+  (`npx.cmd`) arguments holding `%VAR%` or `!VAR!`, which cmd.exe expands
+  before it reads operators. Such servers are `mcp-registry-unidentified` and
+  count toward `not_in_approved`. Containerized servers that mount a data
+  directory are unidentified too: a mount can replace the code the image runs.
+  A repository `.npmrc`, `bunfig.toml`, `.yarnrc.yml`, `uv.toml` or `pip.conf`
+  in the directory a client starts a server in is still not read.
+- A server with both a command and a URL now has no identity, whatever its
+  transport says: a client that ignores `type` would run the command beside an
+  approved URL, or connect to the URL beside an approved command.
+- A package or URL several names of one registry list counts as listed in an
+  approved catalog only when one of those names lists it, other than as
+  deleted, in the version it would be matched to; an unrelated active version
+  of a colliding name no longer approves a package listed only as deleted.
+- `mcp-insecure-transport` also flags an `http://` or `ws://` URL whose
+  authority holds a backslash or user information (redacted when parsed),
+  since an HTTP client can read another host from it
+  (`http://remote.example\@localhost/` reaches `remote.example`); its evidence
+  then names no host.
 - The tests use a synthetic snapshot shaped like the live registry API. No
   live registry fetch or tenant acceptance is part of the test suite.
 
@@ -359,6 +428,32 @@ summarizes each release for people who install and operate ShadowScan.
   `subscription_tier`, reasoning engines `effective_identity`, when present.
   Agent Registry counts as an AI API, so a project whose only AI API is Agent
   Registry now has an enabled-APIs finding.
+- Replaying the record dump of a scan whose Agent Registry, Gemini
+  Enterprise, Vertex AI or Dialogflow CX listing failed is incomplete again
+  (exit 3, one warning) when a `registry-coverage` record says a listing did
+  not complete; it voids only the claims of those listings, as the live scan
+  did. Such a replay previously reported a complete scan.
+- A record binds only resources of the project it was listed in. A Gemini
+  Enterprise agent's reasoning engine or Dialogflow agent, or an Agent
+  Registry `RuntimeReference`, in another project binds and approves nothing,
+  even in a trusted registry, and is recorded as a `cross-project-reference`
+  join hint; an Agent Registry that holds such a reference is not a complete
+  listing of its own project. Bindings always carry the record's own project.
+  Previously a trusted app could approve another project's engine, and a
+  complete registry made another project's unbound engines
+  `observed-not-registered` even when that project's own registry listing
+  failed.
+- An Agent Registry `RuntimeReference` on a Vertex AI or Dialogflow host that
+  is not a plain resource name (an `https:` URL, an API version segment, a
+  trailing slash) makes that registry's listing incomplete and the scan
+  incomplete (exit 3, one warning). It was previously ignored, so the engine
+  it registered could be reported `observed-not-registered`.
+- A publisher record must be named as a publisher of the project and location
+  it was listed in (`_project` and `_location` are now required), and one named
+  with another project's number is dropped like a foreign record, so it can no
+  longer replace another project's skill publisher or tier. Analysis bounds
+  the text fields of replayed registry records to the lengths collection
+  uses.
 - The fixtures and transports in the tests are synthetic, written from
   Google's API discovery documents; nothing was validated against a live
   project.
@@ -385,27 +480,42 @@ summarizes each release for people who install and operate ShadowScan.
 - The `DETECTED_FROM` provenance of a record the registry created by
   auto-detection binds the exact AgentCore runtime or gateway ARN it was
   detected from; the binding is in scope only when the `agentcore` service ran
-  without a warning in that region for the scanned account. Provenance on a
-  record created through the API is the publisher's assertion and binds
-  nothing, and a provenance relation this release does not recognize binds
-  nothing and makes the scan incomplete.
+  without a warning or error in that region for the scanned account (an
+  export that rejects a runtime or gateway record counts) and every runtime and
+  gateway finding of that region could be reported. An auto-detected record
+  still in `DRAFT` binds nothing: nobody submitted it, so it registers nothing.
+  Provenance on a record created through the API is the publisher's assertion
+  and binds nothing, and a provenance relation this release does not recognize
+  binds nothing and makes the scan incomplete.
 - `approval_mode` reflects the registry's approval configuration at scan time:
   `auto` when an Agent Registry holds any auto-approval rule or an AgentCore
   registry sets `autoApproval`, whatever other settings sit beside it;
   `manual` when neither does and nothing else is set; `unknown` when the
   registry details were denied, and for an approval configuration this
   release does not recognize, which also makes the scan incomplete.
-  Auto-approval is not human review: the record's evidence says so, and it
-  approves through `trusted_registries` only with `allow_auto_approved`.
+  Auto-approval is not human review: an approved record's evidence says that
+  the registry currently auto-approves records and that the record may not
+  have been reviewed by a person (a configuration change applies only to
+  records submitted after it, so the scan cannot tell how a record was
+  approved), and it approves through `trusted_registries` only with
+  `allow_auto_approved`.
 - `listing_complete` is set only for a record listing that finished without
   denial, a failed or truncated page, a skipped malformed record or the new
   `max_registry_records` cap (default 1000 per region and namespace). Denials,
   throttling, unsupported regions, missing SDK services, malformed responses,
   failed record details and invalid descriptors make the scan incomplete
-  (exit 3), and replaying such an export is incomplete again.
+  (exit 3), and replaying such an export is incomplete again. Gaps that leave
+  no record behind survive the export too: each registry's record carries
+  `_listing_complete` and `_detail`, and each listing writes an
+  `aws-registry-coverage` record (export only), so a denied `ListRegistries`,
+  `ListRegistryRecords`, `GetRegistry` or `ListDiscoverableRegistryRecords`,
+  an unsupported region, a missing SDK service and a cap used up by an earlier
+  registry replay as incomplete. Registry records from exports written before
+  these markers replay as incomplete; regenerate them.
 - Descriptors are parsed as bounded strict JSON during collection and kept
   only as a sanitized summary (A2A 1.0 cards contribute their
-  `supportedInterfaces`); raw descriptor documents, authorizer settings and
+  `supportedInterfaces`; capability and security scheme names are redacted and
+  cut to 64 characters); raw descriptor documents, authorizer settings and
   OAuth `customParameters` are never exported or reported, and descriptor URLs
   never become finding resources.
 - New `registry_arns` reads the approved records of other accounts'
@@ -469,6 +579,37 @@ summarizes each release for people who install and operate ShadowScan.
   token of another tenant never produces records attributed to the trusted one.
   `ConnectorContext.secret_env` reads such a variable and registers its value
   for redaction.
+- Delegated tokens, and pre-issued `access_token` values whose claims decode
+  when an opt-in collection is on, must carry a Microsoft Graph audience
+  (`aud` `https://graph.microsoft.com`, with or without a trailing slash, or
+  `00000003-0000-0000-c000-000000000000`); a same-tenant token for another
+  resource skips the connector before any request is sent.
+- A signed-in user's token passed as the app-only `access_token` (it has `scp`
+  or no `idtyp: app`), or one that cannot be decoded, no longer reports a
+  complete registry listing when an opt-in collection is on: the coverage marker
+  and records are caller-scoped (`listing_complete: false`, `unknown` binding
+  coverage) and a fixed warning, which names `auth_mode: delegated` and never
+  the token, makes the scan incomplete (exit 3).
+- A delegated scan with `include_agent_registry` or `include_agent_identities`
+  now warns once that it lists only what the signed-in user can see and is
+  incomplete (exit 3), so an empty caller-scoped listing never reads as an
+  empty catalog. A replayed caller-scoped export is incomplete too.
+- An Agent 365 package whose detail call failed, was throttled or was beyond
+  `max_package_lookups` is `unknown` with no bindings instead of `approved`:
+  `requestStatus` is read from the details, so the package may have a pending
+  request.
+- An organization's own package (`custom`, `shared` or `lob`) with no approval
+  request, such as an agent a user shared, is `registered` instead of
+  `approved`. A trusted tenant entry accepts it, with the app registration and
+  agent identity it binds, only with `allow_registered_only`;
+  `allow_auto_approved` no longer approves it without a reviewer.
+- A binding's coverage is `unknown` instead of `in-scope` when any record of the
+  export was rejected as malformed, so a present but malformed app registration
+  or agent identity is not reported `registered-not-observed`.
+- The coverage marker records the tenant the credential is bound to
+  (`tenantId`). A replay whose `tenant_id` differs from it is incomplete and its
+  records get an empty registry id, so they cannot be trusted; an older export
+  without the field replays as before.
 - The fixtures and Graph payloads in the tests are synthetic, modeled on
   Microsoft's Graph reference pages; nothing was validated against a live
   tenant.
@@ -516,6 +657,14 @@ summarizes each release for people who install and operate ShadowScan.
   admit what every source's block admits (highest floor and ceiling,
   `bypassed` over `unknown` over `gated`); it rejects a source whose block is
   malformed.
+- `merge` applies the combination rules across sources. Bounds widened one by
+  one skipped them, so approval bypassed in one source and a schedule trigger
+  in another merged to L4; the merged finding is now classified with the
+  widest oversight and initiation any source recorded and reaches L5
+  (`self-initiated`), with the matching basis entries. A registered merged
+  finding keeps the lowest level any source declares for its agent instead of
+  the first source's, so `autonomy-understated` no longer depends on the order
+  of the reports.
 - An L2 ceiling rests on recorded approval settings: it is configuration
   evidence, not proof of how a run behaves.
 - The rules and fixtures are synthetic and author-written; they do not
@@ -570,6 +719,18 @@ summarizes each release for people who install and operate ShadowScan.
   interface to a host other than loopback) and `a2a-card-signature-invalid`
   (10), with threat references ASI07 and AML.T0118.001, and ASI07 and ASI04.
   Card files with such interfaces or malformed signatures now score higher.
+- A verified card is projected and tagged as the form its signature covers,
+  not as served. Empty values added after signing
+  (`"securitySchemes": {"oauth2": {}}`, `"authentication": {"schemes": []}`)
+  left the card `verified` but removed `no-auth-declared` and showed a security
+  scheme; they now change nothing. `signed_forms` returns each form with its
+  payload, and `verify_card` returns the form a signature verified.
+- An interface URL with user information or a backslash before its host is
+  left out of `metadata.agent_card.interfaces` and of domain matching:
+  `http://agent.example\@localhost/a2a` was projected as
+  `http://localhost/a2a` (HTTP clients reach `agent.example`) and suppressed
+  `a2a-plaintext-interface`. The tag now reads each declared URL and fires for
+  such an `http://` or `ws://` interface.
 - The cards, keys and HTTP exchanges in the tests are synthetic, modeled on
   the A2A specification; nothing was validated against a live agent.
 

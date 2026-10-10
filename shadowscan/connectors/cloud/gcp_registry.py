@@ -130,6 +130,8 @@ _REGISTRY_NAME = re.compile(
 _RUNTIME_REFERENCE = re.compile(
     r"//(?:[a-z0-9-]+-)?(?P<service>aiplatform|dialogflow)\.googleapis\.com/(?P<resource>projects/.+)"
 )
+# Any reference on a Vertex AI or Dialogflow host, in whatever form (scheme, version segment).
+_RUNTIME_HOST = re.compile(r"(?:https?:)?//(?:[a-z0-9-]+-)?(?:aiplatform|dialogflow)\.googleapis\.com/", re.I)
 # Discovery Engine names that become authenticated request paths.
 ENGINE_NAME = re.compile(
     r"projects/(?P<project>[A-Za-z0-9._:-]+)/locations/(?P<location>global|us|eu)"
@@ -499,6 +501,20 @@ def runtime_reference(uri: Any) -> Reference | None:
     return observed_reference(kind, match["resource"])
 
 
+def unrecognized_reference(uri: Any) -> bool:
+    """Whether a ``RuntimeReference`` names a Vertex AI or Dialogflow host in a form this scan cannot read.
+
+    Such a reference (an ``https:`` URL, a version segment, a trailing slash) may register a
+    reasoning engine or Dialogflow agent that would otherwise look unregistered. A plain resource
+    name of a collection this scan does not observe (a Vertex AI endpoint) is read: it names no
+    engine.
+    """
+    if not isinstance(uri, str) or not _RUNTIME_HOST.match(uri):
+        return False
+    match = _RUNTIME_REFERENCE.fullmatch(uri)
+    return match is None or _resource(match["resource"]) is None
+
+
 class ProjectNumbers:
     """Project number to project id, from this scan's own listings; a conflicting number maps to nothing."""
 
@@ -588,7 +604,10 @@ class RecordEntry:
 
     ``registry_project`` is the project segment of the registry's own name (a number or an id)
     and ``registry_suffix`` the rest of that name: the registry id is both, with the number
-    replaced by the project id when this scan knows it.
+    replaced by the project id when this scan knows it. ``references`` that name another
+    project's resource move to ``cross_project`` when the catalogs are finished: a record binds
+    only resources of the project it was listed in. ``unrecognized_reference`` marks a runtime
+    reference to Vertex AI or Dialogflow that this scan cannot read.
     """
 
     kind: str
@@ -607,6 +626,8 @@ class RecordEntry:
     associated_registry: str | None = None
     updated_at: str | None = None
     publisher: str | None = None
+    cross_project: list[Reference] = field(default_factory=list)
+    unrecognized_reference: bool = False
 
 
 def _typed(rec: dict[str, Any], key: str, kind: type) -> Any:
@@ -616,34 +637,41 @@ def _typed(rec: dict[str, Any], key: str, kind: type) -> Any:
     return value
 
 
-_STRING_FIELDS = (
-    "displayName",
-    "description",
-    "createTime",
-    "updateTime",
-    "framework",
-    "runtime_reference",
-    "runtime_identity",
-    "state",
-    "publisher",
-    "sharing_scope",
-    "definition",
-    "reasoning_engine",
-    "dialogflow_agent",
-    "_agent_registry",
-    "agentId",
-    "version",
-    "hosting_location",
-    "mcpServerId",
-    "endpointId",
-    "type",
-    "targetState",
-    "license",
-    "languageCode",
-    "agent_card_status",
-)
+# String fields of registry records and the length collection bounds each to.
+_STRING_LIMITS = {
+    "displayName": 200,
+    "description": 1000,
+    "createTime": 64,
+    "updateTime": 64,
+    "framework": 512,
+    "runtime_reference": 512,
+    "runtime_identity": 512,
+    "state": 64,
+    "publisher": 512,
+    "sharing_scope": 64,
+    "reasoning_engine": 512,
+    "dialogflow_agent": 512,
+    "agentId": 256,
+    "version": 64,
+    "hosting_location": 64,
+    "mcpServerId": 256,
+    "endpointId": 256,
+    "type": 64,
+    "targetState": 64,
+    "license": 128,
+    "languageCode": 32,
+}
+_STRING_FIELDS = (*_STRING_LIMITS, "definition", "_agent_registry", "agent_card_status")
 _LIST_FIELDS = ("urls", "protocols", "skills", "tools", "reasons")
 _DICT_FIELDS = ("agent_card", "auth_config", "observability")
+
+
+def bound_strings(rec: dict[str, Any]) -> dict[str, Any]:
+    """A registry record with its strings bounded as collection bounds them (a replayed one may not be)."""
+    bounded = {
+        key: _text(rec[key], limit) for key, limit in _STRING_LIMITS.items() if isinstance(rec.get(key), str)
+    }
+    return {**rec, **bounded}
 
 
 def record_entry(kind: str, rec: dict[str, Any]) -> RecordEntry:
@@ -715,7 +743,8 @@ def _registry_entry(
         if not isinstance(protocol, dict) or not isinstance(protocol.get("urls") or [], list):
             raise ValueError("protocols")
         found += protocol.get("urls") or []
-    reference = runtime_reference(rec.get("runtime_reference"))
+    raw_reference = rec.get("runtime_reference")
+    reference = runtime_reference(raw_reference)
     identity = rec.get("runtime_identity")
     return RecordEntry(
         kind=kind,
@@ -734,6 +763,7 @@ def _registry_entry(
         identity=identity.removeprefix("principal://") if identity else None,
         updated_at=_text(rec.get("updateTime"), 64),
         publisher=_text(rec.get("publisher"), 512) if kind == "agent-registry-skill" else None,
+        unrecognized_reference=reference is None and unrecognized_reference(raw_reference),
     )
 
 
@@ -751,9 +781,13 @@ class RegistryCatalogs:
     from everything the pass read, so the result does not depend on record order. A record the
     pass could not read taints the catalogs: it may be the agent, binding or incomplete listing
     that a completeness claim would overlook, so no binding is then in scope, no listing is
-    complete and nothing is reported absent. So does a record whose registry name carries the
+    complete and nothing is reported absent. So does a record or publisher whose name carries the
     number of a project other than the one it was listed in (counted in :attr:`foreign` and
     dropped): it would claim that other project's registry identity.
+
+    :attr:`failed_listings` counts coverage records of listings that did not complete, and
+    :attr:`unrecognized` the Agent Registry records whose runtime reference names Vertex AI or
+    Dialogflow in a form this scan cannot read.
     """
 
     def __init__(self) -> None:
@@ -762,12 +796,17 @@ class RegistryCatalogs:
         self._observed: list[tuple[Reference, _Observed]] = []
         self._identities: dict[str, list[str]] = {}
         self._observed_urls: dict[str, list[str]] = {}
+        # Publisher name -> (display name, tier), and each publisher with the project it was listed in.
         self._publishers: dict[str, tuple[str, str | None]] = {}
+        self._listed_publishers: list[tuple[str, str, str, tuple[str, str | None]]] = []
         self._deferred: list[tuple[Finding, RecordEntry]] = []
-        # Projects with an Agent Registry record whose runtime reference this scan cannot resolve.
+        # Projects with an Agent Registry record whose runtime references this scan cannot resolve
+        # to a resource of that project.
         self._unresolved_projects: set[str] = set()
         self.tainted = False
         self.foreign = 0
+        self.failed_listings = 0
+        self.unrecognized = 0
 
     # ------------------------------------------------------------ intake
     def taint(self) -> None:
@@ -779,6 +818,8 @@ class RegistryCatalogs:
             item = parse_coverage(rec)
             key = (item.catalog, item.project, item.location, item.collection)
             self._coverage.setdefault(key, []).append(item)
+            # A listing that failed (not one that is only caller-scoped).
+            self.failed_listings += rec["complete"] is False
         elif kind == PROJECT_NUMBER_KIND:
             project, number = rec.get("_project"), rec.get("project_number")
             if not valid_project(project) or not isinstance(number, str) or not is_number(number):
@@ -786,14 +827,23 @@ class RegistryCatalogs:
             if not self.numbers.add(str(project), number):
                 raise ValueError("conflicting project number")
         else:
-            # Publishers only name the publisher of a skill; they are not records themselves.
-            name = rec.get("name")
-            if not isinstance(name, str) or not name or len(name) > 512:
+            # Publishers only name the publisher of a skill; they are not records themselves, but
+            # like records they speak only for the project and location they were listed in.
+            name, project = rec.get("name"), rec.get("_project")
+            parts = _resource(name) if isinstance(name, str) and len(name) <= 512 else None
+            if (
+                parts is None
+                or parts[2] != "publishers"
+                or parts[1] != rec.get("_location")
+                or not valid_project(project)
+                or not (is_number(parts[0]) or parts[0] == project)
+            ):
                 raise ValueError("publisher")
             for field_name in ("displayName", "publisherTier", "verifiedPrefix"):
                 _typed(rec, field_name, str)
-            display = _text(rec.get("displayName")) or name.rsplit("/", 1)[-1]
-            self._publishers[name] = (display, _text(rec.get("publisherTier"), 64))
+            display = _text(rec.get("displayName")) or parts[3]
+            publisher = (display, _text(rec.get("publisherTier"), 64))
+            self._listed_publishers.append((str(name), project, parts[0], publisher))
 
     def observe(self, kind: str, rec: dict[str, Any], finding: Finding) -> None:
         """Index an observed finding that registry records may bind to or hint at."""
@@ -855,15 +905,14 @@ class RegistryCatalogs:
             for finding, entry in self._deferred
             if self.numbers.names(entry.project, entry.registry_project) is not False
         ]
-        self.foreign = len(self._deferred) - len(kept)
+        publishers = [
+            item for item in self._listed_publishers if self.numbers.names(item[1], item[2]) is not False
+        ]
+        self.foreign = len(self._deferred) - len(kept) + len(self._listed_publishers) - len(publishers)
         if self.foreign:
             self.taint()
         self._deferred = kept
-        self._unresolved_projects = {
-            entry.project
-            for _, entry in self._deferred
-            if entry.registry == AR_REGISTRY and not self._resolved(entry)
-        }
+        self._publishers = {name: publisher for name, _, _, publisher in publishers}
         canonical: dict[tuple[str, str, str, str], _Observed] = {}
         literal: dict[str, _Observed] = {}
         for reference, item in self._observed:
@@ -875,39 +924,71 @@ class RegistryCatalogs:
                 project = item.account
             if project:
                 canonical.setdefault((reference.kind, project, reference.location, reference.rid), item)
+        for _, entry in self._deferred:
+            own = [reference for reference in entry.references if self._owns(entry, reference, literal)]
+            entry.cross_project = [reference for reference in entry.references if reference not in own]
+            entry.references = own
+        # An Agent Registry whose records name runtimes of another project, or name them in a form
+        # or by a number this scan cannot resolve, is never a complete listing of its own project.
+        self._unresolved_projects = {
+            entry.project
+            for _, entry in self._deferred
+            if entry.registry == AR_REGISTRY
+            and (entry.cross_project or entry.unrecognized_reference or not self._resolved(entry))
+        }
+        self.unrecognized = sum(entry.unrecognized_reference for _, entry in self._deferred)
         for finding, entry in self._deferred:
             self._apply(finding, entry, canonical, literal)
         self._presence()
         return [finding for finding, _ in self._deferred]
 
+    def _owns(self, entry: RecordEntry, reference: Reference, literal: dict[str, _Observed]) -> bool:
+        """Whether a reference names a resource of the project the record was listed in.
+
+        When this scan knows neither project's number, an observed resource of that exact name
+        belongs to the project whose listing returned it.
+        """
+        owns = self.numbers.names(entry.project, reference.project)
+        if owns is None:
+            observed = literal.get(reference.literal)
+            return observed is None or observed.account == entry.project
+        return owns
+
+    def _observed_item(
+        self,
+        reference: Reference,
+        canonical: dict[tuple[str, str, str, str], _Observed],
+        literal: dict[str, _Observed],
+    ) -> _Observed | None:
+        project = self.numbers.project_id(reference.project)
+        found = literal.get(reference.literal)
+        if found is None and project is not None:
+            found = canonical.get((reference.kind, project, reference.location, reference.rid))
+        return found
+
     def _binding(
         self,
+        entry: RecordEntry,
         reference: Reference,
         canonical: dict[tuple[str, str, str, str], _Observed],
         literal: dict[str, _Observed],
     ) -> dict[str, Any]:
         project = self.numbers.project_id(reference.project)
         catalog, collection = OBSERVED_LISTINGS[reference.kind]
-        observed = literal.get(reference.literal)
+        observed = self._observed_item(reference, canonical, literal)
         listed: bool | None = False
         if project is not None:
-            observed = observed or canonical.get((reference.kind, project, reference.location, reference.rid))
             listed = self._listed(catalog, project, reference.location, collection)
         coverage = {True: "in-scope", False: "unknown", None: "out-of-scope"}[listed]
-        if observed is not None:
-            return {
-                "resource": observed.resource,
-                "provider": "gcp",
-                "account": observed.account,
-                "region": observed.region,
-                "coverage": coverage,
-            }
-        # Not observed: the binding names the referenced resource as the record gave it.
-        binding: dict[str, Any] = {"resource": reference.literal, "provider": "gcp"}
-        if project is not None:
-            binding["account"] = project
-        binding.update(region=reference.location, coverage=coverage)
-        return binding
+        # The account is always the record's own project, the only one whose resources it binds.
+        # When not observed, the binding names the referenced resource as the record gave it.
+        return {
+            "resource": observed.resource if observed else reference.literal,
+            "provider": "gcp",
+            "account": entry.project,
+            "region": observed.region if observed else reference.location,
+            "coverage": coverage,
+        }
 
     def _apply(
         self,
@@ -917,7 +998,7 @@ class RegistryCatalogs:
         literal: dict[str, _Observed],
     ) -> None:
         project = self.numbers.project_id(entry.registry_project)
-        bindings = [self._binding(reference, canonical, literal) for reference in entry.references]
+        bindings = [self._binding(entry, reference, canonical, literal) for reference in entry.references]
         record: dict[str, Any] = {
             "schema": RECORD_SCHEMA,
             "registry": entry.registry,
@@ -943,7 +1024,13 @@ class RegistryCatalogs:
             record.update(listing_scope="caller", listing_complete=False)
         finding.metadata[RECORD_KEY] = record
         bound = {binding["resource"] for binding in bindings}
-        hints = [
+        # Another project's resource: named by the record, but neither bound nor approved.
+        hints: list[dict[str, str]] = []
+        for reference in entry.cross_project:
+            observed = self._observed_item(reference, canonical, literal)
+            resource = observed.resource if observed else reference.literal
+            hints.append({"key": "cross-project-reference", "resource": resource})
+        hints += [
             {"key": "runtime-identity", "resource": resource}
             for resource in self._identities.get(entry.identity or "", [])
             if resource not in bound
