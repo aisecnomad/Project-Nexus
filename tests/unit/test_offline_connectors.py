@@ -9,6 +9,7 @@ from click.testing import CliRunner
 
 from shadowscan.cli import main
 from shadowscan.models import Kind, Surface
+from shadowscan.registries import RECORD_KEY, parse_registry_record
 from shadowscan.registry import Inventory, InventoryEntry
 
 
@@ -293,6 +294,36 @@ def test_aws_offline(run_connector, fixtures):
     assert len(callers) == 2 and any("framework.aws-strands" in c.frameworks for c in callers)
     secret = next(f for f in findings if f.kind == Kind.SECRET)
     assert "managed-secret" in secret.tags
+
+
+def test_aws_registry_offline(run_connector, fixtures):
+    # Synthetic Agent Registry and AgentCore registry records, kept apart from the README demo export.
+    findings, ctx = run_connector("cloud.aws", input=str(fixtures / "cloud" / "aws_registry_records.jsonl"))
+    assert not ctx.stats.incomplete and not ctx.stats.warnings and not ctx.stats.errors
+    records = {f.metadata[RECORD_KEY]["record_id"]: f for f in findings if RECORD_KEY in f.metadata}
+    assert all(parse_registry_record(f.metadata[RECORD_KEY]) is not None for f in records.values())
+    assert {rid: f.metadata[RECORD_KEY]["status"] for rid, f in records.items()} == {
+        "rec000000001": "approved",
+        "rec000000002": "pending",
+        "gtw000000001": "draft",
+        "skl000000001": "rejected",
+        "mcp000000001": "approved",
+        "a2a000000001": "deprecated",
+        "ext000000001": "approved",
+    }
+    gateway = records["gtw000000001"]
+    assert gateway.kind == Kind.MCP_SERVER and "mcp-insecure-transport" in gateway.tags
+    # An auto-detected draft was never submitted: it keeps its provenance but binds nothing.
+    assert gateway.metadata[RECORD_KEY]["bindings"] == []
+    assert gateway.metadata["provenance"][0]["sourceId"].endswith(":gateway/tools-gateway-pq1rs2tu3v")
+    assert records["skl000000001"].kind == Kind.AGENT_CONFIG
+    assert "no-auth-declared" in records["a2a000000001"].tags
+    assert records["mcp000000001"].metadata[RECORD_KEY]["approval_mode"] == "auto"
+    assert records["rec000000001"].metadata[RECORD_KEY]["approval_mode"] == "manual"
+    external = records["ext000000001"]
+    assert external.account == "210987654321" and external.metadata["registry_coverage"] == "approved-only"
+    # Runtimes and gateways replay as before; records add findings, never replace them.
+    assert len([f for f in findings if f.resource_type == "agentcore-runtime"]) == 3
 
 
 def test_gcp_azure_oci_offline(run_connector, fixtures):

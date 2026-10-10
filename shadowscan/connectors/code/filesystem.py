@@ -137,12 +137,16 @@ from shadowscan.connectors.code.python_reexports import (
 )
 from shadowscan.connectors.code.rule_packs import detection_rule_format
 from shadowscan.connectors.code.semantic_config import (
+    a2a_card_metadata,
+    a2a_card_tags,
+    a2a_unsupported_protocol_version,
     agent_manifest_kind,
     has_template_markers,
     is_agent_config_path,
     parse_agent_manifest,
     structured_code_matches,
 )
+from shadowscan.connectors.code.semantic_config import bounded_metadata as _clip
 from shadowscan.connectors.code.source_identity import named_construction_spans
 from shadowscan.connectors.code.source_ranges import noncode_ranges, nul_reading_ranges
 from shadowscan.connectors.code.source_semantics import (
@@ -173,8 +177,17 @@ from shadowscan.connectors.common import (
     placeholder_reason,
 )
 from shadowscan.connectors.mcp_risk import record_server_risks
-from shadowscan.connectors.posture import CLIENT_SIGNATURES, record_posture
+from shadowscan.connectors.posture import (
+    CLIENT_SIGNATURES,
+    approval_scopes,
+    approval_settings,
+    posture_client,
+    record_approval,
+    record_posture,
+    unreadable_settings,
+)
 from shadowscan.connectors.posture import assess as assess_posture
+from shadowscan.connectors.posture import parseable as posture_parseable
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.signatures import Match, Signature
 from shadowscan.signatures.loader import builtin_signature_dir
@@ -804,6 +817,8 @@ class _Project:
     mcp_server_constructions_limited: bool = False
     # Coding-agent signature id -> posture issues read from its settings files.
     posture: dict[str, list[dict[str, str]]] = field(default_factory=dict)
+    # Coding-agent signature id -> settings that make a person approve actions.
+    approvals: dict[str, list[dict[str, str]]] = field(default_factory=dict)
 
 
 @dataclass
@@ -1701,6 +1716,24 @@ def enumeration_deadline(now: float, deadline: float, margin: float, scan_timeou
     return now + ENUMERATION_DEADLINE_SHARE * window if window > 0 else now
 
 
+def _note_unread_settings(proj: _Project, rel: str) -> None:
+    """Record that a settings file of an approval-reading client could not be read.
+
+    The entry records no gate on its own and keeps a gate from the client's readable settings
+    at ``some-actions``, because the unread file could loosen it (openclaw has no approvals).
+    """
+    client = posture_client(rel)
+    if client is None:
+        return
+    unread = unreadable_settings(client)
+    if not approval_scopes(client, unread.setting, unread.value):
+        return
+    sig_id = CLIENT_SIGNATURES[client]
+    entry = {**unread.as_dict(), "file": rel}
+    if entry not in proj.approvals.setdefault(sig_id, []):
+        proj.approvals[sig_id].append(entry)
+
+
 def _check_enumeration_time(walk: _WalkCounters) -> None:
     """Stop listing at ``walk.enumerate_until``; the entries listed so far are still scanned."""
     if walk.enumerate_until is not None and time.monotonic() >= walk.enumerate_until:
@@ -2016,6 +2049,11 @@ class FilesystemConnector(BaseConnector):
         self._ownership_steps_remaining: dict[Path, int] = {}
         self._owner_cache: dict[tuple[Path, str], str | None] = {}
         self._symlink_warnings: set[Path] = set()
+        # (project root, path) of settings files the walk skipped (a link gap or a non-regular entry).
+        self._unread_settings: list[tuple[str, str]] = []
+        # Settings files of the scanned tree that a remote API snapshot did not include (set by
+        # the code.github / code.gitlab connectors that delegate to this one).
+        self.unread_settings: list[str] = []
         self._checked_submodules: set[tuple[Path, str]] = set()
         self._gitlink_roots: set[Path] = set()
         # Oversize files under test paths skipped with a warning (include_tests false).
@@ -2480,8 +2518,11 @@ class FilesystemConnector(BaseConnector):
                 p = Path(dirpath) / fn
                 try:
                     if p.is_symlink():
+                        gaps = walk.link_gaps
                         if not self._skip_link(root, resolved_root, rel, p, walk):
                             return
+                        if walk.link_gaps != gaps:
+                            self._unread_settings.append((proj, rel))
                         continue
                     info = p.stat()
                 except OSError as exc:
@@ -2492,6 +2533,7 @@ class FilesystemConnector(BaseConnector):
                 if not stat.S_ISREG(info.st_mode):
                     if self._analyzed_name(rel, fn):
                         self._skip_non_regular(walk, root, rel, _special_file_kind(info.st_mode))
+                        self._unread_settings.append((proj, rel))
                     continue
                 if info.st_size > self._size_limit(fn) and self._skipped_oversize(rel, fn, info.st_size):
                     continue
@@ -2600,6 +2642,7 @@ class FilesystemConnector(BaseConnector):
             return True
         # A single representative diagnostic per root keeps hostile trees
         # from filling the report with thousands of link names.
+        walk.link_gaps += 1
         if root not in self._symlink_warnings:
             self._symlink_warnings.add(root)
             # Stays fail-closed: the target's bytes exist and other tools may
@@ -2846,6 +2889,7 @@ class FilesystemConnector(BaseConnector):
         scan.margin = margin
         entries: list[tuple[str, Path, str, int]] = []
         try:
+            self._unread_settings = []
             entries.extend(self._iter_entries(scan.root))
         except _WalkLimitError as exc:
             # Enumeration hit max_entries or its share of the deadline: the
@@ -2873,12 +2917,14 @@ class FilesystemConnector(BaseConnector):
                             f"code.filesystem: {rel}: skipped; the remaining connector deadline cannot cover "
                             f"its {reserve:.0f}s matching budget",
                         )
+                        self._unread_settings.append((proj_root, rel))
                         continue
                     # Cooperative deadline: never start a file whose budget
                     # could run into the margin. Findings collected so far are
                     # returned and the engine keeps them; only a result that
                     # arrives after the deadline is discarded.
                     self._stop_at_deadline(scan.root, examined, len(entries) - index)
+                    self._unread_settings.extend((root, name) for name, _, root, _ in entries[index:])
                     break
             examined += 1
             with (
@@ -2886,15 +2932,25 @@ class FilesystemConnector(BaseConnector):
                 self.index.scan_budget(seconds=budget, chars=size, wall_seconds=wall_cap),
             ):
                 self._scan_file(scan, rel, path, proj_root)
+        # A settings file the walk skipped can only loosen the gate of a project it read.
+        self._unread_settings.extend(
+            (_project_root(scan.root, rel), rel) for rel in self.unread_settings if scan.root.is_dir()
+        )
+        for proj_root, rel in self._unread_settings:
+            if (proj := scan.projects.get(proj_root)) is not None:
+                _note_unread_settings(proj, rel)
+        self._unread_settings = []
 
     @staticmethod
     def _diff_included(rel: str, diff_files: frozenset[str]) -> bool:
         """Whether a file should be scanned in diff mode.
 
-        Always included: files in the diff set, dependency manifests and
-        ``.env*`` files, whose content contextualizes code changes.
+        Always included: files in the diff set, dependency manifests,
+        ``.env*`` files and coding-agent settings files, whose content
+        contextualizes code changes. A settings file left out could loosen an
+        approval gate that a changed one sets.
         """
-        if rel in diff_files:
+        if rel in diff_files or posture_client(rel) is not None:
             return True
         name = rel.rsplit("/", 1)[-1]
         lower = name.lower()
@@ -2926,6 +2982,7 @@ class FilesystemConnector(BaseConnector):
         named = by_name or self._named_by_signature(rel, file_matches)
         loaded = self._read_source(rel, path, scan.root_fd, scan.base, named=named)
         if loaded is None:
+            _note_unread_settings(proj, rel)
             return
         text, raw_notebook, cells = loaded
         nul_text = None
@@ -3256,6 +3313,13 @@ class FilesystemConnector(BaseConnector):
                 entry = {**issue.as_dict(), "file": file.rel}
                 if entry not in file.proj.posture.setdefault(sig_id, []):
                     file.proj.posture[sig_id].append(entry)
+        if not posture_parseable(file.rel, file.text):
+            _note_unread_settings(file.proj, file.rel)
+        for setting in approval_settings(file.rel, file.text) or []:
+            sig_id = CLIENT_SIGNATURES[setting.client]
+            approval = {**setting.as_dict(), "file": file.rel}
+            if approval not in file.proj.approvals.setdefault(sig_id, []):
+                file.proj.approvals[sig_id].append(approval)
 
     def _detect_secrets(self, scan: _ScanState, file: _SourceFile) -> None:
         """Collect provider credentials from the file text and a notebook's raw document.
@@ -5067,6 +5131,7 @@ class FilesystemConnector(BaseConnector):
         posture = proj.posture.get(sig_id, [])
         if posture:
             record_posture(f, posture)
+        record_approval(f, proj.approvals.get(sig_id, []))
         defs = [d for d in proj.agent_defs if any(d["file"] == x for x in files)]
         if defs:
             f.metadata["agent_definitions"] = defs
@@ -5357,7 +5422,7 @@ class FilesystemConnector(BaseConnector):
                 )
             )
         if kind == "a2a":
-            self._describe_a2a_card(f, rel, data)
+            self._describe_a2a_card(f, rel, validation.data or {}, data)
         elif kind == "m365":
             self._describe_m365_agent(f, rel, data)
         elif kind == "langgraph":
@@ -5376,27 +5441,18 @@ class FilesystemConnector(BaseConnector):
             f.kind = Kind.AGENT
         return f
 
-    def _describe_a2a_card(self, f: Finding, rel: str, data: dict[str, Any]) -> None:
-        f.metadata["agent_card"] = {
-            "name": data.get("name"),
-            "description": truncate(sanitize_text(str(data.get("description", ""))), 300),
-            "url": data.get("url"),
-            "version": data.get("version"),
-            "protocol_version": data.get("protocolVersion"),
-            "skills": [
-                s.get("name") or s.get("id") for s in data.get("skills", []) or [] if isinstance(s, dict)
-            ],
-            "capabilities": _clip(data.get("capabilities")),
-            "security_schemes": _clip(
-                list((data.get("securitySchemes") or {}).keys())
-                if isinstance(data.get("securitySchemes"), dict)
-                else data.get("authentication")
-            ),
-        }
-        if data.get("url"):
-            apply_matches(f, self.index.match_domains_in_text(str(data["url"])), location=rel)
-        if not data.get("securitySchemes") and not data.get("authentication"):
-            f.add_tag("no-auth-declared")
+    def _describe_a2a_card(self, f: Finding, rel: str, card: dict[str, Any], shown: dict[str, Any]) -> None:
+        """Project the card as every A2A source does; ``shown`` is its whole-document sanitized copy."""
+        if a2a_unsupported_protocol_version(card):
+            self.ctx.warn(
+                f"code.filesystem: {rel}: A2A card declares a protocol version other than 0.x or 1.x; "
+                "its fields were read as A2A 0.3 and 1.0 fields"
+            )
+        f.metadata["agent_card"] = agent_card = a2a_card_metadata(card, shown)
+        for interface in agent_card["interfaces"]:
+            apply_matches(f, self.index.match_domains_in_text(interface["url"]), location=rel)
+        for tag in a2a_card_tags(card, agent_card["signature"]):
+            f.add_tag(tag)
 
     @staticmethod
     def _describe_m365_agent(f: Finding, rel: str, data: dict[str, Any]) -> None:
@@ -5693,21 +5749,6 @@ def _quote_glob_values(front_matter: str) -> str:
 
 _MAX_CARD_FILES = 200
 _MAX_AGENT_DEFINITIONS = 50
-_CLIP_ITEMS = 50
-_CLIP_CHARS = 200
-
-
-def _clip(value: Any, depth: int = 0) -> Any:
-    """Bound a projected metadata value so aggregates stay within the sanitizer budget."""
-    if isinstance(value, str):
-        return truncate(value, _CLIP_CHARS)
-    if depth >= 4:
-        return None if isinstance(value, (dict, list, tuple)) else value
-    if isinstance(value, dict):
-        return {str(k)[:_CLIP_CHARS]: _clip(v, depth + 1) for k, v in list(value.items())[:_CLIP_ITEMS]}
-    if isinstance(value, (list, tuple)):
-        return [_clip(v, depth + 1) for v in value[:_CLIP_ITEMS]]
-    return value
 
 
 def _excerpt(lines: list[str], line: int, secret: str | None = None, width: int = 160) -> str:

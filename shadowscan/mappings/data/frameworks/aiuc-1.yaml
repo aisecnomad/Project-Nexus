@@ -1,0 +1,21 @@
+framework: aiuc-1
+edition: "2026q2"
+prefix: aiuc-1-2026q2
+name: AIUC-1
+kind: control
+source_url: https://standard.aiuc-1.com/
+licence: Unverified; identifiers and own-words labels only
+checked: "2026-10-10"
+verification: secondary
+notes: >-
+  Versioned quarterly. References are at domain level (A to F). Requirement-level
+  identifiers other than D003 are not used because they could not be verified
+  against the official text.
+entries:
+  A: {title: Data and Privacy}
+  B: {title: Security}
+  C: {title: Safety}
+  D: {title: Reliability}
+  E: {title: Accountability}
+  F: {title: Society}
+  D003: {title: Restrict unsafe tool calls}

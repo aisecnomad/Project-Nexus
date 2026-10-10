@@ -23,7 +23,10 @@ depends on:
 Credential findings (``secret`` and ``token``) are not components: a BOM is an
 inventory, and the JSON or SARIF report is the place to triage credentials.
 ShadowScan's heuristic risk, confidence and shadow status are recorded as
-``shadowscan:*`` properties, never as CycloneDX vulnerabilities or ratings.
+``shadowscan:*`` properties, never as CycloneDX vulnerabilities or ratings,
+and so are its edition-qualified threat and control references
+(``shadowscan:threats``, ``shadowscan:controls``): evidence references, not
+compliance results.
 
 A BOM never reads as more complete than the scan: ``compositions`` declares
 the inventory ``incomplete`` when any connector failed or stopped early, and
@@ -44,7 +47,8 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from shadowscan import __version__
-from shadowscan.models import Finding, Kind, ScanResult
+from shadowscan.mappings import finding_references
+from shadowscan.models import DERIVED_METADATA_KEYS, Finding, Kind, ScanResult
 from shadowscan.reporters._publication import publication_stats
 from shadowscan.signatures import SignatureIndex, get_index
 from shadowscan.utils.redaction import sanitize
@@ -68,7 +72,11 @@ def _digest(value: str) -> str:
 
 
 def _finding_digest(f: Finding) -> str:
-    return _digest(json.dumps(f.to_dict(), sort_keys=True, default=str))
+    record = f.to_dict()
+    # Threat and control references follow the packaged catalogs, not the finding.
+    for key in DERIVED_METADATA_KEYS:
+        record["metadata"].pop(key, None)
+    return _digest(json.dumps(record, sort_keys=True, default=str))
 
 
 def _timestamp(value: object) -> str | None:
@@ -110,6 +118,35 @@ def _http_url(value: object) -> bool:
 def _text(record: dict[str, Any], key: str) -> str | None:
     value = record.get(key)
     return value if isinstance(value, str) else None
+
+
+def _registry_properties(entries: object) -> list[tuple[str, object]]:
+    """MCP registry matches of one server, each value as ``<registry id>:<value>``.
+
+    Read defensively: the entries come from finding metadata, which a loaded report or a
+    plugin can shape freely, so a malformed entry or field is skipped.
+    """
+    names: list[str] = []
+    versions: list[str] = []
+    statuses: list[str] = []
+    sources: list[str] = []
+    for entry in entries if isinstance(entries, list) else []:
+        registry = _text(entry, "registry") if isinstance(entry, dict) else None
+        if not isinstance(entry, dict) or not registry:
+            continue
+        for values, key in ((names, "name"), (versions, "latest_version"), (statuses, "status")):
+            value = _text(entry, key)
+            if value:
+                values.append(f"{registry}:{value}")
+        match = _text(entry, "match")
+        if match:
+            sources.append(f"{registry}:{match}" + (" (ambiguous)" if entry.get("ambiguous") is True else ""))
+    return [
+        ("shadowscan:mcp:registry-name", names),
+        ("shadowscan:mcp:registry-version", versions),
+        ("shadowscan:mcp:registry-status", statuses),
+        ("shadowscan:mcp:registry-source", sources),
+    ]
 
 
 def _published(entry: dict[str, Any]) -> dict[str, Any]:
@@ -217,6 +254,7 @@ class _Bom:
             if isinstance(r, (str, dict))
         ]
         disabled = server.get("disabled")
+        registry = _registry_properties(server.get("registry"))
         service["properties"] = _properties(
             [
                 ("shadowscan:mcp:transport", _text(server, "transport")),
@@ -225,6 +263,7 @@ class _Bom:
                 ("shadowscan:mcp:disabled", disabled if isinstance(disabled, bool) else None),
                 ("shadowscan:mcp:risks", [r for r in risk_ids if isinstance(r, str)]),
                 ("shadowscan:mcp:endpoints-omitted", endpoints_omitted or None),
+                *registry,
             ]
         )
         self.services[ref] = service
@@ -297,6 +336,7 @@ class _Bom:
         # Entries past the bound, and malformed entries within it, are not published.
         servers_omitted = len(servers) - len(kept) + sum(not isinstance(s, dict) for s in kept)
         models_omitted = max(0, len(models) - _MAX_MODELS)
+        threats, controls = finding_references(f)
         entry["properties"] = _properties(
             [
                 ("shadowscan:finding-id", f.id),
@@ -317,6 +357,8 @@ class _Bom:
                 ("shadowscan:likelihood", f.likelihood.value),
                 ("shadowscan:capabilities", f.capabilities),
                 ("shadowscan:tags", f.tags),
+                ("shadowscan:threats", threats),
+                ("shadowscan:controls", controls),
                 ("shadowscan:first-seen", _timestamp(f.first_seen)),
                 ("shadowscan:last-seen", _timestamp(f.last_seen)),
                 ("shadowscan:mcp:servers-omitted", servers_omitted or None),

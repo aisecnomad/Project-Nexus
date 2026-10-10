@@ -1,0 +1,24 @@
+framework: owasp-llm
+edition: "2026"
+prefix: owasp-llm-2026
+name: OWASP Top 10 for LLM Applications
+kind: threat
+source_url: https://github.com/GenAI-Security-Project/GenAI-LLM-Top10
+licence: CC-BY-SA-4.0
+checked: "2026-10-10"
+verification: primary
+notes: >-
+  2026 edition, published 2026-08-04. Entry numbers changed from the 2025
+  edition (for example LLM03 is Excessive Agency, not Supply Chain), so a
+  reference is meaningful only with its edition prefix.
+entries:
+  LLM01: {title: Prompt Injection}
+  LLM02: {title: Sensitive Information Disclosure}
+  LLM03: {title: Excessive Agency}
+  LLM04: {title: Supply Chain}
+  LLM05: {title: Data and Model Poisoning}
+  LLM06: {title: Unbounded Consumption}
+  LLM07: {title: Misinformation}
+  LLM08: {title: Hidden Context Exposure}
+  LLM09: {title: Vector and Embedding Weaknesses}
+  LLM10: {title: Improper Output Handling}

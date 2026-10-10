@@ -102,6 +102,64 @@ def test_gcp_live_records_cannot_override_collected_scope(
         assert all(record["_location"] != "other-region" for record in records)
 
 
+_REGISTRY_SCOPE = {"agent_registry": True, "agent_registry_locations": ["global"]}
+
+
+@pytest.mark.parametrize(
+    "service,config,items_key,kind",
+    [
+        ("agentregistry.googleapis.com", _REGISTRY_SCOPE, "agents", "agent-registry-agent"),
+        ("agentregistry.googleapis.com", _REGISTRY_SCOPE, "mcpServers", "agent-registry-mcp-server"),
+        ("agentregistry.googleapis.com", _REGISTRY_SCOPE, "endpoints", "agent-registry-endpoint"),
+        (
+            "agentregistry.googleapis.com",
+            {**_REGISTRY_SCOPE, "agent_registry_version": "v1alpha"},
+            "skills",
+            "agent-registry-skill",
+        ),
+        ("discoveryengine.googleapis.com", {"gemini_enterprise": True}, "agents", "gemini-enterprise-agent"),
+    ],
+)
+def test_gcp_registry_records_cannot_override_collected_scope(
+    index, monkeypatch, service, config, items_key, kind
+):
+    scanner = GcpConnector(context(index, locations=["us-central1"], **config))
+    engine = f"projects/{PROJECT}/locations/global/collections/default_collection/engines/e"
+    upstream = {
+        "name": "upstream-resource",
+        "_kind": "project",
+        "_project": "other-project",
+        "_location": "other-region",
+        "_engine": "other-engine",
+        "_assistant": "other-assistant",
+        "_api_version": "v9",
+        "_agent_registry": "other-registry",
+    }
+
+    def pages(url, key, **params):
+        if key == "services":
+            return iter(enabled(service)["services"])
+        if key == "engines":
+            return iter([{"name": engine, "appType": "APP_TYPE_INTRANET"}])
+        if key == "assistants":
+            return iter([{"name": f"{engine}/assistants/a"}])
+        if key == items_key:
+            return iter([dict(upstream)])
+        return iter([])
+
+    monkeypatch.setattr(scanner, "_pages", pages)
+    monkeypatch.setattr(scanner, "_collect_iam_policy", lambda project: iter([]))
+    monkeypatch.setattr(scanner, "_project_number", lambda project: iter([]))
+    records = [
+        record for record in scanner._collect_project(PROJECT) if record.get("name") == "upstream-resource"
+    ]
+    assert records
+    for record in records:
+        assert (record["_kind"], record["_project"], record["_location"]) == (kind, PROJECT, "global")
+        for key in ("_engine", "_assistant", "_api_version", "_agent_registry"):
+            assert record.get(key) != upstream[key]
+
+
 @pytest.mark.parametrize(
     "invalid_id",
     [None, 7, "", ".", "..", "../other", "project?quotaUser=other", "project/locations/other"],

@@ -4,6 +4,12 @@ A finding disappearing from a report is only evidence of resolution when both
 scans completed under the same collection and detection settings and its ID is
 stable across scans. Scope hashes identify inputs, not their contents: a file
 changing is what comparisons measure.
+
+Each substantive change is labelled with a drift class (:data:`DRIFT_CLASSES`)
+and whether it is adverse: it widens what the finding can do or weakens how it
+is governed. A baseline can be pinned by the SHA-256 of its file and expired by
+age (:func:`baseline_lifecycle_reasons`); an expired or undatable baseline makes
+the comparison incomplete.
 """
 
 from __future__ import annotations
@@ -13,17 +19,22 @@ import hmac
 import json
 import re
 from collections import Counter
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 from shadowscan import __version__
+from shadowscan.autonomy import _INITIATION_RANK, _OVERSIGHT_RANK, UNDERSTATED_TAG, valid_autonomy
 from shadowscan.config import PATH_KEYS, ConnectorSpec, ScanConfig
-from shadowscan.connectors import _BUILTIN
+from shadowscan.connectors import _BUILTIN, get_connector_class
+from shadowscan.connectors.base import LIVE_SCOPE_SCHEMA
 from shadowscan.models import FINDING_IDENTITY_SCHEMA, Finding
+from shadowscan.registries import RECONCILIATION_KEY, RECONCILIATION_STATUSES
+from shadowscan.risk import MITIGATING_TAGS
 from shadowscan.signatures import SignatureIndex
 from shadowscan.utils.digest import scanner_source_digest
-from shadowscan.utils.files import read_policy_text
+from shadowscan.utils.files import read_policy_bytes
 from shadowscan.utils.redaction import _sensitive_key, sanitize
 from shadowscan.utils.safe_json import JSONIntegrityError, strict_json_loads
 
@@ -36,13 +47,34 @@ MAX_REPORT_BYTES = 64 * 1024 * 1024
 IDENTITY_KEY_ENV = "SHADOWSCAN_IDENTITY_KEY"
 _GATEWAY_SCOPE = "shadowscan.collection-scope.gateway.v1"
 
+# What a substantive change is about. ``coverage`` is the comparison itself: an
+# incomplete comparison is adverse coverage drift and always exits 3.
+DRIFT_CLASSES = ("inventory", "capability", "autonomy", "governance", "coverage")
+_AUTONOMY_FIELDS = {
+    "metadata.autonomy.floor": None,
+    "metadata.autonomy.ceiling": None,
+    "metadata.autonomy.oversight": _OVERSIGHT_RANK,
+    "metadata.autonomy.initiation": _INITIATION_RANK,
+}
+_TOOL_HASH = "metadata.tool_definition_sha256"
+_RECONCILIATION = "metadata.registry_reconciliation.status"
+_CAPABILITY_LISTS = ("permissions", "capabilities", "frameworks", "model_providers", "models")
+# Tags that record a governance gap rather than something the finding can do.
+_GOVERNANCE_TAGS = frozenset({UNDERSTATED_TAG})
+# A baseline written on a host whose clock runs slightly ahead is not from the future.
+_CLOCK_SKEW = timedelta(minutes=5)
+# About a century: far beyond any review cycle, and well inside what timedelta can represent.
+MAX_BASELINE_AGE_DAYS = 36_500
 
-def load_report(path: str | Path) -> dict[str, Any]:
-    """Read an unambiguous, bounded report without following input symlinks."""
 
+class ReportDigestMismatch(ValueError):
+    """A report file's raw bytes do not have the pinned SHA-256 digest."""
+
+
+def _parse_report(data: bytes) -> dict[str, Any]:
     try:
         try:
-            report = strict_json_loads(read_policy_text(Path(path), max_bytes=MAX_REPORT_BYTES))
+            report = strict_json_loads(data.decode("utf-8-sig"))
         except JSONIntegrityError as exc:
             # Preserve the established public errors without exposing any
             # attacker-controlled field names or values.
@@ -54,6 +86,28 @@ def load_report(path: str | Path) -> dict[str, Any]:
         return report
     except RecursionError:
         raise ValueError("report structure exceeds nesting limit") from None
+
+
+def load_report(path: str | Path) -> dict[str, Any]:
+    """Read an unambiguous, bounded report without following input symlinks."""
+    return load_report_with_digest(path)[0]
+
+
+def load_report_with_digest(
+    path: str | Path, *, expected_sha256: str | None = None
+) -> tuple[dict[str, Any], str]:
+    """:func:`load_report` and the SHA-256 of the file's raw bytes, as ``sha256sum`` prints it.
+
+    The digest and the parsed report come from one bounded read, so the file
+    cannot change between the check and the parse. With ``expected_sha256`` (64
+    lowercase hex characters), a different digest raises
+    :class:`ReportDigestMismatch` before the content is parsed.
+    """
+    data = read_policy_bytes(Path(path), max_bytes=MAX_REPORT_BYTES)
+    digest = hashlib.sha256(data).hexdigest()
+    if expected_sha256 is not None and digest != expected_sha256:
+        raise ReportDigestMismatch("report digest does not match the pinned digest")
+    return _parse_report(data), digest
 
 
 def _canonical(value: Any) -> bytes:
@@ -91,17 +145,100 @@ def _scanner_digest() -> str:
     return scanner_source_digest()
 
 
+def _attests_live_scope(name: str) -> bool:
+    """Whether a built-in connector declares live scope attestation (False if it cannot be loaded)."""
+    try:
+        return getattr(get_connector_class(name), "attests_live_scope", False) is True
+    except Exception:  # noqa: BLE001 - an unloadable connector attests nothing
+        return False
+
+
+def _live_scope_material(record: Any) -> tuple[dict[str, Any] | None, str]:
+    """The fingerprinted part of a live scope record, or the reason it cannot be attested.
+
+    Only the reported principal, the requested options, the partitions and the
+    enumerations with their outcomes are hashed. Detail calls, counts and the
+    principal's ``verified_by`` note never are: a new agent adds detail calls
+    and must not change the scope.
+    """
+    incomplete = "live collection was not verified or was incomplete"
+    if not isinstance(record, Mapping) or record.get("schema") != LIVE_SCOPE_SCHEMA:
+        return None, incomplete
+    requested, partitions = record.get("requested"), record.get("partitions")
+    operations, details = record.get("operations"), record.get("details")
+    if (
+        record.get("complete") is not True
+        or not isinstance(requested, Mapping)
+        or not isinstance(partitions, Mapping)
+        or not isinstance(operations, list)
+        or not isinstance(details, list)
+    ):
+        return None, incomplete
+    enumerations = []
+    for entry in [*operations, *details]:
+        if not isinstance(entry, Mapping) or entry.get("outcome") != "ok":
+            return None, incomplete
+    for entry in operations:
+        partition = entry.get("partition")
+        if (
+            not isinstance(entry.get("service"), str)
+            or not isinstance(entry.get("operation"), str)
+            or not (partition is None or isinstance(partition, str))
+        ):
+            return None, incomplete
+        enumerations.append([entry["service"], entry["operation"], partition, entry["outcome"]])
+    if not enumerations:
+        # Nothing was listed: there is no coverage to attest.
+        return None, incomplete
+    # A complete collection whose account, tenant or projects the provider did not confirm.
+    principal = record.get("principal")
+    if not isinstance(principal, Mapping) or not all(
+        isinstance(principal.get(key), str) and principal[key] for key in ("provider", "kind", "id")
+    ):
+        return None, "live principal could not be verified"
+    material = {
+        "principal": {key: principal[key] for key in ("provider", "kind", "id")},
+        "requested": dict(requested),
+        "partitions": dict(partitions),
+        "operations": sorted(enumerations, key=_canonical),
+    }
+    return material, ""
+
+
+def _live_summary(spec: ConnectorSpec, record: Any) -> dict[str, Any]:
+    """The public, unfingerprinted account of what one live connector collected."""
+    summary: dict[str, Any] = {"connector": spec.name, "label": spec.label}
+    if not isinstance(record, Mapping):
+        return {**summary, "complete": False}
+    fields = ("principal", "requested", "partitions", "operations", "details", "complete")
+    values = {key: record.get(key) for key in fields}
+    try:
+        if _has_private_scope_values(values) or sanitize(values) != values:
+            return {**summary, "complete": False}
+    except (RecursionError, TypeError, ValueError):
+        return {**summary, "complete": False}
+    return {**summary, **values}
+
+
 def build_collection_scope(
     config: ScanConfig,
     index: SignatureIndex,
     specs: list[ConnectorSpec],
     *,
     identity_key: bytes | None = None,
+    live_records: Sequence[Mapping[str, Any] | None] | None = None,
 ) -> dict[str, Any]:
-    """Describe selected static inputs without exposing any configuration values.
+    """Describe the selected inputs and attested live scopes without exposing configuration values.
 
-    Live provider identity/coverage and third-party implementations are not
-    attested here, so those scans cannot automatically resolve earlier findings.
+    ``live_records`` lists, in ``specs`` order, what each live built-in connector
+    recorded during collection (``ConnectorContext.scope_record``); the engine
+    passes them after collection. A live connector is attested only by its own
+    complete record with a verified principal and successful enumerations, and
+    every live record is also published under ``live``, outside the fingerprint.
+    Without records (before collection), live scopes are not attested. Third-party
+    implementations never are, so those scans cannot automatically resolve
+    earlier findings.
+
     A public digest of low-entropy credentials or binding labels would permit
     offline guessing. Such configurations have no exported fingerprint and
     cannot automatically resolve findings in a comparison.
@@ -111,17 +248,49 @@ def build_collection_scope(
     under a secret key cannot be tested against guessed labels or bindings,
     and a different key, which changes every gateway ID, changes the scope.
     """
+    records = (list(live_records) if live_records is not None else [])[: len(specs)]
+    records += [None] * (len(specs) - len(records))
+    scope = _collection_scope(config, index, specs, records, identity_key, live_records is not None)
+    summaries = [
+        _live_summary(spec, record) for spec, record in zip(specs, records, strict=True) if record is not None
+    ]
+    if summaries:
+        scope["live"] = summaries
+    return scope
+
+
+def _collection_scope(
+    config: ScanConfig,
+    index: SignatureIndex,
+    specs: list[ConnectorSpec],
+    records: list[Mapping[str, Any] | None],
+    identity_key: bytes | None,
+    collected: bool,
+) -> dict[str, Any]:
     unavailable = {"schema": _SCHEMA, "comparable": False}
     if not specs:
         return {**unavailable, "reason": "no connectors selected"}
     inputs: list[dict[str, Any]] = []
-    for spec in specs:
+    for spec, record in zip(specs, records, strict=True):
         if spec.name not in _BUILTIN:
             return {**unavailable, "reason": "third-party connector scope is not attested"}
         offline = isinstance(spec.config.get("input"), str) and bool(spec.config["input"])
         local = spec.name == "code.filesystem" and bool(spec.config.get("path") or spec.config.get("paths"))
         if not offline and not local:
-            return {**unavailable, "reason": "live collection scope is not attested"}
+            if not collected or (record is None and not _attests_live_scope(spec.name)):
+                return {**unavailable, "reason": "live collection scope is not attested"}
+            live, reason = _live_scope_material(record)
+            if live is None:
+                return {**unavailable, "reason": reason}
+            live_input = {"name": spec.name, "label": spec.label, "live": live}
+            try:
+                if sanitize(live_input) != live_input or _has_private_scope_values(live_input):
+                    # A value the sanitizer would change is a credential that slipped in.
+                    return {**unavailable, "reason": "configuration contains private comparison values"}
+            except (RecursionError, TypeError, ValueError):
+                return {**unavailable, "reason": "configuration contains private comparison values"}
+            inputs.append(live_input)
+            continue
         if spec.name == "code.filesystem" and spec.config.get("diff_base"):
             # Which files were read depends on Git state outside the configuration, and
             # unchanged files are not read at all: absence is not evidence of resolution.
@@ -154,26 +323,27 @@ def build_collection_scope(
             return {**unavailable, "reason": "configuration contains private comparison values"}
         inputs.append({"name": spec.name, "label": spec.label, "config": options})
     try:
-        fingerprint = hashlib.sha256(
-            _canonical(
-                {
-                    "inputs": sorted(inputs, key=_canonical),
-                    "min_confidence": config.min_confidence,
-                    "signatures": index.fingerprint(),
-                    "scanner": _scanner_digest(),
-                    "version": __version__,
-                    # Key rotation invalidates comparisons using keyed
-                    # credential evidence without revealing the secret key.
-                    "credential_identity_key": (
-                        hmac.digest(
-                            identity_key, b"shadowscan.collection-scope.credential-key.v1", "sha256"
-                        ).hex()
-                        if identity_key is not None
-                        else None
-                    ),
-                }
+        scope: dict[str, Any] = {
+            "inputs": sorted(inputs, key=_canonical),
+            "min_confidence": config.min_confidence,
+            "signatures": index.fingerprint(),
+            "scanner": _scanner_digest(),
+            "version": __version__,
+            # Key rotation invalidates comparisons using keyed
+            # credential evidence without revealing the secret key.
+            "credential_identity_key": (
+                hmac.digest(identity_key, b"shadowscan.collection-scope.credential-key.v1", "sha256").hex()
+                if identity_key is not None
+                else None
+            ),
+        }
+        if config.mcp_registries:
+            # Pinned snapshots change tags and scores. The key is added only when configured, so
+            # the fingerprints of scans without MCP registries, and their baselines, are unchanged.
+            scope["mcp_registries"] = sorted(
+                [source.id, source.sha256, source.approved] for source in config.mcp_registries
             )
-        ).hexdigest()
+        fingerprint = hashlib.sha256(_canonical(scope)).hexdigest()
     except (OSError, TypeError, ValueError):
         return {**unavailable, "reason": "collection scope could not be fingerprinted"}
     return {"schema": _SCHEMA, "comparable": True, "fingerprint": fingerprint}
@@ -268,7 +438,13 @@ def _findings(report: dict[str, Any]) -> dict[str, dict[str, Any]]:
 
 
 def _substantive_state(finding: dict[str, Any]) -> dict[str, Any]:
-    """Security state, excluding timestamps, counters, prose and evidence order."""
+    """Security state, excluding timestamps, counters, prose and evidence order.
+
+    Metadata is compared only at fixed paths: the autonomy interval, an MCP
+    tool's definition digest and the registry reconciliation status. Each is
+    None when absent, so findings without them compare as before; a malformed
+    value fails the comparison rather than reading as unchanged.
+    """
     state = {key: finding.get(key) for key in ("kind", "resource_type", "owner", "shadow", "registry_match")}
     for key in ("permissions", "capabilities", "frameworks", "model_providers", "models", "tags"):
         values = finding.get(key, [])
@@ -284,7 +460,148 @@ def _substantive_state(finding: dict[str, Any]) -> dict[str, Any]:
     state["risk.factors"] = sorted(
         {_canonical([factor.get("id"), factor.get("weight")]) for factor in factors}
     )
+    metadata = finding.get("metadata", {})
+    if not isinstance(metadata, dict):
+        raise ValueError("finding metadata must be an object")
+    autonomy = metadata.get("autonomy")
+    if "autonomy" in metadata and not valid_autonomy(autonomy):
+        raise ValueError("finding autonomy metadata is malformed")
+    for field in _AUTONOMY_FIELDS:
+        state[field] = autonomy[field.rpartition(".")[2]] if autonomy is not None else None
+    tool_hash = metadata.get("tool_definition_sha256")
+    if tool_hash is not None and not isinstance(tool_hash, str):
+        raise ValueError("finding tool definition digest must be a string")
+    state[_TOOL_HASH] = tool_hash
+    reconciliation = metadata.get(RECONCILIATION_KEY)
+    if RECONCILIATION_KEY in metadata and (
+        not isinstance(reconciliation, dict) or reconciliation.get("status") not in RECONCILIATION_STATUSES
+    ):
+        raise ValueError("finding registry reconciliation metadata is malformed")
+    state[_RECONCILIATION] = reconciliation["status"] if reconciliation is not None else None
     return state
+
+
+def _present(value: Any) -> bool:
+    """Whether a scalar says something: None, empty and blank strings do not."""
+    return value is not None and not (isinstance(value, str) and not value.strip())
+
+
+def _direction(field: str, before: Any, after: Any) -> str:
+    """``set`` from nothing, ``cleared`` to nothing, ``rose``/``fell`` for autonomy, else ``changed``."""
+    if not _present(before):
+        return "set"
+    if not _present(after):
+        return "cleared"
+    if field in _AUTONOMY_FIELDS:
+        # Levels are ordered by number, oversight and initiation by the autonomy each admits.
+        rank = _AUTONOMY_FIELDS[field]
+        higher = rank[after] > rank[before] if rank is not None else after > before
+        return "rose" if higher else "fell"
+    return "changed"
+
+
+def _adverse(field: str, before: Any, after: Any, direction: str) -> bool:
+    """Whether a changed scalar widens what the finding can do or weakens how it is governed."""
+    if field in _AUTONOMY_FIELDS:
+        # A first classification is not a rise: an unclassified finding was never known to be low.
+        return direction == "rose"
+    if field == _TOOL_HASH:
+        # A changed or lost definition digest; the first one recorded is not a change.
+        return direction != "set"
+    if field == "owner":
+        return direction == "cleared"
+    if field == "shadow":
+        return after is True
+    if field == "registry_match":
+        return direction != "set"
+    if field == _RECONCILIATION:
+        # Newly missing from a complete registry listing, or no longer matched by a record.
+        return bool(after == "observed-not-registered" or before == "registered-and-observed")
+    # kind and resource_type: the finding is now inventoried as something else.
+    return True
+
+
+_SCALAR_CLASSES = {
+    "kind": "inventory",
+    "resource_type": "inventory",
+    _TOOL_HASH: "capability",
+    **dict.fromkeys(_AUTONOMY_FIELDS, "autonomy"),
+    "owner": "governance",
+    "shadow": "governance",
+    "registry_match": "governance",
+    _RECONCILIATION: "governance",
+}
+
+
+def _list_parts(field: str, values: list[str]) -> list[tuple[str, set[str]]]:
+    """``(drift class, items)`` of a list field; governance tags are split from the other tags."""
+    items = set(values)
+    if field != "tags":
+        return [("capability", items)]
+    return [("capability", items - _GOVERNANCE_TAGS), ("governance", items & _GOVERNANCE_TAGS)]
+
+
+def _widens(field: str, added: set[str], removed: set[str]) -> bool:
+    """Whether a list change is adverse: something new, or a lost mitigating tag.
+
+    Anything new the finding can do or reach is adverse, whatever it lost. A
+    mitigating tag (:data:`~shadowscan.risk.MITIGATING_TAGS`) records a limit, so
+    losing one (``disabled`` on an agent enabled again) is adverse and gaining
+    one is not.
+    """
+    if field != "tags":
+        return bool(added)
+    return bool(added - MITIGATING_TAGS or removed & MITIGATING_TAGS)
+
+
+def _drift(
+    before: dict[str, Any], after: dict[str, Any], shown_before: dict[str, Any], shown_after: dict[str, Any]
+) -> list[dict[str, Any]]:
+    """Classify the differences between two substantive states of one finding.
+
+    Directions and adversity come from the observed states; the values shown come
+    from the states of the exported records, so nothing the export boundary
+    redacts is echoed. ``risk.*`` changes are not classified: ``--fail-on-new``
+    gates on risk level rises.
+    """
+    entries = []
+    for field, drift_class in _SCALAR_CLASSES.items():
+        if before[field] == after[field]:
+            continue
+        direction = _direction(field, before[field], after[field])
+        entries.append(
+            {
+                "class": drift_class,
+                "field": field,
+                "direction": direction,
+                "adverse": _adverse(field, before[field], after[field], direction),
+                "before": shown_before[field],
+                "after": shown_after[field],
+            }
+        )
+    for field in (*_CAPABILITY_LISTS, "tags"):
+        parts = zip(
+            _list_parts(field, before[field]),
+            _list_parts(field, after[field]),
+            _list_parts(field, shown_before[field]),
+            _list_parts(field, shown_after[field]),
+            strict=True,
+        )
+        for (drift_class, old), (_, new), (_, shown_old), (_, shown_new) in parts:
+            added, removed = new - old, old - new
+            if not added and not removed:
+                continue
+            entries.append(
+                {
+                    "class": drift_class,
+                    "field": field,
+                    "direction": "replaced" if added and removed else "added" if added else "removed",
+                    "adverse": _widens(field, added, removed),
+                    "added": sorted(shown_new - shown_old),
+                    "removed": sorted(shown_old - shown_new),
+                }
+            )
+    return sorted(entries, key=lambda entry: (DRIFT_CLASSES.index(entry["class"]), entry["field"]))
 
 
 def _identity_attested(report: dict[str, Any]) -> bool:
@@ -322,12 +639,110 @@ def _public_finding(record: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("report contains a finding that cannot be safely exported") from None
 
 
-def compare_reports(baseline: dict[str, Any], current: dict[str, Any]) -> dict[str, Any]:
+def _utcnow() -> datetime:
+    return datetime.now(UTC)
+
+
+def _started_at(report: dict[str, Any]) -> datetime | None:
+    """The report's ``started_at`` as a timezone-aware time; None when missing or unparseable."""
+    value = report.get("started_at")
+    if not isinstance(value, str):
+        return None
+    try:
+        moment = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return moment if moment.utcoffset() is not None else None
+
+
+def baseline_age_days(baseline: dict[str, Any], *, now: datetime | None = None) -> int | None:
+    """Whole days since the baseline scan started (negative if it claims a later time), or None.
+
+    A fleet report starts when its oldest source started, so its age is the age
+    of its oldest evidence.
+    """
+    started = _started_at(baseline)
+    if started is None:
+        return None
+    return ((now or _utcnow()) - started) // timedelta(days=1)
+
+
+def baseline_lifecycle_reasons(
+    baseline: dict[str, Any],
+    current: dict[str, Any],
+    *,
+    max_age_days: int | None,
+    now: datetime | None = None,
+) -> list[str]:
+    """Reasons a baseline cannot serve under an age limit; empty when it can or no limit is set.
+
+    Age is measured from the baseline's ``started_at``. A baseline whose start
+    time is missing, unparseable, without a timezone or in the future, or that
+    started after the current scan, cannot show that it is recent enough, so each
+    of those is a reason as well.
+    """
+    if max_age_days is None:
+        return []
+    if type(max_age_days) is not int or not 1 <= max_age_days <= MAX_BASELINE_AGE_DAYS:
+        raise ValueError(
+            f"maximum baseline age must be a positive number of days, at most {MAX_BASELINE_AGE_DAYS}"
+        )
+    moment = now or _utcnow()
+    started, current_started = _started_at(baseline), _started_at(current)
+    if started is None:
+        return ["baseline start time is missing or invalid; its age cannot be established"]
+    reasons = []
+    if started > moment + _CLOCK_SKEW:
+        reasons.append("baseline start time is in the future")
+    elif moment - started > timedelta(days=max_age_days):
+        reasons.append("baseline is older than --max-baseline-age-days")
+    if current_started is None:
+        reasons.append("current start time is missing or invalid; the baseline cannot be dated against it")
+    elif started > current_started:
+        reasons.append("baseline started after the current scan")
+    return reasons
+
+
+def _drift_totals(
+    new: list[dict[str, Any]],
+    resolved: list[dict[str, Any]],
+    changes: list[dict[str, Any]],
+    reasons: list[str],
+) -> tuple[dict[str, int], dict[str, bool]]:
+    """Per class, the findings with drift of that class and whether any of it is adverse.
+
+    New and resolved findings are inventory drift; a new one is adverse. Coverage
+    counts the reasons the comparison is incomplete, and any reason is adverse.
+    """
+    counts = dict.fromkeys(DRIFT_CLASSES, 0)
+    adverse = dict.fromkeys(DRIFT_CLASSES, False)
+    counts["inventory"] = len(new) + len(resolved)
+    adverse["inventory"] = bool(new)
+    for change in changes:
+        for drift_class in {entry["class"] for entry in change["drift"]}:
+            counts[drift_class] += 1
+        for entry in change["drift"]:
+            adverse[entry["class"]] = adverse[entry["class"]] or entry["adverse"]
+    counts["coverage"] = len(reasons)
+    adverse["coverage"] = bool(reasons)
+    return counts, adverse
+
+
+def compare_reports(
+    baseline: dict[str, Any],
+    current: dict[str, Any],
+    *,
+    max_baseline_age_days: int | None = None,
+    now: datetime | None = None,
+) -> dict[str, Any]:
     """Keep positive observations, but never infer absence from lost coverage.
 
     Unmatched findings with scan-local IDs are neither new, resolved nor
     unknown: they are listed under ``not_comparable`` and the comparison is
     incomplete. A scan-local ID present in both reports is compared as usual.
+    Each change lists its ``drift``; ``drift_summary`` and ``adverse`` total
+    them per class. With ``max_baseline_age_days``, a baseline that cannot be
+    shown to be that recent makes the comparison incomplete.
     """
     if not isinstance(baseline, dict) or not isinstance(current, dict):
         raise ValueError("reports must be JSON objects")
@@ -337,6 +752,7 @@ def compare_reports(baseline: dict[str, Any], current: dict[str, Any]) -> dict[s
     # verified generated identities stay under the model's protection.
     public_b = {identifier: _public_finding(record) for identifier, record in b.items()}
     public_c = {identifier: _public_finding(record) for identifier, record in c.items()}
+    moment = now or _utcnow()
     reasons = []
     for label, report in (("baseline", baseline), ("current", current)):
         if not _complete(report):
@@ -354,7 +770,8 @@ def compare_reports(baseline: dict[str, Any], current: dict[str, Any]) -> dict[s
     bs, cs = _scope_digest(baseline), _scope_digest(current)
     if not bs or not cs:
         reasons.append(
-            "collection scope is unavailable; regenerate legacy reports or use attested static inputs"
+            "collection scope is unavailable (see each report's collection_scope.reason); regenerate "
+            "legacy reports, or use attested static inputs or attested live connectors"
         )
     elif bs != cs:
         reasons.append("collection or detection scope differs")
@@ -366,24 +783,37 @@ def compare_reports(baseline: dict[str, Any], current: dict[str, Any]) -> dict[s
             "(metadata.identity_scope) and cannot be matched across scans; "
             f"set {IDENTITY_KEY_ENV} for both scans to compare gateway callers"
         )
+    reasons += baseline_lifecycle_reasons(baseline, current, max_age_days=max_baseline_age_days, now=moment)
     missing = [public_b[i] for i in sorted(b.keys() - c.keys() - set(local_b))]
     changes = []
     for identifier in sorted(b.keys() & c.keys()):
         before, after = _substantive_state(b[identifier]), _substantive_state(c[identifier])
         fields = sorted(key for key in before if before[key] != after[key])
         if fields:
+            shown = _substantive_state(public_b[identifier]), _substantive_state(public_c[identifier])
             changes.append(
-                {"before": public_b[identifier], "after": public_c[identifier], "changed_fields": fields}
+                {
+                    "before": public_b[identifier],
+                    "after": public_c[identifier],
+                    "changed_fields": fields,
+                    "drift": _drift(before, after, *shown),
+                }
             )
+    new = [public_c[i] for i in sorted(c.keys() - b.keys() - set(local_c))]
+    resolved = [] if reasons else missing
+    drift_summary, adverse = _drift_totals(new, resolved, changes, reasons)
     return {
         "comparable": not reasons,
         "reasons": reasons,
-        "new": [public_c[i] for i in sorted(c.keys() - b.keys() - set(local_c))],
-        "resolved": [] if reasons else missing,
+        "new": new,
+        "resolved": resolved,
         "unknown": missing if reasons else [],
         "changed": changes,
         "not_comparable": {
             "baseline": [public_b[i] for i in local_b],
             "current": [public_c[i] for i in local_c],
         },
+        "drift_summary": drift_summary,
+        "adverse": adverse,
+        "baseline": {"age_days": baseline_age_days(baseline, now=moment)},
     }

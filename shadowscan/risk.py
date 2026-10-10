@@ -26,6 +26,7 @@ from fractions import Fraction
 from typing import Any
 from urllib.parse import urlsplit
 
+from shadowscan.autonomy import LEVELS, level_title, observed_floor
 from shadowscan.models import Finding, Kind, Risk, RiskFactor, RiskLevel
 from shadowscan.signatures import SignatureIndex
 from shadowscan.signatures.schema import CAPABILITIES
@@ -91,6 +92,8 @@ TAG_WEIGHTS: dict[str, tuple[int, str]] = {
     "ci-credentials": (5, "provider credentials available to CI pipelines"),
     "no-authentication": (15, "no end-user authentication configured"),
     "no-auth-declared": (10, "agent card declares no security scheme"),
+    "a2a-plaintext-interface": (10, "A2A Agent Card declares a plaintext HTTP interface to a remote host"),
+    "a2a-card-signature-invalid": (10, "A2A Agent Card signature is malformed or fails verification"),
     "iam-auth-only": (0, "IAM-only authorisation"),
     "public-ingress": (10, "publicly reachable ingress"),
     "exposed-llm-server": (15, "LLM inference service is reachable beyond loopback or cluster scope"),
@@ -151,7 +154,38 @@ TAG_WEIGHTS: dict[str, tuple[int, str]] = {
     "hidden-instructions": (20, "instruction file carries content hidden from the rendered view"),
     "remote-code-fetch": (15, "instruction file downloads and executes code in one step"),
     "invisible-text": (10, "instruction file contains invisible or bidirectional control characters"),
+    "autonomy-understated": (10, "declared autonomy level is below the observed floor"),
+    # Review hints from options.mcp_registries. Publication never lowers risk; the
+    # mcp-not-in-approved-registry governance factor scores an approved catalog's gaps.
+    "mcp-registry-published": (0, "MCP server is listed in a configured MCP registry"),
+    "mcp-unpublished": (0, "MCP server is listed in no configured MCP registry"),
+    "mcp-registry-deprecated": (0, "MCP server is marked deprecated in an MCP registry"),
+    "mcp-registry-deleted": (0, "MCP server is marked deleted in an MCP registry"),
+    "mcp-registry-version-unpublished": (0, "MCP server pins a version its registry entry does not list"),
+    "mcp-registry-outdated": (0, "MCP server uses a version or endpoint other than the registry's latest"),
+    "mcp-registry-unidentified": (0, "MCP server's package or endpoint could not be identified"),
 }
+# Tags that record a limit or a control rather than something the finding can do: every tag
+# with a negative built-in weight, an install still awaiting approval, a credential in a
+# managed store and an MCP server its registry still publishes. Losing one widens the finding
+# (a disabled agent enabled again, evidence no longer confined to tests), so drift treats its
+# removal as adverse and its addition as not.
+MITIGATING_TAGS = frozenset(
+    {
+        "disabled",
+        "inactive",
+        "suspended",
+        "expired",
+        "asks-user",
+        "test-code-only",
+        "docs-only",
+        "example-code-only",
+        "generated-code-only",
+        "pending-request",
+        "managed-secret",
+        "mcp-registry-published",
+    }
+)
 
 PROVIDER_WEIGHTS: dict[str, tuple[int, str]] = {
     "provider.google-gemini": (5, "uses the consumer Gemini API (API keys outside cloud IAM)"),
@@ -168,10 +202,19 @@ PROVIDER_WEIGHTS: dict[str, tuple[int, str]] = {
 }
 
 
-GOVERNANCE_WEIGHTS: dict[str, int] = {"shadow": 25, "registered": -10, "no-owner": 10}
+GOVERNANCE_WEIGHTS: dict[str, int] = {
+    "shadow": 25,
+    "registered": -10,
+    "no-owner": 10,
+    # Only when an approved MCP registry is configured and loaded (options.mcp_registries).
+    "mcp-not-in-approved-registry": 15,
+}
 GOVERNANCE_FACTORS = frozenset(GOVERNANCE_WEIGHTS)
+# Weight of a finding's observed autonomy floor. Zero by default: the ``autonomous`` capability
+# and the approval-bypass tags already score the evidence behind a high floor.
+AUTONOMY_WEIGHTS: dict[str, int] = {f"L{level.number}": 0 for level in LEVELS}
 RISK_BASES = frozenset({"combined", "danger"})
-_WEIGHT_GROUPS = ("kinds", "capabilities", "tags", "providers", "governance")
+_WEIGHT_GROUPS = ("kinds", "capabilities", "tags", "providers", "governance", "autonomy")
 _KEY_RE = re.compile(r"[a-z0-9][a-z0-9._:-]{0,99}\Z")
 # Tags are open-ended (signature packs, plugins and identity types add their own), so an
 # unrecognised tag key cannot be rejected. It is reported once per process instead.
@@ -211,6 +254,7 @@ class RiskPolicy:
     providers: Mapping[str, tuple[int, str]] = field(default_factory=lambda: dict(PROVIDER_WEIGHTS))
     governance: Mapping[str, int] = field(default_factory=lambda: dict(GOVERNANCE_WEIGHTS))
     basis: str = "combined"
+    autonomy: Mapping[str, int] = field(default_factory=lambda: dict(AUTONOMY_WEIGHTS))
 
     @classmethod
     def from_options(
@@ -222,10 +266,10 @@ class RiskPolicy:
     ) -> RiskPolicy:
         """Validate ``options.risk_weights`` / ``options.risk_basis``; raise ValueError on any problem.
 
-        Capability keys must be in the closed capability vocabulary. Provider ids are the signature
-        ids of the loaded index, so they are checked only when the caller passes them as
-        ``known_providers`` (see :func:`provider_ids`). Tags are open-ended: an unfamiliar tag key
-        is reported once in the log and still accepted.
+        Capability keys must be in the closed capability vocabulary and autonomy keys are ``L0``
+        to ``L5``. Provider ids are the signature ids of the loaded index, so they are checked only
+        when the caller passes them as ``known_providers`` (see :func:`provider_ids`). Tags are
+        open-ended: an unfamiliar tag key is reported once in the log and still accepted.
         """
         if not isinstance(basis, str) or basis not in RISK_BASES:
             raise ValueError("risk_basis must be combined or danger")
@@ -236,14 +280,15 @@ class RiskPolicy:
         if unknown:
             raise ValueError(f"risk_weights has unknown groups: {', '.join(sorted(map(str, unknown)))}")
 
-        def group(name: str) -> dict[str, int]:
+        def group(name: str, keys: Collection[str] = ()) -> dict[str, int]:
             values = weights.get(name)
             values = {} if values is None else values
             if not isinstance(values, Mapping):
                 raise ValueError(f"risk_weights.{name} must be a mapping")
             out: dict[str, int] = {}
             for key, value in values.items():
-                if not isinstance(key, str) or not _KEY_RE.match(key):
+                # ``keys`` are fixed spellings outside the lowercase key syntax (autonomy L0-L5).
+                if not isinstance(key, str) or not (key in keys or _KEY_RE.match(key)):
                     raise ValueError(f"risk_weights.{name} has an invalid key")
                 if type(value) is not int or not -100 <= value <= 100:
                     raise ValueError(f"risk_weights.{name}.{key} must be an integer between -100 and 100")
@@ -259,8 +304,15 @@ class RiskPolicy:
         governance = dict(GOVERNANCE_WEIGHTS)
         for key, value in group("governance").items():
             if key not in GOVERNANCE_WEIGHTS:
-                raise ValueError(f"risk_weights.governance.{key} must be one of shadow, registered, no-owner")
+                raise ValueError(
+                    f"risk_weights.governance.{key} must be one of {', '.join(GOVERNANCE_WEIGHTS)}"
+                )
             governance[key] = value
+        autonomy = dict(AUTONOMY_WEIGHTS)
+        for key, value in group("autonomy", AUTONOMY_WEIGHTS).items():
+            if key not in AUTONOMY_WEIGHTS:
+                raise ValueError(f"risk_weights.autonomy.{key} must be one of {', '.join(AUTONOMY_WEIGHTS)}")
+            autonomy[key] = value
         capabilities = group("capabilities")
         for key in sorted(capabilities):
             if key not in CAPABILITIES:
@@ -294,6 +346,7 @@ class RiskPolicy:
             providers=described(PROVIDER_WEIGHTS, providers, "provider"),
             governance=governance,
             basis=basis,
+            autonomy=autonomy,
         )
 
 
@@ -387,6 +440,7 @@ def assess(
     factors.extend(_governance_factors(finding, inventory_present, policy))
     factors.extend(_weighted_factors(finding, index, policy))
     factors.extend(_metadata_factors(finding))
+    factors.extend(_autonomy_factors(finding, policy))
 
     total = sum(f.weight for f in factors)
     danger_total = sum(f.weight for f in factors if f.id not in GOVERNANCE_FACTORS)
@@ -421,7 +475,7 @@ def assess(
 
 
 def _governance_factors(finding: Finding, inventory_present: bool, policy: RiskPolicy) -> list[RiskFactor]:
-    """Inventory approval and ownership factors."""
+    """Inventory approval, ownership and approved-MCP-catalog factors."""
     factors: list[RiskFactor] = []
     # Governance factors describe approval and ownership, not capability. Under
     # the "danger" basis they weigh nothing, so they are omitted like any other
@@ -440,6 +494,26 @@ def _governance_factors(finding: Finding, inventory_present: bool, policy: RiskP
         w = policy.governance["no-owner"] * governance_scale
         if w:
             factors.append(RiskFactor("no-owner", "no identifiable owner", w))
+    # Written by the engine's MCP registry pass, which first removes any earlier value.
+    registry = finding.metadata.get("mcp_registry") if isinstance(finding.metadata, dict) else None
+    if (
+        finding.kind == Kind.MCP_SERVER
+        and isinstance(registry, dict)
+        and registry.get("approved_checked") is True
+    ):
+        missing = _as_int(registry.get("not_in_approved"))
+        # Unidentified servers are among the missing: an approved catalog cannot vouch for them.
+        unidentified = min(_as_int(registry.get("unidentified")), missing)
+        w = policy.governance["mcp-not-in-approved-registry"] * governance_scale
+        if missing > 0 and w:
+            note = f" ({unidentified} could not be identified)" if unidentified > 0 else ""
+            factors.append(
+                RiskFactor(
+                    "mcp-not-in-approved-registry",
+                    f"{missing} enabled MCP server(s) not listed in an approved MCP registry{note}",
+                    w,
+                )
+            )
     return factors
 
 
@@ -473,6 +547,20 @@ def _weighted_factors(finding: Finding, index: SignatureIndex | None, policy: Ri
         if notes:
             factors.append(RiskFactor("vendor-notes", "; ".join(dict.fromkeys(notes))[:300], 5))
     return factors
+
+
+def _autonomy_factors(finding: Finding, policy: RiskPolicy) -> list[RiskFactor]:
+    """The weight of the observed autonomy floor, recomputed from the finding rather than read
+    from ``metadata.autonomy``, so a stale or forged block cannot change the score."""
+    if not any(policy.autonomy.values()):
+        return []
+    floor = observed_floor(finding)
+    if floor is None:
+        return []
+    weight = policy.autonomy.get(f"L{floor}", 0)
+    if not weight:
+        return []
+    return [RiskFactor(f"autonomy:L{floor}", f"observed autonomy floor {level_title(floor)}", weight)]
 
 
 def _metadata_factors(finding: Finding) -> list[RiskFactor]:

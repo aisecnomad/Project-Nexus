@@ -23,7 +23,7 @@ from shadowscan import engine as engine_module
 from shadowscan.cli import main
 from shadowscan.config import ConfigValidationError, ConnectorSpec, ScanConfig
 from shadowscan.engine import Engine
-from shadowscan.models import ScanStats
+from shadowscan.models import DERIVED_METADATA_KEYS, ScanStats
 from shadowscan.plugin_process import _decode_result, _encode_result, _receive, _worker, _WorkerHandle
 from shadowscan.signatures import SignatureIndex
 
@@ -400,9 +400,14 @@ def test_non_json_metadata_round_trips_like_thread_mode(installed_probe, monkeyp
         sys.modules.pop(MODULE, None)
         registry._cache.pop(ENTRY, None)
     assert reported["process"] == reported["thread"]
+    # The engine derives the autonomy block after collection, for either backend alike.
+    assert reported["thread"].pop("autonomy")["schema"] == "shadowscan.autonomy/v1"
+    # Threat and control references are derived from the finding at export,
+    # not carried by the plugin (tests/unit/test_mappings.py covers them).
+    connector_metadata = {k: v for k, v in reported["thread"].items() if k not in DERIVED_METADATA_KEYS}
     # The report renders a datetime as text and reads a set as a list and
     # bytes as text; the transport must not change that rendering.
-    assert reported["thread"] == {"seen": "2026-01-01 00:00:00", "scopes": ["read"], "raw": "ab"}
+    assert connector_metadata == {"seen": "2026-01-01 00:00:00", "scopes": ["read"], "raw": "ab"}
 
 
 def test_plugin_allowlist_still_required_without_parent_import(installed_probe):

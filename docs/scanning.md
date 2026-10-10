@@ -775,17 +775,29 @@ source is named by its path below the reports' common directory
 (`host-a/report.json` for reports collected as `<host>/report.json`), or by
 its file name when the reports share a directory.
 
-Whatever the order of the sources, a merged finding is `shadow: true` when
-any source that reported it found it unregistered, `false` when one matched
-it to the inventory that scan was given, and `null` when none of the sources
-that reported it was given an inventory (by `--inventory` or the
-configuration's `inventory:` key). Scans made without an inventory never make
-a finding look unregistered: in a mixed fleet, a finding seen only on
-machines scanned without one stays `null` although the merged
-`inventory_present` is true. A registered finding keeps the first
-`registry_match` named by a source that matched it, in the order given. The
-merged `inventory_present` is true when any source had an inventory, even an
-empty one, and `inventory_size` is the largest source inventory.
+Registration counts only from sources that had an inventory
+(`inventory_present: true`: `--inventory`, the configuration's `inventory:`
+key or `trusted_registries`). Whatever the order of the sources, a merged
+finding is `shadow: true` when any such source found it unregistered, `false`
+when such sources matched it to the same agent, and `null` when none of the
+sources that reported it had an inventory. Sources that matched it to
+different agents make it ambiguous, as two matching inventory entries are in
+one scan: it is `shadow: true` with
+`registry_match_reason: ambiguous-resource-approval` and the candidates in
+`registry_suggestions`. The `shadow` and `registry_match` of a source without
+an inventory, and a `shadow: false` that names no `registry_match`, are
+ignored. Scans made without an inventory never make a finding look
+unregistered: in a mixed fleet, a finding seen only on machines scanned
+without one stays `null` although the merged `inventory_present` is true.
+The terminal table, Markdown and HTML reports label it `unassessed` and count
+such findings in the summary. A scan configured with
+`options.trusted_registries` reconciles its findings even when none of its
+connectors produced registry records, so it reports every unmatched finding
+as unregistered, and in a merge that wins over another source's match. Give
+such scans the same inventory files as the rest of the fleet, or configure
+trusted registries only on scans that run the connector that reads them.
+The merged `inventory_present` is true when any source had an inventory,
+even an empty one, and `inventory_size` is the largest source inventory.
 
 Report files are untrusted input. A finding id that another report already
 uses for a finding with another identity (resource, connector, account and
@@ -803,6 +815,98 @@ says why it is not comparable. Completion follows the sources: one incomplete
 source makes the merged report incomplete (exit 3). Reports with another
 finding identity schema are refused; rescan them first.
 
+## Live collection scope
+
+`cloud.aws`, `cloud.azure`, `cloud.gcp` and `identity.entra` attest the scope of
+a live collection, so that two live scans can be compared
+([comparing reports](#comparing-reports)). Each records, during collection, what
+its provider reported rather than what the configuration asked for:
+
+| Connector | Principal (reported by the provider) | Partitions | Enumerations |
+|---|---|---|---|
+| `cloud.aws` | the account STS `GetCallerIdentity` returns, never the caller ARN; `role_arn` is a requested option | the resolved `regions` (`all` resolves through `DescribeRegions`) | each selected service's listings per region, `GetAccountAuthorizationDetails`, CloudTrail `LookupEvents`, registry listings per region and per `registry_arns` registry |
+| `identity.entra` | the tenant `GET /organization` returns, for app-only credentials only (delegated listings, and those of an `access_token` that is not a decodable app-only token, are scoped to one user and are never attested); a `tenant_id` GUID that differs stops the scan | none: the tenant | the service principal, consent grant and application listings, and the opted-in agent identity and Agent 365 package listings |
+| `cloud.gcp` | the configured `projects`, each verified by its enabled-services listing; without `projects`, the set of projects a complete `projects.list` returned | configured `projects` and the resolved `locations` | for configured projects, every per-project and per-location listing; in discovery mode only `projects.list` |
+| `cloud.azure` | the configured `subscriptions`, each read with `GET /subscriptions/{id}`; without `subscriptions`, those `GET /subscriptions` lists | subscriptions | `GET /subscriptions` when listing, the Resource Graph query and each subscription's role assignments |
+
+The fingerprint covers, for each live entry, the principal, the requested
+options, the partitions and every enumeration with its outcome, together with
+the signatures, scanner and version that cover every scope. Requested options
+are the non-secret keys each connector lists, as resolved (environment
+fallbacks and defaults included; lists of names compare as sets): `account_id`,
+`role_arn`, `regions`, `services`, `cloudtrail_days`, `max_lambda`,
+`max_ecs_api_calls`, `max_registry_records` and `registry_arns` for AWS;
+`tenant_id`, `auth_mode`, `include_first_party`, `max_app_role_lookups`,
+`include_agent_identities`, `include_agent_registry`, `agent_registry_api` and
+`max_package_lookups` for Entra; `projects`, `locations`, `audit_days`,
+`max_projects`, `max_pages`, `agent_registry`, `agent_registry_version`,
+`agent_registry_locations`, `gemini_enterprise` and `discovery_collections` for
+GCP; `subscriptions` and `include_app_settings` for Azure. Credentials, profile
+names and credential files never enter it. Calls made once per discovered
+resource (an agent's aliases, a principal's app role assignments, a package's
+details, a service account's keys) are details: they are recorded per
+operation template and outcome and never fingerprinted, and neither are page
+or item counts, resource identifiers or timestamps. More pages, more resources
+and a new agent therefore keep the scope; the new agent is a new finding.
+
+A live entry attests nothing, and a comparison with it is incomplete (exit 3),
+when:
+
+- any listing was denied, throttled, truncated, unavailable or failed, or the
+  connector was otherwise incomplete or timed out: `live collection was not
+  verified or was incomplete`;
+- the provider did not confirm the principal, for example an Entra application
+  without `Organization.Read.All` or `Directory.Read.All`, or a configured
+  Azure subscription that could not be read: `live principal could not be
+  verified`. The scan itself completes, with an advisory warning;
+- an option holds a value the sanitizer would change, which would be a
+  credential: `configuration contains private comparison values`.
+
+Other live connectors (`code.github` and `code.gitlab` without `input`, the
+`saas.*` and `lowcode.*` connectors, and the other `identity.*` and `cloud.*`
+connectors) still report `live collection scope is not attested`, and plugins
+`third-party connector scope is not attested`. Changing the scope makes the
+next comparison incomplete, including enabling an API in a configured GCP
+project or a region under `regions: all`; collect a new baseline then.
+
+`collection_scope.live` lists each live entry's record: the principal and the
+call that verified it, the requested options, partitions, enumerations and
+details with their outcomes, and `complete`. It is outside the fingerprint,
+explains a `scope differs` or incomplete comparison, and is sanitized like the
+rest of the report; its account, tenant, project and subscription identifiers
+are ones findings already carry. A fleet merge of complete, attested live
+reports is comparable like any other merge; the merged report does not copy
+the sources' `live` records.
+
+Attestation shows which principal, partitions and operations a scan enumerated
+successfully, under which options. It does not show that the account or
+tenant has no agents outside the enumerated APIs, services, regions, locations
+or projects, or that a listing returned every object rather than those the
+credentials may read: Resource Graph and delegated Graph listings return only
+what the caller can see, without failing. For that reason a delegated
+`identity.entra` scan, or one whose `access_token` is not a decodable app-only
+token, is never attested: another user in the same tenant could see less
+without any error. In GCP discovery mode, and when
+`cloud.azure` lists its subscriptions, the principal is the discovered project
+or subscription set, so a project or subscription the credentials can no
+longer see changes the scope (exit 3) instead of resolving its findings, and a
+new one needs a reviewed re-baseline. Set `projects` or `subscriptions` to keep
+the scope stable.
+
+### Record export replay
+
+Comparing replays of record exports is the alternative for any built-in
+connector: collect live with `--dump-records` (or `options.dump_records`),
+replay each export with `input`, and diff the replays. Two pitfalls apply. The
+scope digest of an offline entry includes the absolute resolved `input` path,
+so stage every replay at the same path under the same label, or the comparison
+reports `scope differs`. And an export is published even when the live run
+behind it was incomplete (a denied listing is a warning, not an export
+failure), while the replay of that export can complete: check the export's
+`manifest.json` (`complete` for the run and `exported` for the entry) and
+replay only complete runs. A replay attests the export's contents, not the
+tenant's completeness.
+
 ## Comparing reports
 
 `shadowscan diff baseline.json current.json` reports new findings and substantive
@@ -818,19 +922,25 @@ selected source paths, connector settings, filters, confidence threshold,
 signatures and scanner implementation. File contents and inventory approvals
 are excluded so real removals and approval changes can be compared. A public
 digest does not hide guessable paths or labels; keep these settings nonsecret.
+With `options.mcp_registries` set, the digest also covers each registry's id,
+pinned SHA-256 and approval flag (not the snapshot's path): a different pinned
+snapshot changes tags and scores, so baselines taken with it are not comparable.
+Scans without the option keep the digest they had.
 Credential-bearing configurations omit the digest. Gateway exports attest
 comparable scope only when `SHADOWSCAN_IDENTITY_KEY` is set: an HMAC under that
 key stands in for their configuration, which can hold guessable labels and
 bindings. Without the key their private caller/scope identities change between
 scans.
 
-Incomplete scans, changed scope, older reports without provenance, live provider
-collections and third-party connectors cannot establish equivalent coverage.
-Their missing findings are reported as `unknown`, and diff exits 3. New and
-changed findings remain visible. Currently only local repositories and offline
-exports from built-in connectors can attest comparable scope, `gateway.logs`
-only when both scans were keyed with the same identity key; live account and
-permission coverage require additional provider-specific provenance. The digest
+Incomplete scans, changed scope, older reports without provenance, live
+collections that could not attest their scope and third-party connectors cannot
+establish equivalent coverage. Their missing findings are reported as
+`unknown`, and diff exits 3. New and changed findings remain visible. Local
+repositories, offline exports from built-in connectors and live collections by
+`cloud.aws`, `cloud.azure`, `cloud.gcp` and `identity.entra` can attest
+comparable scope ([live collection scope](#live-collection-scope)),
+`gateway.logs` only when both scans were keyed with the same identity key. Every
+other live connector and every third-party connector cannot. The digest
 covers the resolved absolute scan paths, so compare scans of the same checkout
 location; a label does not stand in for the path, because a narrower scan under
 the same label would otherwise make out-of-scope findings look resolved.
@@ -866,6 +976,41 @@ explicit plugin `identity_discriminator`) separate distinct observations on a
 resource. Regenerate comparison baselines after upgrading from legacy IDs;
 cross-schema comparisons retain missing findings as unknown. Incompatible cache
 entries cause a full rescan.
+
+### Drift classes and baseline lifecycle
+
+Every changed finding lists its `drift` in addition to its `changed_fields`.
+Each drift entry names a class:
+
+- `inventory`: new and resolved findings, kind and resource type;
+- `capability`: permissions, capabilities, frameworks, model providers,
+  models, tags, and an MCP tool's `metadata.tool_definition_sha256`;
+- `autonomy`: the floor, ceiling, oversight and initiation of
+  `metadata.autonomy`;
+- `governance`: owner, shadow status, registry match,
+  `metadata.registry_reconciliation.status` and the `autonomy-understated`
+  tag;
+- `coverage`: the reasons a comparison is incomplete.
+
+Each entry also says whether the change is adverse, for example an added
+permission, a higher autonomy floor or a lost owner.
+`--fail-on-drift inventory,capability,autonomy,governance` exits 2 on adverse
+drift in a listed class, and an incomplete comparison still exits 3. The JSON
+document adds `drift_summary` and `adverse` per class. No other metadata is
+compared, and a finding without these keys compares as before. A malformed
+value makes the report invalid input rather than unchanged. Risk changes are
+not classified; `--fail-on-new` gates on risk level rises.
+
+`--baseline-sha256 HEX` refuses (exit 1) a baseline file whose raw bytes do
+not have that SHA-256, before anything is printed. `--max-baseline-age-days N`
+makes the comparison incomplete (exit 3) in these cases:
+
+- the baseline scan started more than N days ago;
+- its `started_at` is missing, invalid, without a timezone or in the future;
+- it started after the current scan.
+
+[Scheduled drift detection](operations/drift.md) describes each class's
+adverse changes and the baseline review process.
 
 ## Completion and migration
 

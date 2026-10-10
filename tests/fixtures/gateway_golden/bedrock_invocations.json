@@ -5476,6 +5476,9 @@
       "category": "provider",
       "vendor": "Amazon Web Services"
      }
+    ],
+    "threats": [
+     "maestro-2025:L5"
     ]
    },
    "identity_discriminator": "caller",
@@ -5688,6 +5691,9 @@
       "category": "provider",
       "vendor": "Amazon Web Services"
      }
+    ],
+    "threats": [
+     "maestro-2025:L5"
     ]
    },
    "identity_discriminator": "caller",

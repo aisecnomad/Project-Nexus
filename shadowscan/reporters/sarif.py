@@ -16,6 +16,12 @@ emitted with a ``startLine`` (SARIF section 3.30), rule names match
 ``^[A-Za-z_][A-Za-z0-9_]*$``, timestamps are ISO 8601 UTC with a ``Z`` suffix or
 omitted (section 3.9), property-bag ``tags`` are distinct strings, and a key
 whose value would be ``null`` is omitted.
+
+Edition-qualified threat and control references (``shadowscan.mappings``) are
+evidence references, not compliance results. Each result lists its own under
+the ``threats`` and ``controls`` properties; a rule lists the union over its
+results under ``shadowscan/threats`` and ``shadowscan/controls`` and as tags,
+threats first, each group sorted, up to GitHub's limit of 20 tags per rule.
 """
 
 from __future__ import annotations
@@ -28,7 +34,7 @@ from typing import Any
 from urllib.parse import quote
 
 from shadowscan import __version__
-from shadowscan.compliance import compliance_references
+from shadowscan.mappings import finding_references
 from shadowscan.models import Finding, RiskLevel, ScanResult, Surface
 from shadowscan.reporters._publication import publication_stats
 
@@ -51,6 +57,10 @@ _RANK = {RiskLevel.INFO: 0, RiskLevel.LOW: 1, RiskLevel.MEDIUM: 2, RiskLevel.HIG
 _RULE_NAME_CHARS = re.compile(r"[^A-Za-z0-9_]")
 _SNIPPET_LIMIT = 200
 _MAX_LOCATIONS = 20
+# GitHub code scanning accepts at most 20 tags on a rule.
+_MAX_RULE_TAGS = 20
+_RULE_THREATS = "shadowscan/threats"
+_RULE_CONTROLS = "shadowscan/controls"
 _GCP_RESOURCE = re.compile(
     r"^projects/[^/]+/(?:global|locations|regions|serviceAccounts|service_accounts|zones)(?:/|$)"
 )
@@ -193,13 +203,26 @@ def _rule(f: Finding, rid: str) -> dict[str, Any]:
         "helpUri": _SEVERITY_GUIDE,
         "defaultConfiguration": {"level": _LEVEL[f.risk.level]},
         "properties": {
-            "tags": list(
-                dict.fromkeys(["ai-agent", f.surface.value, f.kind.value, *compliance_references(f.tags)])
-            ),
+            "tags": list(dict.fromkeys(["ai-agent", f.surface.value, f.kind.value])),
             _HEURISTIC_RISK: f.risk.level.value,
             _SCORE_BASIS: "heuristic-not-cvss",
         },
     }
+
+
+def _set_rule_references(rule: dict[str, Any], threats: set[str], controls: set[str]) -> None:
+    """Record the references of all of a rule's results on the rule.
+
+    The complete sorted unions are rule properties; the tags append threats,
+    then controls, to the rule's own tags and stop at GitHub's per-rule limit.
+    Neither depends on the order of the results.
+    """
+    properties = rule["properties"]
+    ordered = (sorted(threats), sorted(controls))
+    for key, refs in zip((_RULE_THREATS, _RULE_CONTROLS), ordered, strict=True):
+        if refs:
+            properties[key] = refs
+    properties["tags"] = list(dict.fromkeys([*properties["tags"], *ordered[0], *ordered[1]]))[:_MAX_RULE_TAGS]
 
 
 def _message_text(value: object) -> str:
@@ -212,7 +235,7 @@ def _message_text(value: object) -> str:
     return str(value).replace("\\", "\\\\").replace("[", "\\[").replace("]", "\\]")
 
 
-def _result(f: Finding, rid: str) -> dict[str, Any]:
+def _result(f: Finding, rid: str, threats: list[str], controls: list[str]) -> dict[str, Any]:
     title = _message_text(f.title)
     message = f"{title} — risk {f.risk.level.value} ({f.risk.score}), confidence {f.confidence:.2f}"
     if f.shadow:
@@ -235,6 +258,8 @@ def _result(f: Finding, rid: str) -> dict[str, Any]:
                 "capabilities": f.capabilities,
                 # A property bag's reserved ``tags`` key is a set of distinct strings.
                 "tags": list(dict.fromkeys(f.tags)),
+                "threats": threats or None,
+                "controls": controls or None,
                 "shadow": f.shadow,
                 # The SARIF level folds critical, high and medium into one warning.
                 "risk_level": f.risk.level.value,
@@ -286,6 +311,7 @@ def render_sarif(result: ScanResult) -> str:
         finding.sanitize()
     rules: dict[str, dict[str, Any]] = {}
     worst: dict[str, RiskLevel] = {}
+    references: dict[str, tuple[set[str], set[str]]] = {}
     results: list[dict[str, Any]] = []
     for f in result.findings:
         rid = _rule_id(f)
@@ -293,12 +319,17 @@ def render_sarif(result: ScanResult) -> str:
             worst[rid] = f.risk.level
         if rid not in rules:
             rules[rid] = _rule(f, rid)
-        results.append(_result(f, rid))
+        threats, controls = finding_references(f)
+        rule_threats, rule_controls = references.setdefault(rid, (set(), set()))
+        rule_threats.update(threats)
+        rule_controls.update(controls)
+        results.append(_result(f, rid, threats, controls))
     # Code-scanning UIs show a rule's level for all of its alerts: use the
     # most severe result, independent of report ordering.
     for rid, level in worst.items():
         rules[rid]["defaultConfiguration"]["level"] = _LEVEL[level]
         rules[rid]["properties"][_HEURISTIC_RISK] = level.value
+        _set_rule_references(rules[rid], *references[rid])
     sarif = {
         "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
         "version": "2.1.0",

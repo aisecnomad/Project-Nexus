@@ -101,6 +101,7 @@ NOT_INTEGERS = [True, False, 1.5, float("nan"), float("inf"), "abc", "1.5"]
 LIMITS = [
     (AwsConnector, "max_lambda"),
     (AwsConnector, "max_ecs_api_calls"),
+    (AwsConnector, "max_registry_records"),
     (GcpConnector, "max_projects"),
     (GatewayLogConnector, "min_events"),
     (TeamsConnector, "max_teams"),

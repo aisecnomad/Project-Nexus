@@ -1,4 +1,8 @@
-"""Offline-first endpoint and runtime inventory connectors."""
+"""Offline-first endpoint and runtime inventory connectors.
+
+``endpoint.mcp`` also fetches A2A Agent Cards, but only from URLs the operator
+lists in ``agent_card_urls`` (see :mod:`shadowscan.connectors.endpoint.a2a`).
+"""
 
 from __future__ import annotations
 
@@ -9,11 +13,23 @@ from collections import defaultdict
 from collections.abc import Callable, Iterable, Iterator
 from itertools import islice
 from typing import Any, ClassVar
+from urllib.parse import urlsplit
 
-from shadowscan.connectors.base import BaseConnector
-from shadowscan.connectors.common import finalize
+from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
+from shadowscan.connectors.code.semantic_config import (
+    a2a_card_metadata,
+    a2a_card_tags,
+    a2a_signature_state,
+    a2a_unsupported_protocol_version,
+    validate_agent_manifest,
+)
+from shadowscan.connectors.common import apply_matches, failure_summary, finalize
+from shadowscan.connectors.endpoint import a2a
 from shadowscan.models import Evidence, Finding, Kind, Surface
-from shadowscan.utils.redaction import sanitize_text
+from shadowscan.utils.http import diagnostic_url
+from shadowscan.utils.jcs import CanonicalizationError
+from shadowscan.utils.jwks import fetch_jwks
+from shadowscan.utils.redaction import REDACTED, SanitizationLimitError, sanitize, sanitize_text
 
 _MAX_LABEL = 160
 _MAX_TOOLS = 500
@@ -205,10 +221,74 @@ class HostConnector(_EndpointConnector):
 class MCPInventoryConnector(_EndpointConnector):
     name = "endpoint.mcp"
     provider = "mcp"
-    description = "Analyze offline MCP server tool, resource, and prompt inventory exports."
+    description = (
+        "MCP and A2A endpoint inventory: offline MCP tool-list exports and opt-in A2A Agent Card probes."
+    )
     config_keys = {
-        "input": "Offline MCP list-responses JSON / JSONL export; live probes require explicit opt-in."
+        "input": "Offline MCP list-responses JSON / JSONL export, or A2A card records from --dump-records.",
+        "agent_card_urls": (
+            "opt-in live probe: list of HTTPS A2A Agent Card URLs or agent origins; an origin is probed at "
+            "/.well-known/agent-card.json (then /.well-known/agent.json on 404); URLs inside a card are "
+            "never fetched; refused together with input"
+        ),
+        "max_agent_cards": (
+            "maximum number of agent_card_urls (default 100); a longer list is refused, never truncated"
+        ),
+        "agent_card_jwks_url": (
+            "optional operator-trusted HTTPS JWKS endpoint that verifies Agent Card signatures; keys or key "
+            "URLs named by a card are never used"
+        ),
+        "ca_bundle": (
+            "optional PEM file trusted instead of the default CA store for Agent Card and JWKS endpoints "
+            "(private CA)"
+        ),
     }
+
+    def __init__(self, ctx: ConnectorContext) -> None:
+        super().__init__(ctx)
+        self._card_urls = a2a.agent_card_urls(ctx.get("agent_card_urls"), ctx.get("max_agent_cards"))
+        if self._card_urls and self.offline:
+            # A replay never probes: the listed agents would silently go unchecked.
+            raise ConnectorError(
+                "endpoint.mcp: input replays an export and never probes agent_card_urls; set one or the other"
+            )
+        jwks_url = ctx.get("agent_card_jwks_url")
+        self._card_jwks_url = None if jwks_url is None else a2a.https_url(jwks_url, "agent_card_jwks_url")
+        # The operator's key set, fetched once per run on first use; False after a failed fetch.
+        self._card_keys: dict[str, Any] | bool | None = None
+
+    def collect(self) -> Iterable[dict[str, Any]]:
+        if not self._card_urls:
+            return super().collect()
+        return self._probe_cards()
+
+    def _probe_cards(self) -> Iterator[dict[str, Any]]:
+        """Fetch each configured card; every failure is an error and the scan is incomplete."""
+        ca_bundle = self.ctx.get("ca_bundle")
+        for url in self._card_urls:
+            self.ctx.check_deadline()
+            origin = diagnostic_url(url)
+            try:
+                card_url, card = a2a.fetch_card(url, ca_bundle=ca_bundle)
+            except Exception as exc:  # noqa: BLE001 - one unreachable agent must not stop the others
+                self.ctx.error(
+                    f"endpoint.mcp: A2A Agent Card fetch from {origin} failed ({failure_summary(exc)})"
+                )
+                continue
+            if not isinstance(card, dict):
+                self.ctx.error(f"endpoint.mcp: A2A Agent Card from {origin} is not a JSON object")
+                continue
+            yield {
+                "record_type": a2a.RECORD_TYPE,
+                "card_url": card_url,
+                "card_path": urlsplit(card_url).path,
+                "card": card,
+            }
+
+    def _export_record(self, record: dict[str, Any]) -> dict[str, Any]:
+        if record.get("record_type") == a2a.RECORD_TYPE and isinstance(record.get("card"), dict):
+            return {**record, "card": a2a.export_card(record["card"])}
+        return record
 
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
         names_by_server: dict[str, set[str]] = defaultdict(set)
@@ -218,6 +298,16 @@ class MCPInventoryConnector(_EndpointConnector):
         count = 0
         limit_hit = False
         for record in records:
+            # Tool-list records have no discriminator; any record that names a
+            # type is a card or unsupported, never read as an MCP server.
+            if "record_type" in record:
+                if record["record_type"] == a2a.RECORD_TYPE:
+                    card_finding = self._card_finding(record)
+                    if card_finding is not None:
+                        yield card_finding
+                else:
+                    self.ctx.warn("endpoint.mcp: unsupported record_type")
+                continue
             server = _text(record.get("server") or record.get("name") or record.get("url"))
             if not server:
                 self.ctx.warn("endpoint.mcp: record has no server identifier")
@@ -297,6 +387,134 @@ class MCPInventoryConnector(_EndpointConnector):
                 },
                 weight=0.8 if tags else 0.65,
             )
+
+    # ------------------------------------------------------------ A2A cards
+    def _card_finding(self, record: dict[str, Any]) -> Finding | None:
+        """One finding per fetched or replayed card; the card is re-validated, never trusted."""
+        url, card = record.get("card_url"), record.get("card")
+        if not isinstance(card, dict):
+            self.ctx.warn("endpoint.mcp: A2A card record has no card object")
+            return None
+        try:
+            resource = a2a.card_resource(a2a.https_url(url, "card_url"))
+        except ConnectorError:
+            self.ctx.warn("endpoint.mcp: A2A card record has no valid HTTPS card_url")
+            return None
+        origin = diagnostic_url(resource)
+        self.ctx.examined()
+        validation = validate_agent_manifest(card, "a2a")
+        if not validation.valid:
+            state = "incomplete" if validation.incomplete else "invalid"
+            self.ctx.error(
+                f"endpoint.mcp: {state} A2A Agent Card at {origin}: {'; '.join(validation.errors)}"
+            )
+            if not validation.incomplete:
+                return None
+        signature, signed = self._card_signature(card)
+        # A verified card is read as its signature covers it: the served card may carry empty
+        # values the signer dropped (an empty securitySchemes entry), and they decide nothing.
+        read = card if signed is None else signed
+        try:
+            # Whole-document context recognizes an opaque secret from its siblings.
+            shown = sanitize(read)
+        except (SanitizationLimitError, RecursionError):
+            self.ctx.error(
+                f"endpoint.mcp: A2A Agent Card at {origin} omitted: sanitization safety limit exceeded"
+            )
+            return None
+        if a2a_unsupported_protocol_version(card):
+            self.ctx.warn(
+                f"endpoint.mcp: A2A Agent Card at {origin} declares a protocol version other than "
+                "0.x or 1.x; its fields were read as A2A 0.3 and 1.0 fields"
+            )
+        agent_card = a2a_card_metadata(read, shown, signature)
+        name = _text(agent_card["name"]) or resource
+        prefix = "Incomplete A2A Agent Card" if validation.incomplete else "A2A Agent Card"
+        finding = Finding(
+            surface=self.surface,
+            connector=self.name,
+            kind=Kind.AGENT,
+            title=_text(f"{prefix}: {name}", 300),
+            resource=resource,
+            resource_type="a2a-agent-card",
+            provider="a2a",
+            identity_discriminator="a2a-card",
+            metadata={"agent_card": agent_card, "card_path": urlsplit(resource).path},
+        )
+        finding.add_framework("protocol.a2a")
+        if validation.valid:
+            finding.add_capability("multi-agent")
+        finding.add_evidence(
+            Evidence(
+                signal="a2a:card-probe",
+                description=f"A2A Agent Card served at {origin}",
+                location=resource,
+                weight=0.95 if validation.valid else 0.6,
+                signature="protocol.a2a",
+            )
+        )
+        finding.add_evidence(
+            Evidence(
+                signal="a2a:card-signature",
+                description=_SIGNATURE_EVIDENCE[agent_card["signature"]],
+                location=resource,
+                weight=0.0,
+            )
+        )
+        for interface in agent_card["interfaces"]:
+            apply_matches(finding, self.index.match_domains_in_text(interface["url"]), location=resource)
+        for tag in a2a_card_tags(read, agent_card["signature"]):
+            finding.add_tag(tag)
+        finalize(finding, self.index)
+        if validation.incomplete:
+            # Evidence of the protocol, never of an agent; its errors keep the scan incomplete.
+            finding.kind = Kind.FRAMEWORK_USAGE
+            finding.add_tag("incomplete-agent-card")
+            finding.metadata["card_errors"] = list(validation.errors)
+        else:
+            finding.kind = Kind.AGENT
+        return finding
+
+    def _card_signature(self, card: dict[str, Any]) -> tuple[tuple[str, str | None], dict[str, Any] | None]:
+        """The card's signature ``(state, reason)``, verified against the operator's key set when one
+        is configured, and the form of the card a verified signature covers (None otherwise)."""
+        state, reason = a2a_signature_state(card)
+        if state != "present-unverified" or self._card_jwks_url is None:
+            return (state, reason), None
+        if self.offline and REDACTED in json.dumps(card, ensure_ascii=False, default=str):
+            # --dump-records sanitized part of the card or its signatures, so the
+            # replayed card is no longer what was signed.
+            return ("present-unverified", "the export redacted part of the card; signature not checked"), None
+        try:
+            forms = a2a.signed_forms(card)
+        except CanonicalizationError as exc:
+            return ("invalid", str(exc)), None
+        keys = self._trusted_card_keys()
+        if keys is None:
+            return ("present-unverified", "operator-trusted keys unavailable; signature not checked"), None
+        state, reason, signed = a2a.verify_card(card, forms, keys)
+        return (state, reason), signed
+
+    def _trusted_card_keys(self) -> dict[str, Any] | None:
+        """Fetch the operator's JWKS once per run; a failure is recorded once and the scan is incomplete."""
+        if self._card_keys is None:
+            try:
+                self._card_keys = fetch_jwks(str(self._card_jwks_url), ca_bundle=self.ctx.get("ca_bundle"))
+            except Exception as exc:  # noqa: BLE001 - remembered so every card reports the same outcome
+                self.ctx.error(
+                    f"endpoint.mcp: agent_card_jwks_url could not be read ({failure_summary(exc)}); "
+                    "Agent Card signatures stay unverified"
+                )
+                self._card_keys = False
+        return self._card_keys if isinstance(self._card_keys, dict) else None
+
+
+_SIGNATURE_EVIDENCE = {
+    "absent": "card is not signed",
+    "present-unverified": "card signature present but NOT verified (no operator-trusted key set checked it)",
+    "verified": "card signature verified against the operator-trusted key set (agent_card_jwks_url)",
+    "invalid": "card signature is malformed or does not verify against the operator-trusted key set",
+}
 
 
 class OtelConnector(_EndpointConnector):

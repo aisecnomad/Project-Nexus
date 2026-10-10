@@ -205,6 +205,15 @@ class TestDiffIncluded:
         assert self.included("go.mod", diff)
         assert self.included("sub/Pipfile", diff)
 
+    def test_agent_settings_always_included(self) -> None:
+        # Regression: an unchanged settings.local.json was left out, so a changed
+        # settings.json alone recorded an every-action approval gate.
+        diff = frozenset({".claude/settings.json"})
+        assert self.included(".claude/settings.local.json", diff)
+        assert self.included("svc/.codex/config.toml", diff)
+        assert self.included(".config/goose/config.yaml", diff)
+        assert not self.included(".claude/agents/reviewer.md", diff)
+
     def test_env_file_always_included(self) -> None:
         diff = frozenset({"src/app.py"})
         assert self.included(".env", diff)

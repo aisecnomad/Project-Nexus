@@ -1,0 +1,45 @@
+name: Checkmarx Scan
+
+# Optional third-party SAST, SCA and KICS scan through Checkmarx One
+# (https://github.com/Checkmarx/ast-github-action), pinned by full commit SHA.
+# The CLI uploads a zip of the repository to Checkmarx One, so the job runs only
+# when the repository variable CX_BASE_URI names the tenant's base URI (for
+# example https://ast.checkmarx.net) and the CX_CLIENT_ID, CX_CLIENT_SECRET and
+# CX_TENANT secrets exist; until then it is skipped rather than failing every
+# run. Pull requests from forks receive no secrets and a read-only token, so
+# they are skipped too. Results are uploaded to code scanning as SARIF.
+on:
+  pull_request:
+    types: [opened, reopened, synchronize]
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    if: >-
+      vars.CX_BASE_URI != '' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Checkmarx One scan
+        uses: checkmarx/ast-github-action@8e887bb93dacc44e0f5b64ee2b06d5815f89d4fc
+        with:
+          base_uri: ${{ vars.CX_BASE_URI }}
+          cx_client_id: ${{ secrets.CX_CLIENT_ID }}
+          cx_client_secret: ${{ secrets.CX_CLIENT_SECRET }}
+          cx_tenant: ${{ secrets.CX_TENANT }}
+          additional_params: --report-format sarif --output-path .
+      - name: Upload SARIF file
+        uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+        with:
+          sarif_file: cx_result.sarif

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import io
+import re
 
 import pytest
 from rich.console import Console
@@ -125,3 +126,23 @@ def test_saved_report_summaries_do_not_claim_an_inventory_when_absent(make_findi
     output = render(ScanResult(findings=findings, stats=_stats()))
 
     assert "registered agents" not in output
+
+
+@pytest.mark.parametrize("render", [render_markdown, render_html, _table])
+def test_fleet_findings_no_inventory_assessed_are_labelled_unassessed(make_finding, render):
+    # A fleet merge keeps shadow: null for a finding only inventory-less
+    # sources reported; with an inventory present, a blank cell reads as clean.
+    findings = [make_finding(shadow=None), make_finding(shadow=False, registry_match="crm-bot")]
+    result = ScanResult(findings=findings, stats=_stats(), inventory_size=1, inventory_present=True)
+
+    output = render(result)
+
+    assert re.search(r"\b1\s*unassessed", re.sub(r"<[^>]+>|\*\*", " ", output))
+    assert "unassessed" in output.split("Findings", 1)[-1]
+
+
+@pytest.mark.parametrize("render", [render_markdown, render_html, _table])
+def test_findings_without_any_inventory_are_not_labelled_unassessed(make_finding, render):
+    result = ScanResult(findings=[make_finding(shadow=None)], stats=_stats())
+
+    assert "unassessed" not in render(result)

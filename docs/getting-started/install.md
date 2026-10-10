@@ -43,6 +43,7 @@ python -m pip wheel . --no-deps --no-build-isolation --wheel-dir dist
 python -m pip install --no-deps dist/nexusshadowscan-*.whl
 python -m pip check
 python -m shadowscan.signatures.validate
+python -m shadowscan.mappings.validate
 shadowscan --help
 ```
 

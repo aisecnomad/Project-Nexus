@@ -78,9 +78,13 @@ def test_engine_source_names_no_connector_and_imports_no_connector_module():
 
 def test_base_connector_hooks_describe_an_ordinary_connector():
     assert BaseConnector.uses_run_identity_key is False
+    assert BaseConnector.emits_registry_records is False
+    assert BaseConnector.registry_record_types == frozenset()
     assert BaseConnector.inherits_instance_credentials_approval() is False
     assert BaseConnector.cache_roots_separately(["a", "b"], None, labelled=False) is False
     assert BaseConnector.scanned_local_paths({"path": "/srv/repo", "paths": ["/srv/other"]}) == []
+    assert BaseConnector.attests_live_scope is False
+    assert BaseConnector.scope_options == frozenset()
 
 
 def test_builtin_connectors_declare_exactly_the_hooks_the_engine_used_to_hard_code():
@@ -113,6 +117,21 @@ def test_builtin_connectors_declare_exactly_the_hooks_the_engine_used_to_hard_co
         if any("scanned_local_paths" in vars(klass) for klass in cls.__mro__ if klass is not BaseConnector)
     }
     assert scanning_local_trees == {"code.filesystem", "code.github", "code.gitlab", "endpoint.inventory"}
+    # An approved record of a trusted registry approves findings: only registry readers may emit one.
+    assert {name for name, cls in classes.items() if cls.emits_registry_records} == {
+        "cloud.aws",
+        "cloud.gcp",
+        "identity.entra",
+    }
+    assert {name for name, cls in classes.items() if cls.registry_record_types} == {
+        "cloud.aws",
+        "cloud.gcp",
+        "identity.entra",
+    }
+    # Live connectors whose scope comparison.build_collection_scope can attest after collection.
+    attesting = {name for name, cls in classes.items() if cls.attests_live_scope}
+    assert attesting == {"cloud.aws", "cloud.azure", "cloud.gcp", "identity.entra"}
+    assert {name for name, cls in classes.items() if cls.scope_options} == attesting
 
 
 @pytest.mark.parametrize(

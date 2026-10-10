@@ -41,12 +41,20 @@ export suffixes (a `README.md`, `.DS_Store` or rotated log): remove it or point
 
 The offline inventories (`endpoint.host`, `endpoint.mcp`, `endpoint.ollama`,
 `endpoint.models`, `endpoint.ebpf`, `gateway.otel`, `cloud.kubernetes` and
-`cloud.openshift`) are **offline-only**. See the
+`cloud.openshift`) analyze exports. See the
 [Kubernetes and OpenShift guide](connectors/kubernetes.md) for workload exports
 and the [endpoint guide](connectors/endpoint.md) for MCP, OTLP, Ollama,
-model-artifact metadata, and eBPF exports. These connectors do not perform live
-probes or local host filesystem discovery, and their findings carry no device
-name, so lifecycle links do not apply to them.
+model-artifact metadata, and eBPF exports. These connectors do not perform
+local host filesystem discovery, and their findings carry no device name, so
+lifecycle links do not apply to them. The one live probe among them is opt-in:
+`endpoint.mcp` fetches the A2A Agent Cards listed in `agent_card_urls` (at most
+`max_agent_cards`, default 100), optionally verifies their signatures against
+the operator-trusted keys at `agent_card_jwks_url`, and trusts a private CA
+from `ca_bundle` (see the
+[A2A Agent Card probe](connectors/endpoint.md#a2a-agent-card-probe)). It never
+fetches a URL declared inside a card and never contacts an MCP server. A job
+that sets both `input` and `agent_card_urls` is refused (exit 3), because a
+replay never probes.
 Model metadata is not parsed from GGUF/safetensors files, and MCP fingerprints
 have no rug-pull baseline. When no `input` is set, `endpoint.inventory` reads a
 fixed list of local user-scope locations and `runtime.processes` reads `/proc`
@@ -67,9 +75,9 @@ Connectors that page through a live API accept `max_pages`, a positive integer
 (default 1000; larger values are capped at 1000). Zero, a negative or fractional
 number, a boolean or non-numeric text is a configuration error, never a silent
 one-page scan; reaching the page bound marks coverage incomplete. The other
-integer limits (`max_lambda`, `max_ecs_api_calls`, `max_projects`,
+integer limits (`max_lambda`, `max_ecs_api_calls`, `max_registry_records`, `max_projects`,
 `min_events`, `max_teams`, `max_records`, `max_users`,
-`max_app_role_lookups`) follow the same rule, and the look-back windows
+`max_app_role_lookups`, `max_package_lookups`) follow the same rule, and the look-back windows
 `cloudtrail_days` and `audit_days` are non-negative integers, where 0 switches
 the lookup off: `cloudtrail_days: 0.5` is an error, not a disabled lookup.
 
@@ -289,6 +297,9 @@ Semantic Kernel, separate configured capabilities from framework availability.
 Empty/unknown tool and delegation collections stay potential; planning vocabulary
 and limit names alone do not imply autonomy. See the [code connector guide](connectors/code.md)
 for supported options, primary SDK contracts and dynamic-configuration limits.
+Coding-agent settings that make a person approve actions (Claude Code, Codex,
+Goose) are recorded as `metadata.approval_gate` for the
+[autonomy tiers](concepts/autonomy.md).
 
 Agent filenames select structural discovery checks. Empty/invalid LangGraph,
 A2A, M365 and CrewAI manifests yield incomplete coverage instead of strong
@@ -296,7 +307,18 @@ agent findings. An A2A card that names its agent and declares an endpoint,
 skills or capabilities but misses other required fields still gets its own
 `protocol.a2a` framework-usage finding, tagged `incomplete-agent-card` with
 the errors in `metadata.card_errors`, never an agent finding; the errors also
-keep the scan incomplete. JSON/YAML descriptions are not
+keep the scan incomplete. A card's `metadata.agent_card` is the projection the
+[A2A Agent Card probe](connectors/endpoint.md#a2a-agent-card-probe) uses: A2A 1.0 `supportedInterfaces` and 0.3
+`url`/`additionalInterfaces` (scheme, host, port and path only; an interface
+URL with user information or a backslash before its host is left out, since
+HTTP clients can read another host from it), and a
+signature state of `absent`, `present-unverified` or `invalid` (card files are
+never verified). Cards are tagged `no-auth-declared`, `a2a-plaintext-interface`
+(an `http://` or `ws://` interface to a host not known to be loopback, such an
+interface included) and
+`a2a-card-signature-invalid` (a malformed signature entry). A card that
+declares a protocol version other than 0.x or 1.x is still reported, with a
+warning that makes the scan incomplete. JSON/YAML descriptions are not
 executed or treated as source; low-code
 matching projects operational fields only. These predicates are not complete
 versioned vendor schema validators.
@@ -331,6 +353,15 @@ itself an MCP document: servers passed as a JSON object in a step input (for
 example `run-gemini-cli` `settings` or `claude-code-action` `mcp_config`) are
 reported from that workflow, and an embedded object that cannot be parsed
 makes the scan incomplete.
+
+With `options.mcp_registries`, the engine matches each configured MCP server
+against pinned MCP Registry snapshots by what its client fetches or connects
+to: the launched package for a command, the URL for a remote transport, and
+every declared package and remote for a `server.json` manifest. Servers get
+`registry` entries, findings get review tags such as `mcp-unpublished`,
+`mcp-registry-outdated` and `mcp-registry-unidentified` (weight 0), and an
+approved registry adds the `mcp-not-in-approved-registry` governance factor,
+which also counts servers that cannot be identified; see [MCP registry provenance](connectors/code.md#mcp-registry-provenance).
 
 Options: `path`/`paths`, `root_ids`, `exclude`, `default_excludes`, `max_file_size`, `max_files`, `max_entries`,
 `max_notebook_size`, `max_ast_nodes`, `scan_timeout`, `scan_secrets`,
@@ -532,9 +563,45 @@ Client credentials: `tenant_id`, `client_id` and `client_secret` (env
 `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`).
 `include_first_party: true` also reports Microsoft first-party service
 principals that match no AI signature; Copilot ones are always kept.
-`max_app_role_lookups` caps the per-service-principal `appRoleAssignments`
-calls (default 2000). Reaching the cap leaves app-only permissions partial and
-the scan incomplete.
+`max_app_role_lookups` caps the per-principal `appRoleAssignments` calls,
+listed agent identities included (default 2000). Reaching the cap leaves
+app-only permissions partial and the scan incomplete.
+
+Two collections are off by default. `include_agent_registry: true` lists the
+Microsoft Agent 365 package catalog (`agent_registry_api: v1.0`, the default,
+or `beta`) and reads each package's details, at most `max_package_lookups`
+(default 2000); each package becomes a vendor registry record finding
+(`microsoft-agent-365`, registry id `tenant_id`). It needs
+`CopilotPackages.Read.All`, and a pre-issued `access_token` must be a JWT whose
+`tid` claim is `tenant_id`. With an opt-in collection, a pre-issued token must
+be issued for Microsoft Graph (`aud`), and one that is not app-only (`scp`, or
+no `idtyp: app`) gives caller-scoped listings and an incomplete scan. A package
+binds only a listed agent identity and, for an organization's own package, its
+app registration; a package whose details are missing is `unknown` and binds
+nothing, and an organization's own package with no approval request is
+`registered`, not `approved`.
+`include_agent_identities: true` lists Entra Agent ID
+agent identities from the Graph beta API; they enrich the service principal
+finding of the same id or stand alone, and are always reported. Records of the
+deprecated Entra agent registry are read from offline exports only, as
+`deprecated` records that never approve. `auth_mode: delegated` reads a
+signed-in user's Graph token from the environment variable named by
+`delegated_token_env` (default `GRAPH_DELEGATED_TOKEN`), checks its tenant,
+Graph audience and delegated claims, never refreshes it and refuses
+`access_token`, `client_id` and `client_secret`; delegated package listings are
+caller-scoped and never complete, so a delegated scan with an opt-in collection
+warns and exits 3. Statuses, bindings, coverage and the delegated token rules
+are in the [identity connector guide](connectors/identity.md#identityentra).
+
+After authenticating, live collection reads `GET /organization` and attests the
+tenant it returns for [live collection scope](scanning.md#live-collection-scope)
+comparisons; a `tenant_id` GUID that differs stops the scan. The call needs
+`Organization.Read.All` or `Directory.Read.All` (application) or `User.Read`
+(delegated) and matters only for comparable drift: when it is denied the scan
+still completes, with an advisory warning, but its scope is not attested.
+Delegated scans, and scans with an `access_token` that is not a decodable
+app-only token, are never attested, because their listings return only what
+one user may see.
 
 ### `identity.google-workspace`
 Admin SDK `users/{id}/tokens` for every user, aggregated per OAuth client:
@@ -834,17 +901,47 @@ Credentials, and OCI instance or resource principals. The engine replaces an
 `allow_instance_credentials` value in a connector entry with the scan-wide
 value; see [Production](production.md).
 
+Live `cloud.aws`, `cloud.gcp` and `cloud.azure` scans attest their
+[collection scope](scanning.md#live-collection-scope), so two complete live
+scans can be compared: the account STS reports, the configured GCP projects
+their enabled-services listings confirm (or the discovered project set), and the Azure
+subscriptions ARM reports, with the resolved regions, locations or
+subscriptions and each listing's outcome. See the
+[cloud guide](connectors/cloud.md#live-scope-attestation).
+
 ### `cloud.aws`
-Bedrock Agents (action groups, knowledge bases, aliases, collaborators,
-guardrails, memory), Flows, AgentCore (runtimes, gateways = MCP, memories,
+Bedrock Agents (action groups and their function confirmation settings,
+knowledge bases, aliases, collaborators, guardrails, memory), Flows, AgentCore (runtimes, gateways = MCP, memories,
 browsers, code interpreters, workload identities), model invocation logging
 state, Lambda (env names, plaintext keys, layers, images, tags), ECS task
 definitions referenced by running tasks and service deployments, plus latest
 registered definitions, SageMaker endpoints (LLM containers), Step Functions with Bedrock
 states, Q Business, Lex, Secrets Manager / SSM names, IAM principals with LLM
 actions (via `get_account_authorization_details`), CloudTrail LLM callers.
-Options: `profile`, `role_arn`, `regions` (`all`), `services`, `cloudtrail_days`,
-`max_ecs_api_calls` (default 2000 per region). ECS uses exact task-definition ARNs
+Options: `profile`, `role_arn`, `regions` (`all`), `services` (default: every
+service except `registry`), `cloudtrail_days`, `max_ecs_api_calls` (default 2000
+per region), `max_registry_records`, `registry_arns`.
+
+Opt-in registry records (`services` including `registry`): AWS Agent Registry
+and AgentCore registry records of every status, from the control-plane APIs,
+each as a finding with `metadata.registry_record` (registry types
+`aws-agent-registry` and `aws-agentcore-registry`). Statuses map onto the
+contract, the `DETECTED_FROM` provenance of a record the registry created by
+auto-detection binds the exact AgentCore runtime or gateway ARN (provenance
+written through the API, and an auto-detected draft, bind nothing),
+`approval_mode` comes from the registry's auto-approval settings at scan time,
+and `listing_complete` is set only for a listing that finished without denial,
+truncation or the `max_registry_records` cap (default 1000 per region and
+namespace). Registry and `aws-registry-coverage` records keep listing gaps in
+an export, so its replay is incomplete too. Descriptors are summarized during
+collection; raw documents and OAuth `customParameters` are never exported.
+`registry_arns` adds the approved records of other accounts' registries
+through the discovery API (`registry_coverage: approved-only`, never a
+complete listing). Auto-approval is not human review: such records approve
+through `trusted_registries` only with `allow_auto_approved`. See the
+[cloud guide](connectors/cloud.md#aws-agent-registry-and-agentcore-registry-records).
+
+ECS uses exact task-definition ARNs
 for deployed references, including referenced inactive revisions. Findings
 separate running-task/service references from registered-only definitions; a
 reference does not establish successful AI execution. Exhausted API budgets or
@@ -915,6 +1012,19 @@ queries at 50 pages regardless.
 `asia-southeast1`, `asia-northeast1`). `credentials_file` names an explicit
 Google credentials file (env `GOOGLE_APPLICATION_CREDENTIALS`); otherwise the
 local gcloud Application Default Credentials are used.
+`discovery_collections` lists the Discovery Engine collections whose engines are
+read (default `default_collection`); engines record their `app_type`
+(`APP_TYPE_INTRANET` for a Gemini Enterprise app).
+Two opt-in catalogs emit [registry records](inventory.md#vendor-registries-as-inventory-sources):
+`agent_registry: true` reads Google Agent Registry agents, MCP servers and
+endpoints (`agent_registry_version` `v1`, or experimental `v1alpha` with skills
+and publishers; `agent_registry_locations` to limit the locations, which leaves
+the listing incomplete for reconciliation), and `gemini_enterprise: true` reads
+the agents of Gemini Enterprise apps (Discovery Engine `v1alpha`, a
+caller-scoped listing that is never complete). Records bind only to the exact
+reasoning engines and Dialogflow CX agents they reference in their own project,
+and carry `metadata.catalog_presence`. See
+[Agent Registry and Gemini Enterprise catalogs](connectors/cloud.md#agent-registry-and-gemini-enterprise-catalogs).
 
 ### `cloud.azure`
 Azure Resource Graph inventory across subscriptions, then: OpenAI/AI Services
@@ -969,7 +1079,10 @@ model stores (Ollama, LM Studio, Hugging Face, GPT4All, Jan) and, with
 `shell_history: true`, AI command-line tools named in shell history (tool
 names and counts only). MCP server findings carry the static server risks
 and agent configurations carry the posture checks described in
-[risk](concepts/risk.md). Every location is opened without following
+[risk](concepts/risk.md) and the approval settings used by the
+[autonomy tiers](concepts/autonomy.md). With `options.mcp_registries`, MCP
+servers are also matched against pinned MCP Registry snapshots
+([MCP registry provenance](connectors/code.md#mcp-registry-provenance)). Every location is opened without following
 symbolic links; a link, an unreadable location, an oversized file or an
 exhausted `max_entries` budget makes the scan incomplete.
 
@@ -1033,11 +1146,11 @@ All connectors are read-only. Prefer dedicated audit credentials:
 | Zoom | Server-to-Server OAuth app with `marketplace:read:list_apps:admin` |
 | Atlassian | site admin basic auth with an API token for the Universal Plugin Manager listing |
 | Auth0 | Management API v2 token with `read:clients`, `read:client_grants` |
-| Entra / Teams / Power Platform | app permissions `Application.Read.All`, `DelegatedPermissionGrant.Read.All`, `Directory.Read.All`, `AppCatalog.Read.All`, `Team.ReadBasic.All`, `TeamsAppInstallation.ReadForTeam.All`; Power Platform admin application user |
+| Entra / Teams / Power Platform | app permissions `Application.Read.All`, `DelegatedPermissionGrant.Read.All`, `Directory.Read.All`, `AppCatalog.Read.All`, `Team.ReadBasic.All`, `TeamsAppInstallation.ReadForTeam.All`; Power Platform admin application user. Opt-in Agent 365 packages: `CopilotPackages.Read.All` (application, or delegated for a work or school account whose user holds a role that can read the agent catalog). Opt-in agent identities: Graph beta service principal read; confirm the least-privileged permission on Microsoft's current beta reference. Comparable drift reads `GET /organization`: `Organization.Read.All` or `Directory.Read.All` (application), `User.Read` (delegated) |
 | Google Workspace | DWD scopes `admin.directory.user.readonly`, `admin.directory.user.security`, `admin.directory.customer.readonly` |
-| AWS | `SecurityAudit` managed policy + `bedrock:List*/Get*`, `bedrock-agentcore:List*/Get*`, `cloudtrail:LookupEvents`; ECS additionally needs `ecs:ListClusters`, `ecs:ListTasks`, `ecs:DescribeTasks`, `ecs:ListServices`, `ecs:DescribeServices`, `ecs:ListTaskDefinitionFamilies`, `ecs:DescribeTaskDefinition` |
-| GCP | `roles/viewer` + `roles/iam.securityReviewer` (+ `roles/logging.privateLogViewer` for audit logs) |
-| Azure | `Reader` on subscriptions (+ `Cognitive Services OpenAI User`/`Azure AI User` to list Foundry agents; a narrowly scoped custom permission `Microsoft.Web/sites/config/list/Action` when sensitive app settings are needed) |
+| AWS | `SecurityAudit` managed policy + `bedrock:List*/Get*`, `bedrock-agentcore:List*/Get*`, `cloudtrail:LookupEvents`; ECS additionally needs `ecs:ListClusters`, `ecs:ListTasks`, `ecs:DescribeTasks`, `ecs:ListServices`, `ecs:DescribeServices`, `ecs:ListTaskDefinitionFamilies`, `ecs:DescribeTaskDefinition`; the opt-in `registry` service needs `agent-registry:ListRegistries`, `agent-registry:GetRegistry`, `agent-registry:ListRegistryRecords`, `agent-registry:GetRegistryRecord` (AgentCore registries are covered by `bedrock-agentcore:List*/Get*`), and `registry_arns` needs `agent-registry:ListDiscoverableRegistryRecords` and `agent-registry:GetDiscoverableRegistryRecord` on those registries. Do not grant `agent-registry:InvokeRegistryMcp` or `Search*` actions: the connector never calls them |
+| GCP | `roles/viewer` + `roles/iam.securityReviewer` (+ `roles/logging.privateLogViewer` for audit logs; with the opt-in catalogs, read access to Agent Registry and to Discovery Engine assistants and agents, for example Google's viewer roles for those APIs: verify the role names in your organization) |
+| Azure | `Reader` on subscriptions, which also covers the `GET /subscriptions/{id}` read that verifies configured subscriptions (+ `Cognitive Services OpenAI User`/`Azure AI User` to list Foundry agents; a narrowly scoped custom permission `Microsoft.Web/sites/config/list/Action` when sensitive app settings are needed) |
 | OCI | policy `Allow group audit to read all-resources in tenancy` |
 | Endpoint | read access to the inventoried home directories; run as that user, or as an account that can read every listed home on a shared host. Nothing is written |
 | Network | read access to the exported logs; the connector needs no sensor or cloud credentials |

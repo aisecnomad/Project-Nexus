@@ -14,6 +14,7 @@ from shadowscan.connectors.endpoint.inventory import (
     _history_tool,
     _home_from_path,
     _osquery_extension_id,
+    _valid_server,
     _version_key,
 )
 from shadowscan.models import Kind, Surface
@@ -470,6 +471,8 @@ def test_malformed_replayed_entries_are_dropped_with_a_warning(run_connector, tm
             "location": "~/.cursor/mcp.json",
             "mcp_servers": [{"name": "a", "urls": 5}, {"name": "b", "args": 5}, "junk", {"name": "ok"}],
             "posture": ["junk", {"id": ["unhashable"], "client": "cursor", "setting": "s", "value": "v"}],
+            # An approval entry with an unknown scope can never gate an action.
+            "approval": ["junk", {"client": "cursor", "setting": "s", "value": "v", "scope": "all"}],
         },
         {
             "device": "lap",
@@ -485,8 +488,114 @@ def test_malformed_replayed_entries_are_dropped_with_a_warning(run_connector, tm
     path.write_text("\n".join(json.dumps(r) for r in records))
     findings, ctx = run_connector("endpoint.inventory", input=str(path))
     assert not ctx.stats.errors and ctx.stats.incomplete
-    assert any("dropped 5 malformed server, posture or model entries" in w for w in ctx.stats.warnings)
+    assert any(
+        "dropped 7 malformed server, posture, approval or model entries" in w for w in ctx.stats.warnings
+    )
     titles = {f.title for f in findings}
     assert "Codex configured on lap (~dana)" in titles
+    assert not [f for f in findings if "approval_gate" in f.metadata]
     mcp = next(f for f in findings if f.kind == Kind.MCP_SERVER)
     assert [s["name"] for s in mcp.metadata["servers"]] == ["ok"]
+
+
+@pytest.mark.parametrize(
+    ("damage", "same_group"),
+    [({"entry_count": "x"}, True), ({"version": 5}, True), ({"client": ["claude-code"]}, False)],
+)
+def test_replay_that_skips_a_malformed_settings_record_never_claims_every_action(
+    run_connector, tmp_path, damage, same_group
+):
+    # Regression: a whole agent_config record of the same client (here a settings file that
+    # bypasses approval) was skipped as malformed, and the client's remaining every-action
+    # entry still recorded an every-action gate. A skipped record whose client cannot be
+    # read leaves every client's gate partial.
+    base = {"device": "lap", "home": "dana", "record_type": "agent_config", "client": "claude-code"}
+    gate = {
+        "client": "claude-code",
+        "setting": "permissions.defaultMode",
+        "value": "default",
+        "scope": "every-action",
+        "file": "~/.claude/settings.json",
+    }
+    valid = {**base, "product": "Claude Code", "location": "~/.claude/settings.json", "approval": [gate]}
+    bypass = {
+        "id": "posture-permissions-bypassed",
+        "client": "claude-code",
+        "setting": "permissions.defaultMode",
+        "value": "bypassPermissions",
+    }
+    skipped = {**base, "location": "~/.claude/settings.local.json", "posture": [bypass], **damage}
+    path = tmp_path / "records.jsonl"
+    path.write_text("\n".join(json.dumps(r) for r in (valid, skipped)))
+    findings, ctx = run_connector("endpoint.inventory", input=str(path))
+    assert ctx.stats.incomplete
+    assert any("skipped a malformed endpoint record" in w for w in ctx.stats.warnings)
+    [agent] = [f for f in findings if "approval_gate" in f.metadata]
+    assert agent.metadata["approval_gate"]["scope"] == "some-actions"
+    assert same_group or agent.metadata["client"] == "Claude Code"
+
+
+@pytest.mark.parametrize(
+    "lost",
+    [
+        {"approval": ["junk"]},
+        {"approval": [{"client": "claude-code", "setting": "permissions.allow", "value": "rules"}]},
+        {"posture": [{"id": "posture-made-up", "client": "claude-code", "setting": "s", "value": "v"}]},
+    ],
+)
+def test_replay_that_drops_approval_or_posture_entries_never_claims_every_action(
+    run_connector, tmp_path, lost
+):
+    # Regression: the dropped entry could have been a loosening setting, yet the valid
+    # every-action entry left behind recorded an every-action gate.
+    gate = {
+        "client": "claude-code",
+        "setting": "permissions.defaultMode",
+        "value": "default",
+        "scope": "every-action",
+        "file": "~/.claude/settings.json",
+    }
+    record = {
+        "device": "lap",
+        "home": "dana",
+        "record_type": "agent_config",
+        "client": "claude-code",
+        "product": "Claude Code",
+        "location": "~/.claude/settings.json",
+        "approval": [gate, *lost.get("approval", [])],
+        "posture": lost.get("posture", []),
+    }
+    path = tmp_path / "records.jsonl"
+    path.write_text(json.dumps(record))
+    findings, _ = run_connector("endpoint.inventory", input=str(path))
+    [agent] = [f for f in findings if "approval_gate" in f.metadata]
+    assert agent.metadata["approval_gate"]["scope"] == "some-actions"
+    # The same record without the lost entry keeps its every-action gate.
+    path.write_text(json.dumps({**record, "approval": [gate], "posture": []}))
+    findings, _ = run_connector("endpoint.inventory", input=str(path))
+    [agent] = [f for f in findings if "approval_gate" in f.metadata]
+    assert agent.metadata["approval_gate"]["scope"] == "every-action"
+
+
+@pytest.mark.parametrize(
+    ("packages", "valid"),
+    [
+        (None, True),
+        ([], True),
+        ([{"registry_type": "npm", "identifier": "x", "version": None, "registry_base_url": None}], True),
+        ("npm", False),
+        (["npm"], False),
+        ([{"registry_type": "npm", "identifier": 5}], False),
+    ],
+)
+def test_replayed_manifest_packages_must_have_the_parsed_shape(packages, valid):
+    server: dict[str, object] = {"name": "io.example/tool", "transport": "unknown", "disabled": False}
+    if packages is not None:
+        server["packages"] = packages
+    assert _valid_server(server) is valid
+
+
+@pytest.mark.parametrize(("context", "valid"), [(["cwd", "envFile"], True), ("cwd", False), ([1], False)])
+def test_replayed_launch_context_must_have_the_parsed_shape(context, valid):
+    server = {"name": "files", "transport": "stdio", "command": "npx", "launch_context": context}
+    assert _valid_server(server) is valid

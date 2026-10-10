@@ -25,7 +25,8 @@ sanitizer, so redacted credentials stay redacted.
 Finding text comes from scanned repositories and remote APIs and is
 untrusted. The system prompt tells the model to treat it as data, and the
 reply is accepted only as a JSON object whose verdict is one of four fixed
-values; its free text is truncated and sanitized before it is stored.
+values; its free text is truncated here and sanitized with the rest of
+the finding when the report is written.
 
 The request uses the scanner's HTTP client: HTTPS only, no redirects to
 another origin, and private or loopback endpoints refused unless the scan
@@ -36,6 +37,7 @@ named by ``api_key_env``; a key written into the configuration is refused.
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import time
@@ -44,7 +46,7 @@ from typing import Any
 
 from shadowscan.models import Finding, RiskLevel, Surface
 from shadowscan.signatures import SignatureIndex
-from shadowscan.utils.http import HttpClient, HttpError
+from shadowscan.utils.http import HttpClient
 from shadowscan.utils.redaction import sanitize
 
 PROVIDERS = {
@@ -70,6 +72,11 @@ _KEYS = {
     "timeout_seconds",
     "budget_seconds",
 }
+# A verdict reply is a few hundred characters (max_tokens is 400); anything
+# longer than this is refused unparsed, and the response body is capped too.
+_MAX_REPLY_CHARS = 16 * 1024
+_MAX_RESPONSE_BYTES = 64 * 1024
+
 # Consecutive failed requests after which a run stops sending: an endpoint that
 # is down or timing out would otherwise cost every selected finding a timeout.
 _BREAKER_FAILURES = 3
@@ -254,12 +261,19 @@ def skip(findings: list[Finding], settings: TriageSettings) -> int:
 
 
 def parse_reply(text: str) -> dict[str, str] | None:
-    """The verdict object in a model reply, or None when the reply does not follow the contract."""
-    match = re.search(r"\{.*\}", text, re.DOTALL)
-    if match is None:
+    """The verdict object in a model reply, or None when the reply does not follow the contract.
+
+    The reply is untrusted, so the object is located in linear time (first
+    ``{`` to last ``}``, as a greedy match would) and a reply longer than any
+    verdict needs is refused unread.
+    """
+    if len(text) > _MAX_REPLY_CHARS:
+        return None
+    start, end = text.find("{"), text.rfind("}")
+    if start < 0 or end < start:
         return None
     try:
-        data = json.loads(match.group(0))
+        data = json.loads(text[start : end + 1])
     except (ValueError, RecursionError):  # ValueError also covers an over-long integer
         return None
     if not isinstance(data, dict) or data.get("verdict") not in VERDICTS:
@@ -304,7 +318,7 @@ class Triage:
                 timeout=settings.timeout_seconds,
                 max_retries=2,
                 allow_private_origin=allow_private_origin,
-                max_response_bytes=256 * 1024,
+                max_response_bytes=_MAX_RESPONSE_BYTES,
             )
         except (ValueError, TypeError) as exc:
             # Never echo the key: the header value is what failed validation.
@@ -351,13 +365,22 @@ class Triage:
         ``time.monotonic()`` value) when that is sooner, or after three
         consecutive failed requests. Findings not reached are marked skipped.
         """
-        stop_at = _monotonic() + self.settings.budget_seconds
-        reason = f"budget_seconds ({self.settings.budget_seconds:g} s) exhausted"
+        budget = self.settings.budget_seconds
+        # from_options validates the budget, but a TriageSettings built in code does not pass
+        # through it. A NaN budget or deadline would compare false against every limit and turn
+        # all of them off, so anything but a positive finite budget counts as spent and a NaN
+        # deadline as reached: triage is skipped rather than unbounded.
+        if isinstance(budget, bool) or not isinstance(budget, (int, float)) or not 0 < budget < math.inf:
+            budget, reason = 0.0, "budget_seconds is not a positive finite number"
+        else:
+            reason = f"budget_seconds ({budget:g} s) exhausted"
+        now = _monotonic()
+        stop_at = now + budget
         http = self.client if isinstance(self.client, HttpClient) else None
         client_deadline = http.deadline if http is not None else None
         for limit in (deadline, client_deadline):
-            if limit is not None and limit < stop_at:
-                stop_at, reason = limit, "deadline reached"
+            if limit is not None and (math.isnan(limit) or limit < stop_at):
+                stop_at, reason = (now if math.isnan(limit) else limit), "deadline reached"
         if http is not None:
             # Retries, Retry-After waits, connection set-up and body reads stop
             # there too, not only the next request. The client's own deadline
@@ -386,7 +409,7 @@ class Triage:
                 break
             try:
                 data = self.client.post_json(self.path, json=self._payload(finding_summary(f, self.index)))
-            except (HttpError, OSError, ValueError) as exc:
+            except Exception as exc:  # noqa: BLE001 - advisory: any failure is recorded, never lost
                 failed += 1
                 consecutive += 1
                 if failed == 1:

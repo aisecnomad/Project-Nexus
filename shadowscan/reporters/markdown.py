@@ -5,11 +5,13 @@ from __future__ import annotations
 import html
 import re
 
+from shadowscan.mappings import describe, finding_references
 from shadowscan.models import Finding, ScanResult
 from shadowscan.reporters._publication import (
     has_inventory,
     publication_stats,
     related_finding_ids,
+    unassessed_count,
     without_connector_prefix,
 )
 from shadowscan.utils.output import terminal_text
@@ -114,6 +116,10 @@ def render_markdown(result: ScanResult) -> str:
         shadow_note = (
             f" (**{s['shadow']} shadow** — not in the inventory of {result.inventory_size} registered agents)"
         )
+        if unassessed := unassessed_count(result):
+            shadow_note += (
+                f"; **{unassessed} unassessed** (reported only by sources scanned without an inventory)"
+            )
     lines.append(f"- **Findings:** {s['total']}" + shadow_note)
     by_risk = sorted(s["by_risk_level"].items(), key=lambda kv: _LEVEL_ORDER.index(kv[0]))
     lines.append("- **By risk:** " + ", ".join(f"{_LEVEL_ICON.get(k, '')} {k}: {v}" for k, v in by_risk))
@@ -128,10 +134,14 @@ def render_markdown(result: ScanResult) -> str:
     lines.append("")
     lines.append("## Findings")
     lines.append("")
+    inventory = has_inventory(result)
     lines.append("| Risk | Shadow | Surface | Kind | Title | Owner | Confidence | Technologies |")
     lines.append("|---|---|---|---|---|---|---|---|")
     for f in result.findings:
-        shadow = "" if f.shadow is None else ("**yes**" if f.shadow else "no")
+        if f.shadow is None:
+            shadow = "unassessed" if inventory else ""
+        else:
+            shadow = "**yes**" if f.shadow else "no"
         level = f.risk.level.value
         technologies = _text(", ".join((f.frameworks + f.model_providers)[:4]))
         lines.append(
@@ -142,6 +152,12 @@ def render_markdown(result: ScanResult) -> str:
     lines.append("")
     lines.append("## Details")
     lines.append("")
+    if any(any(finding_references(f)) for f in result.findings):
+        lines.append(
+            "_Threats and controls are evidence references, not compliance determinations;"
+            " they are author mappings, not independently reviewed._"
+        )
+        lines.append("")
     for f in result.findings:
         lines.extend(_finding_section(f))
     lines.append("## Connector statistics")
@@ -167,6 +183,15 @@ def render_markdown(result: ScanResult) -> str:
             )
     lines.append("")
     return "\n".join(lines)
+
+
+def _references(refs: list[str]) -> str:
+    """Edition-qualified references as code spans, each followed by its catalog title."""
+    items = []
+    for ref in refs:
+        entry = describe(ref)
+        items.append(_code(ref) + (f" {_text(entry.title)}" if entry else ""))
+    return "; ".join(items)
 
 
 def _finding_section(f: Finding) -> list[str]:
@@ -200,6 +225,11 @@ def _finding_section(f: Finding) -> list[str]:
         out.append(f"- **Capabilities:** {', '.join(map(_text, f.capabilities))}  ")
     if f.tags:
         out.append(f"- **Tags:** {', '.join(map(_text, f.tags))}  ")
+    threats, controls = finding_references(f)
+    if threats:
+        out.append(f"- **Threats:** {_references(threats)}  ")
+    if controls:
+        out.append(f"- **Controls:** {_references(controls)}  ")
     if f.permissions:
         more = " …" if len(f.permissions) > 15 else ""
         out.append(f"- **Permissions:** {', '.join(map(_text, f.permissions[:15]))}{more}  ")

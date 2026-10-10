@@ -1,0 +1,188 @@
+# Weekly drift detection. Copy into .github/workflows/ of a PRIVATE operations
+# repository: it scans with a reviewed configuration, compares the result with
+# a reviewed baseline and fails when the estate drifted. See
+# docs/operations/drift.md for the baseline review process.
+#
+# Repository variables:
+#   SHADOWSCAN_REVISION             reviewed 40-character scanner commit SHA
+#   SHADOWSCAN_CONFIG               path of the reviewed scan configuration in
+#                                   this repository's checkout
+#   SHADOWSCAN_BASELINE_REPOSITORY  owner/name of the private baseline repository
+#   SHADOWSCAN_BASELINE_PATH        path of baseline.json in that repository
+#   SHADOWSCAN_BASELINE_SHA256      sha256sum of the reviewed baseline.json
+# Repository secret:
+#   SHADOWSCAN_BASELINE_TOKEN       fine-grained token with read-only Contents
+#                                   access to the baseline repository alone
+#
+# Exit codes are preserved: 2 means adverse drift, or a scan that reached the
+# reviewed configuration's options.fail_on level; 3 an incomplete scan or
+# comparison (an unattested live connector, a denied API, an expired baseline);
+# 1 no usable result. The job summary shows counts per drift class only; the
+# reports are run artifacts kept for 14 days. Nothing here opens issues: that
+# needs a write token, so add it as a separate job with only `issues: write`
+# that reads the counts, never the reports (see docs/operations/drift.md).
+name: ShadowScan drift
+on:
+  schedule:
+    - cron: "23 4 * * 1"
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: shadowscan-drift
+  cancel-in-progress: false
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    # Limit this environment's deployment branches to the default branch, and
+    # pin every cloud trust policy's OIDC subject to it
+    # (repo:<owner>/<repo>:environment:shadowscan-drift), so other branches,
+    # forks and pull requests cannot assume the read-only cloud roles.
+    environment: shadowscan-drift
+    permissions:
+      contents: read
+      id-token: write  # OIDC federation into read-only cloud roles; drop it if no live connector needs it
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: operations
+          persist-credentials: false
+      - name: Check out the reviewed baseline
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ vars.SHADOWSCAN_BASELINE_REPOSITORY }}
+          token: ${{ secrets.SHADOWSCAN_BASELINE_TOKEN }}
+          path: baseline
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Install reviewed ShadowScan revision
+        env:
+          SHADOWSCAN_REVISION: ${{ vars.SHADOWSCAN_REVISION }}
+        # Never a checkout: `python -m` puts the working directory first on sys.path,
+        # so a pip/__main__.py or shadowscan/ there would run in place of the tools.
+        working-directory: ${{ runner.temp }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! [[ "$SHADOWSCAN_REVISION" =~ ^[a-f0-9]{40}$ ]]; then
+            echo "Set SHADOWSCAN_REVISION to an approved 40-character commit SHA" >&2
+            exit 1
+          fi
+          scanner_dir="$RUNNER_TEMP/project-nexus"
+          git init -q "$scanner_dir"
+          git -C "$scanner_dir" remote add origin https://github.com/aisecnomad/Project-Nexus.git
+          git -C "$scanner_dir" fetch --no-tags --depth 1 origin "$SHADOWSCAN_REVISION"
+          git -C "$scanner_dir" checkout --detach -q FETCH_HEAD
+          test "$(git -C "$scanner_dir" rev-parse HEAD)" = "$SHADOWSCAN_REVISION"
+          # The reviewed tree supplies exact runtime and build backend hashes.
+          python -m pip install --require-hashes --only-binary=:all: \
+            -r "$scanner_dir/requirements-build.lock"
+          python -m pip install --require-hashes --only-binary=:all: \
+            -r "$scanner_dir/requirements.lock"
+          python -m pip wheel --no-deps --no-build-isolation \
+            --wheel-dir "$RUNNER_TEMP" "$scanner_dir"
+          python -m pip install --no-deps "$RUNNER_TEMP"/nexusshadowscan-*.whl
+          python -m pip check
+          python -m shadowscan.signatures.validate
+          python -m shadowscan.mappings.validate
+      # Add your cloud provider's OIDC login step here, pinned to a full commit
+      # SHA, assuming a read-only role whose trust policy names the environment
+      # above. Never store long-lived cloud keys as secrets for this job.
+      - name: Scan
+        env:
+          SHADOWSCAN_CONFIG: ${{ github.workspace }}/operations/${{ vars.SHADOWSCAN_CONFIG }}
+        working-directory: ${{ runner.temp }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          if [ ! -f "$SHADOWSCAN_CONFIG" ]; then
+            echo "Set SHADOWSCAN_CONFIG to the reviewed configuration's path in this repository" >&2
+            exit 1
+          fi
+          # -q keeps connector diagnostics, which can name accounts and tenants, out of the log.
+          # An incomplete scan (exit 3) still writes its report, and the comparison exits 3 too.
+          # Exit 2 (options.fail_on reached) is not in the report, so the next step reads it here.
+          status=0
+          shadowscan -q scan -c "$SHADOWSCAN_CONFIG" --format json -o "$RUNNER_TEMP/current.json" \
+            --job-deadline-seconds 2700 || status=$?
+          echo "scan exit code: $status"
+          echo "$status" > "$RUNNER_TEMP/scan-status"
+          case "$status" in
+            0|2|3) ;;
+            *) exit "$status" ;;
+          esac
+          if [ ! -f "$RUNNER_TEMP/current.json" ]; then
+            echo "The scan wrote no report; treating it as incomplete" >&2
+            exit 3
+          fi
+      - name: Compare with the baseline
+        env:
+          SHADOWSCAN_BASELINE: ${{ github.workspace }}/baseline/${{ vars.SHADOWSCAN_BASELINE_PATH }}
+          SHADOWSCAN_BASELINE_SHA256: ${{ vars.SHADOWSCAN_BASELINE_SHA256 }}
+        working-directory: ${{ runner.temp }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          if ! [[ "$SHADOWSCAN_BASELINE_SHA256" =~ ^[a-f0-9]{64}$ ]]; then
+            echo "Set SHADOWSCAN_BASELINE_SHA256 to the reviewed baseline's SHA-256" >&2
+            exit 1
+          fi
+          scan_status="$(cat "$RUNNER_TEMP/scan-status")"
+          case "$scan_status" in
+            0|2|3) ;;
+            *) echo "The scan step recorded no exit code" >&2; exit 1 ;;
+          esac
+          # The comparison goes to a file, never the log. Exit 2 is adverse drift,
+          # 3 an incomplete comparison; both fail this step after the file is written.
+          status=0
+          shadowscan diff "$SHADOWSCAN_BASELINE" "$RUNNER_TEMP/current.json" --json \
+            --fail-on-drift inventory,capability,autonomy,governance \
+            --baseline-sha256 "$SHADOWSCAN_BASELINE_SHA256" \
+            --max-baseline-age-days 35 > "$RUNNER_TEMP/drift.json" || status=$?
+          echo "diff exit code: $status"
+          # A scan that failed its own gate (options.fail_on reached, exit 2, or incomplete,
+          # exit 3) fails the job even when the comparison found nothing to report.
+          if [ "$status" -eq 0 ] && [ "$scan_status" -ne 0 ]; then
+            status="$scan_status"
+          fi
+          exit "$status"
+      - name: Summarize drift counts
+        if: always()
+        working-directory: ${{ runner.temp }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Counts per drift class only: no titles, resources, tenants or findings.
+          python -I - <<'PY'
+          import json
+          import os
+
+          lines = []
+          try:
+              with open(os.path.join(os.environ["RUNNER_TEMP"], "drift.json"), encoding="utf-8") as handle:
+                  document = json.load(handle)
+              counts, adverse = document["drift_summary"], document["adverse"]
+              lines += ["| Drift class | Findings or reasons | Adverse |", "| --- | --- | --- |"]
+              for name in ("inventory", "capability", "autonomy", "governance", "coverage"):
+                  flag = "yes" if adverse[name] is True else "no"
+                  lines.append(f"| {name} | {int(counts[name])} | {flag} |")
+          except (OSError, ValueError, KeyError, TypeError):
+              lines.append("No drift result: see the exit codes of the scan and comparison steps.")
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
+              summary.write("\n".join(lines) + "\n")
+          PY
+      - name: Upload reports
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: shadowscan-drift-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/current.json
+            ${{ runner.temp }}/drift.json
+          if-no-files-found: warn
+          retention-days: 14
