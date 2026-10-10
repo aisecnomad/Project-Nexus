@@ -420,10 +420,11 @@ class TrustedRegistry:
 
     ``allow_auto_approved`` also accepts approved records of a registry that approves every
     record without a person (``approval_mode: auto``); ``allow_registered_only`` also accepts
-    ``registered`` records of a registry without an approval workflow. Both default to false:
-    neither kind of record shows that a person reviewed the agent. ``allow_offline_records``
-    also accepts records replayed from an offline export (a connector's ``input``); it defaults
-    to false because an export is untrusted input that anyone who can write it can forge.
+    ``registered`` records (of a registry without an approval workflow, or that no approval was
+    requested for). Both default to false: neither kind of record shows that a person reviewed
+    the agent. ``allow_offline_records`` also accepts records replayed from an offline export (a
+    connector's ``input``); it defaults to false because an export is untrusted input that anyone
+    who can write it can forge.
     """
 
     registry: str

@@ -288,8 +288,10 @@ optional per-registry switches widen that:
   every record without a person) and `approval_mode: unknown` (the connector
   could not establish how the registry approves records). Auto-approval is not
   human review.
-- `allow_registered_only: true` also accepts `registered` records of a registry
-  without an approval workflow.
+- `allow_registered_only: true` also accepts `registered` records: records of a
+  registry without an approval workflow, and records no approval was requested
+  for (an organization's own Agent 365 package with no request). Registration
+  is not human review either.
 - `allow_offline_records: true` also accepts records replayed from an offline
   export (see [offline replays](#offline-replays)).
 
@@ -455,23 +457,33 @@ options:
       id: 00000000-0000-0000-0000-000000000000
 ```
 
-An approved package then approves its own record and the objects it binds: the
-agent identity (`entra:sp:<agentIdentityId>`), only when that id is a listed
-agent identity, and the app registration (`entra:app:<appId>`), only for an
-organization's own package. A package never binds any other service principal,
-and a Microsoft or partner package never binds an app registration of the
-tenant, whatever ids it declares. Blocked, pending, rejected, draft and unknown
-packages approve nothing.
-Only an organization's own package whose request a person approved has
-`approval_mode: manual`; an approved Microsoft or partner package has
-`approval_mode: unknown` and approves nothing unless the tenant's entry sets
-`allow_auto_approved`, which then approves its record and a listed agent
-identity it names. Trust the
+A package the trust policy accepts approves its own record and the objects it
+binds: the agent identity (`entra:sp:<agentIdentityId>`), only when that id is
+a listed agent identity, and the app registration (`entra:app:<appId>`), only
+for an organization's own package (`type` `custom`, `shared` or `lob`). A
+package never binds any other service principal, and a Microsoft or partner
+package never binds an app registration of the tenant, whatever ids it
+declares. What each setting of the tenant's entry accepts:
+
+| Entry setting | Agent 365 packages it accepts |
+|---|---|
+| default (both switches off) | An organization's own package whose approval request a person approved (`approved`, `approval_mode: manual`). |
+| `allow_auto_approved: true` | Also an approved Microsoft or partner package (`approved`, `approval_mode: unknown`: no reviewer in this tenant is known); it approves its record and a listed agent identity it names, never an app registration. |
+| `allow_registered_only: true` | Also an organization's own package with no approval request, such as an agent a user shared (`registered`): no person approved it. It approves its record, a listed agent identity and its app registration. |
+
+`allow_auto_approved` never accepts a `registered` package, and
+`allow_registered_only` never accepts a vendor package. Blocked, pending,
+rejected, draft and unknown packages approve nothing under any setting; a
+package whose details were unavailable or capped is `unknown`, because its
+request status is read from the details, and binds nothing. Trust the
 tenant only when the packages allowed in its catalog are ones your organization
 has decided to sanction. Without `tenant_id` the records have an empty registry
 id and cannot be trusted; with it, a pre-issued `access_token` must carry that
-tenant in its `tid` claim. A delegated scan's listing is caller-scoped, so it
-never marks findings `observed-not-registered` or `registered-not-observed`. The
+tenant in its `tid` claim and an export replayed with another `tenant_id` than
+the one it was collected from has an empty registry id too. A delegated scan's
+listing, or one read with a pre-issued token that is not app-only, is
+caller-scoped: it never marks findings `observed-not-registered` or
+`registered-not-observed`, and it makes the scan incomplete (exit 3). The
 [identity connector guide](connectors/identity.md#microsoft-agent-365-packages-opt-in)
 lists the status rules and binding coverage.
 

@@ -151,7 +151,7 @@ Offline input: JSON / JSONL / YAML / CSV export.
 | `tenant_id` | env AZURE\_TENANT\_ID |
 | `client_id` | env AZURE\_CLIENT\_ID |
 | `client_secret` | env AZURE\_CLIENT\_SECRET |
-| `access_token` | pre-issued Graph token (env GRAPH\_ACCESS\_TOKEN) instead of client credentials; with include\_agent\_registry and tenant\_id, its tid claim must equal tenant\_id |
+| `access_token` | pre-issued Graph token (env GRAPH\_ACCESS\_TOKEN) instead of client credentials; with include\_agent\_registry and tenant\_id, its tid claim must equal tenant\_id; with an opt-in agent collection, a decodable token must be a Microsoft Graph token (aud), and one that is not app-only (idtyp app, no scp) gives caller-scoped listings and an incomplete scan |
 | `auth_mode` | app-only (default: client credentials or access\_token) or delegated (a signed-in user's Graph token read from the environment variable named by delegated\_token\_env; never refreshed) |
 | `delegated_token_env` | name of the environment variable that holds the delegated Graph token (default GRAPH\_DELEGATED\_TOKEN); the token itself is never configuration |
 | `include_first_party` | include Microsoft first-party service principals (default false, Copilot SPs always kept) |
