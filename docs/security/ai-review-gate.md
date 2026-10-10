@@ -54,7 +54,8 @@ Evidence lives under `.github/ai-review/` in the head checkout:
   reported no matching evidence. An absent/denied scan is not an empty scan.
 
 The digest is SHA-256 of UTF-8 compact JSON (`separators=(",", ":")`) encoding
-`[base_sha, sorted_file_triples]`, where the triples are `[filename, sha, status]`
+`[base_sha, sorted_file_records]`, where records are
+`[filename, sha, status, previous_filename]` (previous filename is `""` unless renamed)
 from the complete GitHub
 PR files API, excluding paths starting `.github/ai-review/`. This avoids a
 circular head-SHA requirement when evidence is committed, binds findings to

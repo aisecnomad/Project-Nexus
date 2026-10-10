@@ -175,6 +175,12 @@ def test_digest_binds_base(monkeypatch: pytest.MonkeyPatch) -> None:
     assert diff_digest(FILES) != first
 
 
+def test_digest_binds_rename_source() -> None:
+    first = [{**FILES[0], "status": "renamed", "previous_filename": "source-a.py"}]
+    second = [{**FILES[0], "status": "renamed", "previous_filename": "source-b.py"}]
+    assert diff_digest(first) != diff_digest(second)
+
+
 def test_pending_check_precedes_failed_snapshot(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

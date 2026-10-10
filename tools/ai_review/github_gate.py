@@ -109,7 +109,7 @@ def diff_digest(files: list[Any]) -> str:
             [
                 os.environ.get("PR_BASE_SHA", ""),
                 sorted(
-                    (file["filename"], file["sha"], file["status"])
+                    (file["filename"], file["sha"], file["status"], file.get("previous_filename", ""))
                     for file in files
                     if not file["filename"].startswith(".github/ai-review/")
                 ),
