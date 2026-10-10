@@ -117,7 +117,9 @@ class _Home:
     fd: int
     entries: int = 0
     exhausted: bool = False
-    gaps: set[str] = field(default_factory=set)  # relative paths that could not be read
+    # Relative paths that could not be read or parsed at all (not a problem inside a file that
+    # was read): a settings file among them may loosen its client's approval gate.
+    unread: set[str] = field(default_factory=set)
 
 
 @dataclass
@@ -223,7 +225,7 @@ class EndpointInventoryConnector(BaseConnector):
         # the client's records carries an entry that keeps the gate partial, also on replay.
         unread = {
             client: f"~/{rel}"
-            for rel in sorted(home.gaps)
+            for rel in sorted(home.unread)
             if (client := posture_client(rel)) is not None and client != "openclaw"
         }
         for record in configs:
@@ -250,8 +252,9 @@ class EndpointInventoryConnector(BaseConnector):
             )
 
     # ------------------------------------------------------- safe file access
-    def _gap(self, home: _Home, rel: str, reason: str) -> None:
-        home.gaps.add(rel)
+    def _gap(self, home: _Home, rel: str, reason: str, *, unread: bool = True) -> None:
+        if unread:
+            home.unread.add(rel)
         self.ctx.warn(f"endpoint.inventory: ~{home.ref}/{rel} not read: {reason}")
 
     def _open_dir(self, home: _Home, rel: str) -> int | None:
@@ -388,13 +391,17 @@ class EndpointInventoryConnector(BaseConnector):
         text = self._read(home, loc.path, limit)
         if text is None:
             return None
+        # A settings file that does not parse cannot show its posture or approval settings.
+        parsed = posture_parseable(loc.path, text)
         if loc.mcp:
             errors: list[str] = []
             record["mcp_servers"] = _mcp_servers(loc, text, errors)
             if errors:
-                self._gap(home, loc.path, f"MCP configuration problem: {errors[0]}")
-        elif not posture_parseable(loc.path, text):
-            # The agent's settings could not be read, so their posture is unknown.
+                # A problem with one server entry does not make the file's settings unreadable.
+                self._gap(home, loc.path, f"MCP configuration problem: {errors[0]}", unread=not parsed)
+            elif not parsed:
+                self._gap(home, loc.path, "invalid configuration syntax")
+        elif not parsed:
             self._gap(home, loc.path, "invalid configuration syntax")
         issues = assess_posture(loc.path, text)
         if issues:

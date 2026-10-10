@@ -1712,6 +1712,24 @@ def enumeration_deadline(now: float, deadline: float, margin: float, scan_timeou
     return now + ENUMERATION_DEADLINE_SHARE * window if window > 0 else now
 
 
+def _note_unread_settings(proj: _Project, rel: str) -> None:
+    """Record that a settings file of an approval-reading client could not be read.
+
+    The entry records no gate on its own and keeps a gate from the client's readable settings
+    at ``some-actions``, because the unread file could loosen it (openclaw has no approvals).
+    """
+    client = posture_client(rel)
+    if client is None:
+        return
+    unread = unreadable_settings(client)
+    if not approval_scopes(client, unread.setting, unread.value):
+        return
+    sig_id = CLIENT_SIGNATURES[client]
+    entry = {**unread.as_dict(), "file": rel}
+    if entry not in proj.approvals.setdefault(sig_id, []):
+        proj.approvals[sig_id].append(entry)
+
+
 def _check_enumeration_time(walk: _WalkCounters) -> None:
     """Stop listing at ``walk.enumerate_until``; the entries listed so far are still scanned."""
     if walk.enumerate_until is not None and time.monotonic() >= walk.enumerate_until:
@@ -2027,6 +2045,8 @@ class FilesystemConnector(BaseConnector):
         self._ownership_steps_remaining: dict[Path, int] = {}
         self._owner_cache: dict[tuple[Path, str], str | None] = {}
         self._symlink_warnings: set[Path] = set()
+        # (project root, path) of settings files the walk skipped (a link gap or a non-regular entry).
+        self._unread_settings: list[tuple[str, str]] = []
         self._checked_submodules: set[tuple[Path, str]] = set()
         self._gitlink_roots: set[Path] = set()
         # Oversize files under test paths skipped with a warning (include_tests false).
@@ -2491,8 +2511,11 @@ class FilesystemConnector(BaseConnector):
                 p = Path(dirpath) / fn
                 try:
                     if p.is_symlink():
+                        gaps = walk.link_gaps
                         if not self._skip_link(root, resolved_root, rel, p, walk):
                             return
+                        if walk.link_gaps != gaps:
+                            self._unread_settings.append((proj, rel))
                         continue
                     info = p.stat()
                 except OSError as exc:
@@ -2503,6 +2526,7 @@ class FilesystemConnector(BaseConnector):
                 if not stat.S_ISREG(info.st_mode):
                     if self._analyzed_name(rel, fn):
                         self._skip_non_regular(walk, root, rel, _special_file_kind(info.st_mode))
+                        self._unread_settings.append((proj, rel))
                     continue
                 if info.st_size > self._size_limit(fn) and self._skipped_oversize(rel, fn, info.st_size):
                     continue
@@ -2611,6 +2635,7 @@ class FilesystemConnector(BaseConnector):
             return True
         # A single representative diagnostic per root keeps hostile trees
         # from filling the report with thousands of link names.
+        walk.link_gaps += 1
         if root not in self._symlink_warnings:
             self._symlink_warnings.add(root)
             # Stays fail-closed: the target's bytes exist and other tools may
@@ -2857,6 +2882,7 @@ class FilesystemConnector(BaseConnector):
         scan.margin = margin
         entries: list[tuple[str, Path, str, int]] = []
         try:
+            self._unread_settings = []
             entries.extend(self._iter_entries(scan.root))
         except _WalkLimitError as exc:
             # Enumeration hit max_entries or its share of the deadline: the
@@ -2897,6 +2923,11 @@ class FilesystemConnector(BaseConnector):
                 self.index.scan_budget(seconds=budget, chars=size, wall_seconds=wall_cap),
             ):
                 self._scan_file(scan, rel, path, proj_root)
+        # A settings file the walk skipped can only loosen the gate of a project it read.
+        for proj_root, rel in self._unread_settings:
+            if (proj := scan.projects.get(proj_root)) is not None:
+                _note_unread_settings(proj, rel)
+        self._unread_settings = []
 
     @staticmethod
     def _diff_included(rel: str, diff_files: frozenset[str]) -> bool:
@@ -2937,6 +2968,7 @@ class FilesystemConnector(BaseConnector):
         named = by_name or self._named_by_signature(rel, file_matches)
         loaded = self._read_source(rel, path, scan.root_fd, scan.base, named=named)
         if loaded is None:
+            _note_unread_settings(proj, rel)
             return
         text, raw_notebook, cells = loaded
         nul_text = None
@@ -3267,14 +3299,9 @@ class FilesystemConnector(BaseConnector):
                 entry = {**issue.as_dict(), "file": file.rel}
                 if entry not in file.proj.posture.setdefault(sig_id, []):
                     file.proj.posture[sig_id].append(entry)
-        settings = approval_settings(file.rel, file.text) or []
-        client = posture_client(file.rel)
-        if client is not None and not posture_parseable(file.rel, file.text):
-            unread = unreadable_settings(client)
-            # An unparseable settings file may loosen the client's gate (openclaw has none).
-            if approval_scopes(client, unread.setting, unread.value):
-                settings.append(unread)
-        for setting in settings:
+        if not posture_parseable(file.rel, file.text):
+            _note_unread_settings(file.proj, file.rel)
+        for setting in approval_settings(file.rel, file.text) or []:
             sig_id = CLIENT_SIGNATURES[setting.client]
             approval = {**setting.as_dict(), "file": file.rel}
             if approval not in file.proj.approvals.setdefault(sig_id, []):

@@ -508,6 +508,29 @@ def test_code_connector_unparseable_sibling_settings_keep_the_gate_partial(run_c
     }.items() <= next(s for s in gate["settings"] if s["setting"] == "settings-file").items()
 
 
+@pytest.mark.parametrize("damage", ["oversize", "symlink"])
+def test_code_connector_skipped_sibling_settings_keep_the_gate_partial(run_connector, tmp_path, damage):
+    # Regression: a settings file the reader never opened (over max_file_size, or a link the
+    # walk does not follow) left the readable settings.json to record an every-action gate.
+    repo = tmp_path / "repo"
+    write(repo, ".claude/settings.json", json.dumps({"permissions": {"defaultMode": "default"}}))
+    local = repo / ".claude" / "settings.local.json"
+    bypass = json.dumps({"permissions": {"defaultMode": "bypassPermissions", "allow": ["Bash"] * 600}})
+    if damage == "oversize":
+        local.write_text(bypass)
+    else:
+        outside = tmp_path / "elsewhere.json"
+        outside.write_text(bypass)
+        local.symlink_to(outside)
+    findings, ctx = run_connector(
+        "code.filesystem", path=str(repo), label="home", use_git=False, max_file_size=2000
+    )
+    assert ctx.stats.incomplete
+    [claude] = [f for f in findings if f.kind == Kind.AGENT_CONFIG]
+    assert claude.metadata["approval_gate"]["scope"] == "some-actions"
+    assert any(s["setting"] == "settings-file" for s in claude.metadata["approval_gate"]["settings"])
+
+
 def test_an_unreadable_settings_file_alone_records_no_gate(run_connector, tmp_path):
     write(tmp_path, ".claude/settings.json", "{not json")
     findings, _ = run_connector("code.filesystem", path=str(tmp_path), label="home", use_git=False)
@@ -568,6 +591,29 @@ def test_endpoint_unreadable_sibling_settings_keep_the_gate_partial_live_and_on_
     assert not any("dropped" in w for w in replay_ctx.stats.warnings)
     [again] = [f for f in replayed if "approval_gate" in f.metadata]
     assert again.metadata["approval_gate"] == claude.metadata["approval_gate"]
+
+
+@pytest.mark.parametrize(
+    ("rel", "text"),
+    [
+        (
+            ".config/goose/config.yaml",
+            "GOOSE_MODE: approve\nextensions:\n  x:\n    type: stdio\n    enabled: true\n",
+        ),
+        (".codex/config.toml", 'approval_policy = "untrusted"\n[mcp_servers.x]\ncommand = 5\n'),
+    ],
+)
+def test_endpoint_mcp_entry_problem_does_not_mark_the_settings_unreadable(run_connector, tmp_path, rel, text):
+    # Regression: a problem with one MCP server entry in a file that parsed was recorded as an
+    # unreadable settings file, which made the file's own every-action gate partial.
+    home = tmp_path / "dana"
+    write(home, rel, text)
+    findings, ctx = run_connector("endpoint.inventory", path=str(home), label="laptop")
+    assert any("MCP configuration problem" in w for w in ctx.stats.warnings)
+    [agent] = [f for f in findings if "approval_gate" in f.metadata]
+    gate = agent.metadata["approval_gate"]
+    assert gate["scope"] == "every-action"
+    assert not any(s["setting"] == "settings-file" for s in gate["settings"])
 
 
 def _replay(run_connector, tmp_path, record):

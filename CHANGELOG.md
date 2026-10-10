@@ -37,11 +37,13 @@ summarizes each release for people who install and operate ShadowScan.
 - Endpoint replay that skips a whole malformed settings record of a client
   keeps that client's gate at `some-actions` (all clients' gates when the
   skipped record's client cannot be read).
-- A settings file that could not be read (invalid syntax, a symbolic link or
-  over the size limit for `endpoint.inventory`; invalid syntax for
-  `code.filesystem`) adds a `settings-file = unreadable` approval entry for its
-  client. It records no gate on its own and keeps a gate from the client's
-  readable settings at `some-actions`, live and on replay.
+- A settings file that could not be read (invalid syntax, a symbolic link the
+  scan does not follow, a non-regular entry, or a file over the size limit or
+  that cannot be decoded) adds a `settings-file = unreadable` approval entry for
+  its client in `code.filesystem` and `endpoint.inventory`; a problem with one
+  MCP server entry in a file that parsed does not. The entry records no gate on
+  its own and keeps a gate from the client's readable settings at
+  `some-actions`, live and on replay.
 
 ### Operational controls guide
 

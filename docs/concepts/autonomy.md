@@ -214,8 +214,9 @@ settings in scopes the scan did not read can override it. A Bedrock code
 interpreter or OpenAPI-schema action group has no per-function setting this
 reader verifies, so it leaves the gate partial, and a function entry that is
 not an object leaves it partial and marks the scan incomplete. A settings file
-of the client that could not be read (invalid syntax; for `endpoint.inventory`
-also a symbolic link or a file over the size limit) adds a
+of the client that could not be read (invalid syntax, a symbolic link the scan
+does not follow, a file over the size limit or one that cannot be decoded; a
+problem with one MCP server entry in a file that parsed does not count) adds a
 `settings-file = unreadable` entry: it records no gate on its own and keeps a
 gate from the client's other settings at `some-actions`, because the unread
 file could loosen it. Endpoint replay that drops a malformed approval or

@@ -133,6 +133,7 @@ class _WalkCounters:
     # it, so a directory holding many links lists its ancestors once.
     project_roots: dict[str, str] = field(default_factory=dict)
     budget: _WalkBudget = field(default_factory=_WalkBudget)
+    link_gaps: int = 0  # links whose target the walk does not scan (each a coverage gap)
 
 
 def _project_root(
