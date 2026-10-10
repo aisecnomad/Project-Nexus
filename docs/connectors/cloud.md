@@ -279,7 +279,8 @@ and approve nothing unless the trusted registry entry sets
 they are never a complete listing: an observed agent is never reported
 `observed-not-registered` against Gemini Enterprise.
 
-**Bindings.** A record binds only to an exact resource:
+**Bindings.** A record binds only to an exact resource in the project it was
+listed in:
 
 - a reasoning engine named by an Agent Registry `RuntimeReference`
   (`//aiplatform.googleapis.com/projects/.../reasoningEngines/<id>`) or by a
@@ -288,24 +289,30 @@ they are never a complete listing: an observed agent is never reported
   (`//dialogflow.googleapis.com/...`) or by a Gemini Enterprise Dialogflow agent.
 
 When the scan observed that resource (comparing the project number and the
-project id), the binding carries the observed finding's exact resource, project
-and location. Its coverage is `in-scope` only when this scan's Vertex AI (or
-Dialogflow CX) listing for that project and location completed, `unknown` when
-that listing was incomplete or the project number is unknown, and `out-of-scope`
-otherwise (a location outside `locations`, a project not scanned or without the
-API). Other runtime references (a GKE deployment, for example) bind nothing. A
-runtime identity that equals a reasoning engine's `effective_identity`, or an
-interface URL that equals a Cloud Run service URI, is recorded in
-`metadata.registry_join_hints`: a hint, never a binding or an approval.
+project id), the binding carries the observed finding's exact resource and
+location; its project is always the record's own. Its coverage is `in-scope`
+only when this scan's Vertex AI (or Dialogflow CX) listing for that project and
+location completed, `unknown` when that listing was incomplete or the project
+number is unknown, and `out-of-scope` otherwise (a location outside `locations`,
+or a project without the API). A reference to a reasoning engine or Dialogflow
+CX agent of another project (by its id, or by a project number that is not the
+record's own) binds and approves nothing, even in a trusted registry; it is
+recorded in `metadata.registry_join_hints` as a `cross-project-reference`. When
+the scan knows neither project's number, an observed resource belongs to the
+project whose listing returned it. Other runtime references (a GKE deployment or
+a Vertex AI endpoint, for example) bind nothing. A runtime identity that equals
+a reasoning engine's `effective_identity`, or an interface URL that equals a
+Cloud Run service URI, is also recorded in `metadata.registry_join_hints`: a
+hint, never a binding or an approval.
 
 **Complete listings.** An Agent Registry record is `listing_complete` only when
 the project's registry locations were enumerated (not set with
 `agent_registry_locations`), that enumeration and every location's agents, MCP
 servers and endpoints (and skills with `v1alpha`) listings completed, and every
-runtime reference of the project's records names a project the scan can
-resolve. Only then can an observed reasoning engine, Dialogflow CX agent or
-chat engine in that project that no record binds be reported
-`observed-not-registered`. Records bind only reasoning engines and Dialogflow CX
+runtime reference of the project's records names a resource of that project
+with a project number the scan can resolve. Only then can an observed reasoning
+engine, Dialogflow CX agent or chat engine in that project that no record binds
+be reported `observed-not-registered`. Records bind only reasoning engines and Dialogflow CX
 agents, so a chat engine is never `registered-and-observed` through a record:
 check the Dialogflow CX agent behind it before treating it as unregistered.
 Engines that are not chat engines, Gemini Enterprise apps included, are cloud

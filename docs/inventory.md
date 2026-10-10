@@ -363,8 +363,9 @@ options:
 ```
 
 An `ENABLED` agent of that app approves exactly the reasoning engine or
-Dialogflow CX agent it is bound to; a `PRIVATE`, draft, disabled or suspended
-agent approves nothing. Agent Registry has no approval workflow, so its
+Dialogflow CX agent it is bound to in the app's own project (`acme-ml`); a
+`PRIVATE`, draft, disabled or suspended agent approves nothing, and neither
+does an agent's reference to another project's engine. Agent Registry has no approval workflow, so its
 `registered` records approve only with `allow_registered_only: true` on an entry
 such as `{registry: google-agent-registry, id: projects/acme-ml/locations/global}`;
 listing an agent there is not a review. Trust one of the two for a given agent:

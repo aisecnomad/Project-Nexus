@@ -292,6 +292,16 @@ summarizes each release for people who install and operate ShadowScan.
   (exit 3, one warning) when a `registry-coverage` record says a listing did
   not complete; it voids only the claims of those listings, as the live scan
   did. Such a replay previously reported a complete scan.
+- A record binds only resources of the project it was listed in. A Gemini
+  Enterprise agent's reasoning engine or Dialogflow agent, or an Agent
+  Registry `RuntimeReference`, in another project binds and approves nothing,
+  even in a trusted registry, and is recorded as a `cross-project-reference`
+  join hint; an Agent Registry that holds such a reference is not a complete
+  listing of its own project. Bindings always carry the record's own project.
+  Previously a trusted app could approve another project's engine, and a
+  complete registry made another project's unbound engines
+  `observed-not-registered` even when that project's own registry listing
+  failed.
 - The fixtures and transports in the tests are synthetic, written from
   Google's API discovery documents; nothing was validated against a live
   project.

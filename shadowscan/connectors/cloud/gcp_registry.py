@@ -588,7 +588,9 @@ class RecordEntry:
 
     ``registry_project`` is the project segment of the registry's own name (a number or an id)
     and ``registry_suffix`` the rest of that name: the registry id is both, with the number
-    replaced by the project id when this scan knows it.
+    replaced by the project id when this scan knows it. ``references`` that name another
+    project's resource move to ``cross_project`` when the catalogs are finished: a record binds
+    only resources of the project it was listed in.
     """
 
     kind: str
@@ -607,6 +609,7 @@ class RecordEntry:
     associated_registry: str | None = None
     updated_at: str | None = None
     publisher: str | None = None
+    cross_project: list[Reference] = field(default_factory=list)
 
 
 def _typed(rec: dict[str, Any], key: str, kind: type) -> Any:
@@ -766,7 +769,8 @@ class RegistryCatalogs:
         self._observed_urls: dict[str, list[str]] = {}
         self._publishers: dict[str, tuple[str, str | None]] = {}
         self._deferred: list[tuple[Finding, RecordEntry]] = []
-        # Projects with an Agent Registry record whose runtime reference this scan cannot resolve.
+        # Projects with an Agent Registry record whose runtime references this scan cannot resolve
+        # to a resource of that project.
         self._unresolved_projects: set[str] = set()
         self.tainted = False
         self.foreign = 0
@@ -864,11 +868,6 @@ class RegistryCatalogs:
         if self.foreign:
             self.taint()
         self._deferred = kept
-        self._unresolved_projects = {
-            entry.project
-            for _, entry in self._deferred
-            if entry.registry == AR_REGISTRY and not self._resolved(entry)
-        }
         canonical: dict[tuple[str, str, str, str], _Observed] = {}
         literal: dict[str, _Observed] = {}
         for reference, item in self._observed:
@@ -880,39 +879,69 @@ class RegistryCatalogs:
                 project = item.account
             if project:
                 canonical.setdefault((reference.kind, project, reference.location, reference.rid), item)
+        for _, entry in self._deferred:
+            own = [reference for reference in entry.references if self._owns(entry, reference, literal)]
+            entry.cross_project = [reference for reference in entry.references if reference not in own]
+            entry.references = own
+        # An Agent Registry whose records name runtimes of another project, or name them by a
+        # number this scan cannot resolve, is never a complete listing of its own project.
+        self._unresolved_projects = {
+            entry.project
+            for _, entry in self._deferred
+            if entry.registry == AR_REGISTRY and (entry.cross_project or not self._resolved(entry))
+        }
         for finding, entry in self._deferred:
             self._apply(finding, entry, canonical, literal)
         self._presence()
         return [finding for finding, _ in self._deferred]
 
+    def _owns(self, entry: RecordEntry, reference: Reference, literal: dict[str, _Observed]) -> bool:
+        """Whether a reference names a resource of the project the record was listed in.
+
+        When this scan knows neither project's number, an observed resource of that exact name
+        belongs to the project whose listing returned it.
+        """
+        owns = self.numbers.names(entry.project, reference.project)
+        if owns is None:
+            observed = literal.get(reference.literal)
+            return observed is None or observed.account == entry.project
+        return owns
+
+    def _observed_item(
+        self,
+        reference: Reference,
+        canonical: dict[tuple[str, str, str, str], _Observed],
+        literal: dict[str, _Observed],
+    ) -> _Observed | None:
+        project = self.numbers.project_id(reference.project)
+        found = literal.get(reference.literal)
+        if found is None and project is not None:
+            found = canonical.get((reference.kind, project, reference.location, reference.rid))
+        return found
+
     def _binding(
         self,
+        entry: RecordEntry,
         reference: Reference,
         canonical: dict[tuple[str, str, str, str], _Observed],
         literal: dict[str, _Observed],
     ) -> dict[str, Any]:
         project = self.numbers.project_id(reference.project)
         catalog, collection = OBSERVED_LISTINGS[reference.kind]
-        observed = literal.get(reference.literal)
+        observed = self._observed_item(reference, canonical, literal)
         listed: bool | None = False
         if project is not None:
-            observed = observed or canonical.get((reference.kind, project, reference.location, reference.rid))
             listed = self._listed(catalog, project, reference.location, collection)
         coverage = {True: "in-scope", False: "unknown", None: "out-of-scope"}[listed]
-        if observed is not None:
-            return {
-                "resource": observed.resource,
-                "provider": "gcp",
-                "account": observed.account,
-                "region": observed.region,
-                "coverage": coverage,
-            }
-        # Not observed: the binding names the referenced resource as the record gave it.
-        binding: dict[str, Any] = {"resource": reference.literal, "provider": "gcp"}
-        if project is not None:
-            binding["account"] = project
-        binding.update(region=reference.location, coverage=coverage)
-        return binding
+        # The account is always the record's own project, the only one whose resources it binds.
+        # When not observed, the binding names the referenced resource as the record gave it.
+        return {
+            "resource": observed.resource if observed else reference.literal,
+            "provider": "gcp",
+            "account": entry.project,
+            "region": observed.region if observed else reference.location,
+            "coverage": coverage,
+        }
 
     def _apply(
         self,
@@ -922,7 +951,7 @@ class RegistryCatalogs:
         literal: dict[str, _Observed],
     ) -> None:
         project = self.numbers.project_id(entry.registry_project)
-        bindings = [self._binding(reference, canonical, literal) for reference in entry.references]
+        bindings = [self._binding(entry, reference, canonical, literal) for reference in entry.references]
         record: dict[str, Any] = {
             "schema": RECORD_SCHEMA,
             "registry": entry.registry,
@@ -948,7 +977,13 @@ class RegistryCatalogs:
             record.update(listing_scope="caller", listing_complete=False)
         finding.metadata[RECORD_KEY] = record
         bound = {binding["resource"] for binding in bindings}
-        hints = [
+        # Another project's resource: named by the record, but neither bound nor approved.
+        hints: list[dict[str, str]] = []
+        for reference in entry.cross_project:
+            observed = self._observed_item(reference, canonical, literal)
+            resource = observed.resource if observed else reference.literal
+            hints.append({"key": "cross-project-reference", "resource": resource})
+        hints += [
             {"key": "runtime-identity", "resource": resource}
             for resource in self._identities.get(entry.identity or "", [])
             if resource not in bound

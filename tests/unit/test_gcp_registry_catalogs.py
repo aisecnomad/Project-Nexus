@@ -973,6 +973,126 @@ def test_registry_names_of_another_project_are_rejected(index, tmp_path, foreign
     assert status(findings[f"projects/{N}/locations/global/agents/retired-bot"]) == "not-comparable"
 
 
+VICTIM_RE_2 = "projects/999/locations/us-central1/reasoningEngines/8"
+
+
+def _victim_project(**coverage: Any) -> list[dict[str, Any]]:
+    """Another scanned project (payments-prod, number 999) with two observed reasoning engines."""
+    return [
+        {"_kind": "project", "project": "payments-prod", "ai_services": ["aiplatform.googleapis.com"]},
+        {"_kind": "project-number", "_project": "payments-prod", "project_number": "999"},
+        *(
+            {
+                "_kind": "reasoning-engine",
+                "_project": "payments-prod",
+                "_location": "us-central1",
+                "name": name,
+            }
+            for name in (VICTIM_RE, VICTIM_RE_2)
+        ),
+        {
+            "_kind": "registry-coverage",
+            "_project": "payments-prod",
+            "_location": "us-central1",
+            "catalog": "vertex-ai",
+            "collection": "reasoningEngines",
+            "api_version": "v1",
+            "complete": True,
+            "listing_scope": "project",
+        },
+        *([{**coverage, "_kind": "registry-coverage", "_project": "payments-prod"}] if coverage else []),
+    ]
+
+
+@pytest.mark.parametrize("numbers_known", [True, False], ids=["numbers-known", "numbers-unknown"])
+def test_a_trusted_gemini_enterprise_app_never_approves_another_projects_engine(
+    index, tmp_path, numbers_known
+):
+    agent = _foreign_record(
+        "gemini-enterprise-agent",
+        name=f"{ASSISTANT}/agents/wired",
+        state="ENABLED",
+        reasoning_engine=VICTIM_RE,
+    )
+    records = [*fixture_records(), *_victim_project(), agent]
+    if not numbers_known:
+        # Neither number is known: the engine belongs to the project whose listing returned it.
+        records = [record for record in records if record["_kind"] != "project-number"]
+    registry_id = GE_ID if numbers_known else ENGINE
+    result = scan(
+        index,
+        write_records(tmp_path, records),
+        trusted_registries=[{"registry": "gemini-enterprise", "id": registry_id}],
+    )
+    # A reference to another project's engine is no coverage gap.
+    assert result.complete
+    findings = by_resource(result.findings)
+    victim = findings[VICTIM_RE]
+    assert victim.shadow is True and victim.registry_match is None
+    wired = findings[agent["name"]]
+    assert wired.metadata[RECORD_KEY]["registry_id"] == registry_id
+    assert wired.metadata[RECORD_KEY]["bindings"] == []
+    assert wired.metadata["registry_join_hints"] == [
+        {"key": "cross-project-reference", "resource": VICTIM_RE}
+    ]
+    # The app's binding to its own project's engine still approves it.
+    assert findings[RE_OK].shadow is False
+
+
+@pytest.mark.parametrize(
+    "segment,hinted",
+    [
+        ("payments-prod", VICTIM_RE),
+        ("999", VICTIM_RE),
+        # A number this scan does not know is another project's: acme-ml's number is known.
+        ("555", "projects/555/locations/us-central1/reasoningEngines/7"),
+    ],
+)
+@pytest.mark.parametrize("victim_registry_denied", [False, True], ids=["no-registry", "registry-denied"])
+def test_agent_registry_records_never_bind_or_claim_another_projects_engines(
+    index, tmp_path, segment, hinted, victim_registry_denied
+):
+    coverage = {}
+    if victim_registry_denied:
+        # payments-prod's own Agent Registry listing was denied.
+        coverage = {
+            "_location": None,
+            "catalog": "google-agent-registry",
+            "collection": "locations",
+            "api_version": "v1alpha",
+            "complete": False,
+            "listing_scope": "project",
+            "locations": [],
+        }
+    record = _foreign_record(
+        "agent-registry-agent",
+        name=f"projects/{N}/locations/global/agents/wired",
+        runtime_reference=f"//aiplatform.googleapis.com/projects/{segment}/locations/us-central1/reasoningEngines/7",
+    )
+    trusted = [{"registry": "google-agent-registry", "id": AR_ID, "allow_registered_only": True}]
+    result = scan(
+        index,
+        write_records(tmp_path, [*fixture_records(), *_victim_project(**coverage), record]),
+        trusted_registries=trusted,
+    )
+    findings = by_resource(result.findings)
+    wired = findings[record["name"]]
+    assert wired.metadata[RECORD_KEY]["bindings"] == []
+    assert wired.metadata["registry_join_hints"] == [{"key": "cross-project-reference", "resource": hinted}]
+    for name in (VICTIM_RE, VICTIM_RE_2):
+        # Neither approved by acme-ml's registry nor reported missing from it.
+        assert findings[name].shadow is True
+        assert RECONCILIATION_KEY not in findings[name].metadata
+    # A registry that names another project's runtimes is never a complete listing of its own.
+    assert all(
+        finding.metadata[RECORD_KEY]["listing_complete"] is False
+        for finding in findings.values()
+        if finding.metadata.get(RECORD_KEY, {}).get("registry") == "google-agent-registry"
+    )
+    assert RECONCILIATION_KEY not in findings[RE_SHADOW].metadata
+    assert status(findings[RE_OK]) == "registered-and-observed"
+
+
 def test_project_numbers_tell_whose_name_a_segment_is():
     numbers = gcp_registry.ProjectNumbers()
     assert numbers.names(P, "555") is None
