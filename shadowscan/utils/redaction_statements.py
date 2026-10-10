@@ -13,6 +13,7 @@ from __future__ import annotations
 import heapq
 import io
 import re
+import sys
 import token
 import tokenize
 from bisect import bisect_right
@@ -168,6 +169,12 @@ _SCAN_LOOKAHEAD = 8
 # token is nearer a cut in the shortened line than in the text.
 _MAX_TOKENIZED_BLANKS = 8
 _LONG_BLANK_RUN = re.compile(rf"[ \t\f]{{{_MAX_TOKENIZED_BLANKS + 1},}}")
+# CPython 3.12.0 to 3.12.3 build a new copy of the whole physical line for every
+# token, so tokenizing one long line is quadratic there: 400,000 characters of
+# 'cookie=a, ' took 16 to 19 seconds against 0.1 on 3.12.4. Those versions charge
+# each token's copy to the work budget, so a hostile line ends in
+# SanitizationLimitError instead of a stall.
+_TOKEN_COPIES_LINE = (3, 12) <= sys.version_info[:3] < (3, 12, 4)
 _QUOTE_ERRORS = frozenset({"'", '"'})
 # Token classes an annotation-only scan records for the candidates it encloses.
 _TOKEN_SPACE, _TOKEN_REAL, _TOKEN_ASSIGN, _TOKEN_CLOSE, _TOKEN_NEWLINE = range(5)
@@ -416,6 +423,8 @@ class _AssignmentScanner:
         try:
             for item in tokenize.generate_tokens(lines.readline):
                 stopped = item
+                if _TOKEN_COPIES_LINE:
+                    self.charge(len(item.line))
                 quoted = quoted or '"' in item.string or "'" in item.string
                 # The tokenizer yields every token of a line before it reads
                 # the next. That line starts a statement, whose leading blanks
