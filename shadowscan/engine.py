@@ -1185,7 +1185,7 @@ class Engine:
                 # Nothing was assessed: a match a connector or plugin set is not a registration.
                 clear_match_state(f)
                 f.shadow = f.registry_match = None
-            elif not (approvals is not None and approvals.approve_record(f)):
+            else:
                 entry = inventory.match(f, approvals.candidates(f) if approvals is not None else ())
                 f.registry_match = entry.agent_id if entry else None
                 f.shadow = entry is None

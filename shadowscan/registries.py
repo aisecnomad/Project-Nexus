@@ -56,7 +56,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from shadowscan.models import Evidence, Finding, Kind
-from shadowscan.registry import InventoryEntry, clear_match_state, literal_resource_pattern
+from shadowscan.registry import InventoryEntry, literal_resource_pattern
 from shadowscan.utils.redaction import REDACTED, sanitize_text
 
 RECORD_SCHEMA = "shadowscan.registry-record/v1"
@@ -451,11 +451,15 @@ class TrustedApprovals:
     export) approves only if the entry sets ``allow_offline_records``. Records of
     :data:`UNTRUSTABLE_REGISTRY_TYPES` never approve:
 
-    * the record finding itself is registered as ``<registry>:<record_id>``; and
+    * the record finding itself gets an inventory entry ``<registry>:<record_id>`` for exactly
+      its resource, provider, account and region, offered to that finding alone; and
     * each usable binding becomes an inventory entry for exactly that resource (glob
-      metacharacters escaped) and the binding's provider, account and region, matched together
-      with the loaded inventory, so all of its fail-closed rules still apply. Entries of one
-      record count as one approval there.
+      metacharacters escaped) and the binding's provider, account and region.
+
+    :meth:`candidates` offers these entries to :meth:`Inventory.match`, which matches them
+    together with the loaded inventory, so all of its fail-closed rules apply and a card that
+    approves the same finding, record finding included, makes the approval ambiguous. Entries
+    of one record count as one approval there.
 
     ``entries`` counts the approved records, one inventory item each, whatever their bindings.
     """
@@ -473,7 +477,8 @@ class TrustedApprovals:
             if item.registry not in UNTRUSTABLE_REGISTRY_TYPES
         }
         self._trusted = list(trusted)
-        self._approved: dict[int, RegistryRecord] = {}
+        # The entry that registers an approved record finding, keyed by that finding object.
+        self._own: dict[int, InventoryEntry] = {}
         self._by_resource: dict[str, list[InventoryEntry]] = {}
         self._produced: set[tuple[str, str]] = set()
         self._withheld: dict[tuple[str, str], dict[str, int]] = {}
@@ -496,7 +501,10 @@ class TrustedApprovals:
                 continue
             if not approves:
                 continue
-            self._approved[id(finding)] = record
+            if finding.resource.strip():
+                self._own[id(finding)] = _entry(
+                    record, finding.resource, finding.provider, finding.account, finding.region
+                )
             approved.add((record.agent_id, record.registry_id))
             for binding in record.bindings:
                 identity = (
@@ -511,33 +519,17 @@ class TrustedApprovals:
                     continue
                 seen.add(identity)
                 self._by_resource.setdefault(binding.resource, []).append(
-                    InventoryEntry(
-                        agent_id=record.agent_id,
-                        owner=record.publisher,
-                        resources=[literal_resource_pattern(binding.resource)],
-                        providers=[binding.provider] if binding.provider else [],
-                        accounts=[binding.account] if binding.account else [],
-                        regions=[binding.region] if binding.region else [],
-                        source=TRUSTED_SOURCE_PREFIX + record.registry_id,
-                    )
+                    _entry(record, binding.resource, binding.provider, binding.account, binding.region)
                 )
         self.entries = len(approved)
 
-    def approve_record(self, finding: Finding) -> bool:
-        """Register an approved record finding of a trusted registry; False for any other finding."""
-        record = self._approved.get(id(finding))
-        if record is None:
-            return False
-        clear_match_state(finding)
-        finding.registry_match = record.agent_id
-        finding.shadow = False
-        if not finding.owner and record.publisher:
-            finding.owner = record.publisher
-        return True
-
     def candidates(self, finding: Finding) -> list[InventoryEntry]:
-        """Entries whose literal resource equals the finding's; the inventory checks everything else."""
-        return self._by_resource.get(finding.resource, [])
+        """Entries whose literal resource equals the finding's; the inventory checks everything else.
+
+        An approved record finding also gets the entry that registers it, and no other finding does.
+        """
+        own = self._own.get(id(finding))
+        return [*self._by_resource.get(finding.resource, []), *([own] if own is not None else [])]
 
     def warnings(self) -> list[str]:
         """Advisory notices: trusted registries without records, and records withheld by policy."""
@@ -554,6 +546,23 @@ class TrustedApprovals:
                     "record(s) were not treated as sanctioned"
                 )
         return notices
+
+
+def _entry(
+    record: RegistryRecord, resource: str, provider: str | None, account: str | None, region: str | None
+) -> InventoryEntry:
+    """An approval of exactly ``resource`` (glob metacharacters escaped) in the given scope."""
+    return InventoryEntry(
+        agent_id=record.agent_id,
+        owner=record.publisher,
+        resources=[literal_resource_pattern(resource)],
+        # A blank value adds no constraint (an entry cannot hold one); the inventory refuses blank
+        # resources and redacted identities itself.
+        providers=[provider] if provider and provider.strip() else [],
+        accounts=[account] if account and account.strip() else [],
+        regions=[region] if region and region.strip() else [],
+        source=TRUSTED_SOURCE_PREFIX + record.registry_id,
+    )
 
 
 OFFLINE_WITHHELD = "offline-replayed (set allow_offline_records to accept them)"

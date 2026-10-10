@@ -244,6 +244,22 @@ def test_a_card_and_a_trusted_record_approving_one_resource_are_ambiguous(monkey
     assert result.inventory_size == 2
 
 
+def test_a_card_and_a_trusted_record_approving_the_record_finding_are_ambiguous(monkeypatch, tmp_path):
+    # Regression: the record finding was registered before inventory matching, so a card that
+    # approved it as well was not ambiguous, contrary to the rule for every other finding.
+    record = f"{REGISTRY_ARN}/record/rec-1"
+    cards = tmp_path / "agents.yaml"
+    cards.write_text(f"agents:\n  - id: card\n    resources: ['{record}']\n", encoding="utf-8")
+    result = _engine(
+        monkeypatch, lambda: [_record_finding(_record())], trusted_registries=TRUSTED, inventory=[str(cards)]
+    ).run()
+    findings = _by_resource(result)
+    assert (findings[record].shadow, findings[record].registry_match) == (True, None)
+    assert findings[record].metadata["registry_match_reason"] == "ambiguous-resource-approval"
+    # The runtime the record binds has one approval and stays registered.
+    assert findings[RUNTIME].registry_match == "aws-agent-registry:rec-1"
+
+
 @pytest.mark.parametrize(
     "binding",
     [

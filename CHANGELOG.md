@@ -179,6 +179,14 @@ summarizes each release for people who install and operate ShadowScan.
   new boolean `allow_offline_records: true`. A replayed record that would
   otherwise approve is counted in an advisory `engine.inventory` warning, and
   a record read both live and from an export in one scan counts as replayed.
+- An approved record of a trusted registry registers its own finding through
+  an inventory entry for exactly that finding, matched with the loaded
+  inventory. It was registered before inventory matching, so a card that also
+  approved the record finding was not ambiguous, contrary to the documented
+  rule; it now is, and the record finding is held to the same fail-closed
+  identity rules (a redacted resource is not registered).
+  `TrustedApprovals.approve_record` is removed; `candidates()` offers that
+  entry to the record finding alone.
 - `min_confidence` no longer removes registry record findings. Their evidence
   has a fixed weight of 0.5, so a threshold above 0.5 dropped every record
   from the report while the approvals they conferred stayed in force.

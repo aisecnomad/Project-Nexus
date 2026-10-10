@@ -487,19 +487,35 @@ def test_an_approved_record_of_a_trusted_registry_approves_itself_and_its_exact_
     rec, agent = record_finding(), observed()
     approvals = TrustedApprovals([rec, agent], TRUSTED)
     assert approvals.entries == 1 and approvals.warnings() == []
-    assert approvals.approve_record(rec) and not approvals.approve_record(agent)
-    assert (rec.shadow, rec.registry_match, rec.owner) == (False, "aws-agent-registry:rec-1", "platform-team")
+    own = Inventory().match(rec, approvals.candidates(rec))
+    assert own is not None and own.agent_id == "aws-agent-registry:rec-1" and own.owner == "platform-team"
+    assert own.resources == [literal_resource_pattern(rec.resource)]
     entry = Inventory().match(agent, approvals.candidates(agent))
     assert entry is not None and entry.agent_id == "aws-agent-registry:rec-1"
     assert entry.owner == "platform-team" and entry.source == f"trusted-registry:{REGISTRY_ARN}"
     assert (entry.providers, entry.accounts, entry.regions) == (["aws"], [ACCOUNT], [REGION])
     assert entry.names == [] and entry.resources == [RUNTIME]
+    assert own not in approvals.candidates(agent)
 
 
-def test_a_record_approval_keeps_an_owner_the_finding_already_has():
-    rec = record_finding(owner="observed-owner")
-    TrustedApprovals([rec], TRUSTED).approve_record(rec)
-    assert rec.owner == "observed-owner"
+def test_the_entry_that_registers_a_record_is_offered_to_that_finding_alone():
+    rec = record_finding()
+    # Another finding with the record's resource, provider, account and region (another
+    # connector's view of the same ARN, say) is not the record.
+    lookalike = record_finding(value={}, connector="test.observed")
+    lookalike.metadata.clear()
+    approvals = TrustedApprovals([rec, lookalike], TRUSTED)
+    assert approvals.candidates(lookalike) == [] and len(approvals.candidates(rec)) == 1
+
+
+def test_an_approved_record_and_a_card_approving_the_record_finding_are_ambiguous():
+    # Regression: the record finding was registered before inventory matching, so a card
+    # approving it too was never ambiguous, unlike any other finding.
+    rec = record_finding()
+    card = InventoryEntry(agent_id="card", resources=[rec.resource])
+    assert Inventory([card]).match(rec, TrustedApprovals([rec], TRUSTED).candidates(rec)) is None
+    assert rec.metadata["registry_match_reason"] == "ambiguous-resource-approval"
+    assert rec.metadata["registry_suggestions"] == ["aws-agent-registry:rec-1", "card"]
 
 
 @pytest.mark.parametrize(
@@ -509,7 +525,7 @@ def test_records_that_are_not_approved_never_approve(record_status):
     rec, agent = record_finding(record(status=record_status)), observed()
     approvals = TrustedApprovals([rec, agent], TRUSTED)
     assert approvals.entries == 0 and approvals.warnings() == []
-    assert not approvals.approve_record(rec) and approvals.candidates(agent) == []
+    assert approvals.candidates(rec) == [] and approvals.candidates(agent) == []
 
 
 @pytest.mark.parametrize(
@@ -523,13 +539,17 @@ def test_records_that_are_not_approved_never_approve(record_status):
 def test_approval_in_an_untrusted_registry_never_approves(trusted):
     rec, agent = record_finding(), observed()
     approvals = TrustedApprovals([rec, agent], trusted)
-    assert not approvals.approve_record(rec) and approvals.candidates(agent) == []
+    assert approvals.candidates(rec) == [] and approvals.candidates(agent) == []
     assert rec.shadow is None and approvals.entries == 0
 
 
 def test_a_record_with_an_unusable_identity_never_approves():
     redacted = record_finding(record(record_id=f"rec-{REDACTED}"))
-    assert not TrustedApprovals([redacted], TRUSTED).approve_record(redacted)
+    assert TrustedApprovals([redacted], TRUSTED).candidates(redacted) == []
+    # A record finding whose own resource is redacted is refused by inventory matching.
+    hidden = record_finding(resource=f"{REGISTRY_ARN}/record/{REDACTED}")
+    assert Inventory().match(hidden, TrustedApprovals([hidden], TRUSTED).candidates(hidden)) is None
+    assert hidden.metadata["registry_match_reason"] == "redacted-or-missing-resource-identity"
 
 
 def test_unusable_and_duplicate_bindings_add_no_entries():

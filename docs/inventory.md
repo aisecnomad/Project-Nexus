@@ -306,7 +306,9 @@ approves records in that registry.
 Each record that approves:
 
 - registers its own record finding as `<registry>:<record_id>` (for example
-  `registry_match: aws-agent-registry:rec-123`); and
+  `registry_match: aws-agent-registry:rec-123`), through an entry for exactly
+  that finding that is matched like the others below, so a card that also
+  approves the record finding makes it ambiguous; and
 - becomes one inventory entry per usable binding. The entry approves exactly
   the bound resource, with glob characters escaped (a binding to `agent-*`
   approves only the literal `agent-*`, never `agent-x`). The binding's provider,
