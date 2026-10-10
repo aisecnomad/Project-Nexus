@@ -23,6 +23,7 @@ Each finding becomes one entry. Its `bom-ref` is the finding id, or a stable
 | Model providers | `services[]`, shared (`shadowscan:provider:<signature>`); no `trustZone`, because a provider id names local runtimes as well as hosted APIs |
 | Concrete model ids | `components[]` of type `machine-learning-model`, shared (`shadowscan:model:<digest>`) |
 | MCP servers listed by an MCP configuration | `services[]` in group `mcp-server` (`shadowscan:mcp:<digest>`), with HTTP endpoints and the `shadowscan:mcp:transport`, `command`, `file`, `disabled` and `risks` properties |
+| The MCP server a project implements (a finding, other than an MCP configuration, with the `mcp-server` capability) | one `services[]` entry in group `mcp-server` (`shadowscan:mcp-server:<digest>`) named after the finding, with `shadowscan:mcp:implementation` (`source`), `languages`, `transport` (when the code names exactly one), `tools` (from `metadata.mcp_tools`) and `files` (where it is constructed); the finding stays an `application` component that depends on it |
 | What a finding uses | `dependencies[]` from the finding to the shared entries |
 
 Framework and provider names, vendors and categories come from the signature
@@ -47,14 +48,16 @@ A BOM never reads as more complete than the scan behind it:
   was skipped or stopped early, and `unknown` otherwise. A complete scan
   still covers only the configured sources, so ShadowScan never declares the
   inventory `complete`.
-- A finding keeps at most 50 MCP servers and 20 model ids, and a server at
-  most 5 HTTP endpoints. A finding that lists more, or a malformed server
+- A finding keeps at most 50 MCP servers and 20 model ids, a server at
+  most 5 HTTP endpoints, and an implemented server at most 20 tools and 10
+  files. A finding that lists more, or a malformed server
   entry, carries `shadowscan:mcp:servers-omitted` or
   `shadowscan:models-omitted` (a capped server carries
-  `shadowscan:mcp:endpoints-omitted`), is named in a further `incomplete`
-  composition, and `metadata.properties` counts such findings in
-  `shadowscan:bom:truncated-findings`. A server listed under an empty name is
-  published as `(unnamed MCP server #<n>)`, never dropped.
+  `shadowscan:mcp:endpoints-omitted`; a capped implemented server
+  `shadowscan:mcp:tools-omitted` or `shadowscan:mcp:files-omitted`), is named
+  in a further `incomplete` composition, and `metadata.properties` counts such
+  findings in `shadowscan:bom:truncated-findings`. A server listed under an
+  empty name is published as `(unnamed MCP server #<n>)`, never dropped.
 - `metadata.properties` carries `shadowscan:scan:status` and the connectors
   that were incomplete.
 - The exit code is 3 for an incomplete scan whatever the output format.

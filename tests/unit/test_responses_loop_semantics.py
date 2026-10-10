@@ -287,7 +287,12 @@ for item in []:
 def test_lexical_responses_fragments_cannot_override_semantics(tmp_path, run_connector, source):
     findings, ctx = scan(tmp_path, run_connector, source)
     assert not ctx.stats.incomplete, ctx.stats.errors
-    assert findings  # Supporting observations remain available to analysts.
+    if "from openai import" in source:
+        assert findings  # Supporting observations remain available to analysts.
+    else:
+        # The bare responses.create( shape is ambiguous: without the openai
+        # package or import it is a local class, and nothing is reported.
+        assert findings == []
     assert all(finding.kind == Kind.FRAMEWORK_USAGE for finding in findings)
     assert all(finding.metadata["agent_indicators"] == 0 for finding in findings)
 

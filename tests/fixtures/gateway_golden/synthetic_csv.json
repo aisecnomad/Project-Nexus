@@ -165,14 +165,14 @@
    "evidence": [
     {
      "signal": "model:provider.openai",
-     "description": "model id matched OpenAI: gpt-",
+     "description": "model id matched OpenAI: gpt-4o",
      "location": null,
      "snippet": null,
      "weight": 0.4,
      "signature": "provider.openai",
      "attributes": {
       "category": "provider",
-      "value": "gpt-"
+      "value": "gpt-4o"
      }
     },
     {
@@ -317,14 +317,14 @@
    "evidence": [
     {
      "signal": "model:provider.openai",
-     "description": "model id matched OpenAI: gpt-",
+     "description": "model id matched OpenAI: gpt-4o-mini",
      "location": null,
      "snippet": null,
      "weight": 0.4,
      "signature": "provider.openai",
      "attributes": {
       "category": "provider",
-      "value": "gpt-"
+      "value": "gpt-4o-mini"
      }
     },
     {

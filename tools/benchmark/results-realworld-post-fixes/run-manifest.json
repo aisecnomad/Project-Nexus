@@ -1,0 +1,47 @@
+{
+  "corpus": "corpus.json",
+  "corpus_sha256": "6469bdee66c83338710003cdf19e1dcc22ae13cdcd3cf6b2c8de657954acda04",
+  "corpus_metadata": {
+    "name": "ShadowScan real-world repository benchmark",
+    "type": "real-world",
+    "surface": "repo",
+    "retrieved_at": "2026-10-08",
+    "provenance": "Public repositories pinned by commit; labels assigned by the benchmark author by inspecting each checkout at the pinned commit, before any tool ran on the corpus. Not an independent or field-adjudicated sample.",
+    "labels": {
+      "agent": 22,
+      "llm": 3,
+      "none": 9
+    }
+  },
+  "cases_run": 34,
+  "timeout_seconds": 900,
+  "python": "3.13.16",
+  "platform": "Linux-6.18.44-fc-v80-x86_64-with-glibc2.39",
+  "checkouts_dirtied_by_tool": {},
+  "runs": [
+    {
+      "tool": "shadowscan",
+      "display": "Project Nexus ShadowScan",
+      "source": "aisecnomad/Project-Nexus",
+      "surfaces": {
+        "repo": "code.filesystem on the pinned checkout, default options"
+      },
+      "wall_seconds": 274.0,
+      "ok": 21,
+      "error": 13,
+      "n/a": 0
+    },
+    {
+      "tool": "shadowscan-tuned",
+      "display": "ShadowScan (max_file_size 20 MiB)",
+      "source": "aisecnomad/Project-Nexus",
+      "surfaces": {
+        "repo": "code.filesystem, max_file_size raised to 20 MiB, otherwise default"
+      },
+      "wall_seconds": 286.5,
+      "ok": 27,
+      "error": 7,
+      "n/a": 0
+    }
+  ]
+}

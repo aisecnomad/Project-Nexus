@@ -116,6 +116,22 @@ between candidate builds, not between releases.
 
 ## Review before deployment
 
+The model-identifier pass leaves coverage incomplete (exit 3) when a file
+exceeds its 400-literal analysis limit. Only literals that carry a vendor stem
+(model-id candidates) count; ordinary strings never reach the limit. Findings
+from the analyzed prefix remain available; review the unread content
+separately before using an incomplete result for an assurance decision.
+Catalog assignment and data-file reference limits likewise mark coverage
+incomplete when unread content could change the configuration classification.
+A truncated reference list is reported only when the project discounts a data
+file as a catalog that an unread reference could have named; otherwise the
+unread references change nothing and the scan stays complete.
+
+Text decoding examines every bounded window before accepting replacement
+characters. A plain-text prefix does not exempt a binary body from incomplete
+coverage. Python and notebook inputs remain strict UTF-8 inputs when they
+carry a UTF-8 byte-order mark; invalid bytes leave a coverage gap (exit 3).
+
 Before selecting a revision, verify its final-head review record and the live
 merge rules. A versioned policy, merged pull request or passing CI does not
 establish independent human review. The [merge gate and review status](#merge-gate-and-review-status)
@@ -466,16 +482,45 @@ separate expanded-structure and total-work budget, so valid YAML aliases cannot
 cause unbounded report serialization. CODEOWNERS patterns use bounded iterative
 matching with a per-lookup work budget.
 
+`code.filesystem` reserves incomplete coverage (exit 3) for content it would
+have read. Since the model-identifier and corroboration changes of the next
+release, the remaining lockfile names and generated files (`*.log`, `*.har`,
+`*.snap`) joined the default `oversize_skip_globs`, so such a file over
+`max_file_size` is skipped with a warning and leaves the scan complete. Change
+logs are deliberately not on that list: a name glob such as `CHANGELOG*` would
+also match source files (`history_store.py`, `changes.ts`) that a scanned
+repository names freely. With `scan_secrets: false`, an oversize documentation
+file (`.md`, `.txt`, a `CHANGELOG.md` included) and, without `include_tests`,
+an oversize file under a test or fixture path (a recorded cassette) are skipped
+with a warning; with credential detection on (the default) they are read for
+credentials below the limit and stay a coverage gap above it, so no planted key
+is lost to an exit 0. A repository with a change log over `max_file_size`
+therefore still exits 3 under the default settings; raise `max_file_size`, or
+review the file and list its path in `oversize_skip_globs` (the setting
+replaces the default list, so keep the defaults beside it). `strict_coverage`
+keeps every skip outside the globs a gap. See the [coverage policy](scanning.md#large-and-generated-files).
+
 The code scanner's IaC wildcard-action and agent front-matter patterns run on
 the bounded regex engine under the same per-input matching budget as the
 signature patterns, so a planted file costs at most that budget and is
-reported as an incomplete file rather than holding the connector. Symbolic
-links count toward `max_files` together with regular files, and the link
-checks stop at the connector deadline with the error `connector deadline
-reached while checking symbolic links`; findings collected before that point
-are kept and the scan is incomplete (exit 3). A checkout with more links than
-the remaining `max_files` budget needs a larger `max_files` or an `exclude`
-entry for the link directories.
+reported as an incomplete file rather than holding the connector. The crawler
+user-agent discount tokenizes only lines naming `mozilla/`, in linear time, so
+a planted file of escaped quotes cannot hold the connector either. Symbolic
+links count toward `max_files` together with regular files. A checkout with
+more links than the remaining `max_files` budget needs a larger `max_files` or
+an `exclude` entry for the link directories. The walk lists a root's entries
+before it scans them in priority order; listing, including the checks of file
+and directory links, stops after half of the time in which a file can still
+start, with the error `connector deadline: listing stopped after N entries`,
+so the listed files are still scanned and their findings kept. The link-check
+error `connector deadline reached while checking symbolic links` remains as a
+backstop at the deadline margin. The scan is incomplete (exit 3). A root that
+starts when no file can start any more, such as a late repository of an
+organization scan, lists nothing (`after 0 entries`), so it cannot run the
+connector past its deadline and discard the findings of the roots scanned
+before it. A tree whose listing alone takes more than that half is reported
+incomplete even when the former interleaved walk would have finished in time;
+raise `connector_timeout_seconds` for such a tree.
 
 YAML manifest artifact matching uses a shared one-second deadline and gives
 each bounded line chunk no more than the remaining manifest pattern budget.
@@ -528,8 +573,9 @@ nothing at the alias path is lost (see [scan semantics](scanning.md) for the
 exact rule). Directory
 links, configuration aliases, links into excluded or unread content, links
 leaving the root, oversized files the scanner would
-inspect and files it analyzes by name but cannot read as text (a NUL byte
-outside a UTF-8, UTF-16 or UTF-32 file with a byte-order mark) make the scan
+inspect and files it analyzes by name but cannot read as text (binary content
+with dense NUL bytes, mostly invalid UTF-8, or UTF-16 or UTF-32 without a byte-order mark; a few stray NUL
+bytes or invalid bytes in otherwise valid text do not count) make the scan
 incomplete (exit 3) by default, with a warning naming the omission.
 `strict_coverage: true` (`--strict-coverage`) records those
 conditions as errors; explicit `oversize_skip_globs` remain declared omissions
@@ -907,12 +953,57 @@ Synthetic code/cloud, cache, comparison, gateway-binding and publication
 regressions validate these behaviors. They do not establish independent human
 review or live tenant acceptance.
 
+## Unreleased changes
+
+Incremental scans preserve exact Git filenames, including whitespace. Agent
+classification continues to require semantic verification or corroboration of
+lexical source matches even for signatures with an agent-indicator flag.
+
+`shadowscan code PATH --diff-base REF` scans only the files committed since the
+merge base with `REF`, plus dependency manifests and `.env*` files. Use it for
+pull-request feedback, not as an inventory: its report is not comparable, so a
+pipeline that keeps the last report as its `shadowscan diff` baseline sees
+earlier findings as unknown, never resolved, and `--incremental` does not reuse
+it. Uncommitted, untracked and submodule changes are not scanned. Keep a full
+scan of the default branch as the comparison baseline. The option needs Git
+2.45 or later; when the diff cannot be computed the connector warns and scans
+the whole tree.
+
+An unexpected connector failure, and an unexpected failure while scanning one
+`code.github` or `code.gitlab` repository, reports the exception text only when
+ShadowScan code raised it; those messages are fixed or already sanitized. An
+exception raised inside a third-party SDK or plugin reports only its type
+(`code.github: acme/app: RuntimeError`), because its text can echo request data
+or opaque credentials that redaction does not recognize. The scan is still
+incomplete (exit 3). Alerting keyed on SDK exception text should key on the
+connector name and exception type.
+
 ## Candidate change history
 
 These notes record unreleased corrections and earlier candidate changes.
 Read them when you have baselines, reports or inventories produced
 by an earlier candidate build; a deployment that starts from a reviewed
 revision and a fresh baseline does not need them.
+
+### October 9 change-scoped scans, path context and new ecosystems (unreleased)
+
+These `code.filesystem` changes move confidence, risk and kind, and add or
+remove findings, against baselines from an earlier build. The default risk
+weights changed (three new tags). Rescan and rebaseline before comparing;
+`shadowscan diff` otherwise reports the differences as changed, new or
+resolved findings.
+
+| Area | Changed behavior | Migration check |
+| --- | --- | --- |
+| Diff-scoped scans | `--diff-base REF` scans committed changes since the merge base plus dependency manifests and `.env*` files; the report is not comparable and never cached. | Keep a full scan of the default branch as the comparison baseline. Do not gate inventory or resolution on a diff-scoped report. |
+| Path context | Evidence in documentation or example directories inside a project has half weight, generated files (`*_pb2.py`, `*_pb2_grpc.py`, `*.generated.*`) 0.4. A project with no other evidence is tagged `docs-only`, `example-code-only` or `generated-code-only`, capped at 0.85, 0.85 or 0.7 confidence and scored 8, 8 or 10 lower. A directory that is itself a project root, or one named `codegen` or `generated`, is not discounted. | Review findings whose risk dropped below a `--fail-on` threshold. A custom risk policy that sets these tags overrides the defaults; set `include_tests: true` to scan these paths at full weight. |
+| Corroboration | A project whose evidence spans a library and a code signal, or three signal types, gains a synthetic `corroboration:cross-signal` item (0.10 or 0.15). | Expect higher confidence and likelihood on such projects, and findings that now pass `min_confidence`. |
+| Deny-list files | A mention-only data file whose name spells `blocklist`, `denylist` or `blacklist` as one word or two (`ai-blocklist.yaml`, `deny_list.json`) is a catalog whatever it names. Allowlists, egress policies and firewall or WAF rule sets (`firewall-rules.json`, `default-deny.yaml`) are configuration. | A project evidenced only by such a file has no finding; the scan note names the file. |
+| Signatures | New languages (`c`, `cpp`, `elixir`, `r`, `lua`), `conda` dependency signals and eleven new signatures, listed in `CHANGELOG.md`. Elixir and R signatures have no dependency signals. | New products appear in reports. Re-run your own signature packs through `python -m shadowscan.signatures.validate`: `hex` and `cran` are not ecosystems. |
+
+These cases are authored regressions and a 130-case author-written benchmark.
+They do not establish independent review, live tenant acceptance or measured
+field precision.
 
 ### October 9 scan evidence corrections (unreleased)
 
@@ -927,7 +1018,7 @@ full commit SHA before deploying it.
 | VPC flow coverage | `SKIPDATA`, invalid or contradictory statuses mark collection incomplete; `NODATA` remains a valid no-traffic record. | Pipelines must preserve exit 3 as unknown coverage and obtain complete input before accepting absence of findings. |
 | Network attribution | Connection-specific TLS evidence is retained before totals are combined; contradictory and non-AI observations cannot borrow AI attribution. | Rebaseline traffic totals and investigate reduced attributed counts; previous totals may include unrelated connections. |
 | Gateway activity | Invocation evidence requires a supported operation and provider, with its method from the same event. | Rebaseline agent indicators and capabilities. A management request, missing method or invocation attempt alone cannot establish successful execution or tool use. |
-| Source coverage | Valid Rust multiline strings and supported JSX in JavaScript files can finish lexical analysis. | Re-scan prior incomplete repositories. Newly analyzed code can add findings; unresolved or unterminated syntax stays incomplete. |
+| Source coverage | Valid Rust multiline strings, C raw strings (`cr"..."`) and `\x`/`\u{...}` character escapes, and supported JSX in JavaScript files can finish lexical analysis. A `<` right after another `<` (`mask<<shift`) is part of a shift and never opens a JSX element. | Re-scan prior incomplete repositories. Newly analyzed code can add findings; unresolved, unterminated or ambiguous syntax stays incomplete (exit 3). |
 | Record exports | Strict JSON and encoded line/file/aggregate byte limits match replay; empty complete exports contain an empty record envelope. | Check the current manifest before replay. A rejected replacement retains the previous file but reports `exported: false` and `filename: null`; that file is not this run's accepted export. |
 
 Treat these as behavior changes when comparing old reports. Record scanner and
@@ -1033,10 +1124,10 @@ field validation.
 
 Re-scan before comparing risk to reports from an earlier candidate. Three
 things change what a report says without any repository change. A project
-whose executable code constructs and serves an MCP server is now an
-`mcp-server` finding (base weight 15) titled "MCP server implementation"
-instead of a `framework-usage` finding (base weight 5); its resource and
-identity are unchanged, so `shadowscan diff` reports it as changed, not new.
+whose executable code constructs and serves an MCP server keeps its kind but
+carries the `mcp-server` capability and an "MCP server in" title, as described
+under "October 8 MCP server capability and model id attribution"; its resource
+and identity are unchanged, so `shadowscan diff` reports it as changed, not new.
 Coding-agent configuration findings now carry the tags `hidden-instructions`
 (20), `remote-code-fetch` (15) and `invisible-text` (10) when the instruction
 files they report contain hidden comment content, fetch-and-execute or
@@ -1050,6 +1141,155 @@ aggregation paths; the existing CycloneDX AI-BOM semantics are retained. None of
 field-validated: the changes were driven by an author-written benchmark
 (`archive/reviews/head-to-head-2026-10-08.md`) and are covered by regression
 tests and evaluation cases only.
+
+### Real-world benchmark follow-ups (unreleased, after 0.1.2)
+
+Re-scan before comparing finding counts, confidence or exit codes with earlier
+reports. The changes below came from running ShadowScan on 326 public
+repositories (`tools/benchmark/realworld`). They make fewer scans incomplete
+(exit 3), remove false evidence, and add some evidence that earlier builds
+missed, so a repository can gain or lose findings without any change to it.
+Finding IDs are unchanged: no identity field is touched, and a finding's title
+is not part of its identity.
+
+- **Credential titles.** A `secret` finding whose only matches are the generic
+  credential rules (an assigned `PASSWORD`, `ACCESS_TOKEN`, `CLIENT_SECRET`,
+  `CREDENTIAL` or `*_API_KEY` value, a GitHub or AWS key) is titled
+  `Hard-coded credential in <file>` and gains the tag `unattributed-credential`.
+  Before, every secret finding was titled `LLM provider credential in <file>`,
+  including a mail password, although nothing tied it to a provider. A finding
+  with an attributed provider keeps the old title and no new tag. Dashboards or
+  filters keyed on the old title for unattributed credentials should key on
+  `kind: secret` and the absence of `model_providers`. Detection, weight and
+  risk are unchanged.
+- **Fewer incomplete scans.** Each of these used to end a scan with exit 3 and
+  is now read exactly:
+  - source lexing: ordinary strings that span lines in Rust, PHP and F#; PHP 8
+    attributes (`#[...]`, which are code, not comments; in PHP before 8 a `#[` line is a
+    comment, so a file with `#[` is lexed both ways and only what both readings mask
+    stays masked; when only the PHP 7 reading leaves a string open at the end of the
+    file it is not used, and when only the PHP 8 reading does the scan stays incomplete);
+    PHP here-documents whose closing marker is followed by code on its line
+    (`EOT)]`, allowed since PHP 7.3); F# type variables
+    (`'T`) and primed names; C# verbatim strings that open with an escaped
+    quote (`@"""x"" y"`); JSX in `.js`, `.mjs` and `.cjs` files, tried when the
+    plain walk is ambiguous and used only if it reads the whole file cleanly
+    (an element must follow punctuation or a reserved word that cannot be a name,
+    such as `return`; after `yield`, `await`, `of` or a keyword cut out of a longer
+    name such as `a<ZWNJ>typeof`, all names in a script, and in a file with a left
+    shift such as `mask<<shift>limit`, the scan stays incomplete);
+    the TypeScript non-null assertion before a division (`idle! / step`); and
+    Qt Linguist translations and Tiled tilesets named `.ts` or `.tsx`, which are
+    XML: only a file that opens with an XML declaration or a document type
+    declaration and parses as well-formed XML with a `TS` or `tileset` root is
+    masked whole. A construct that is
+    still ambiguous (a string left open, Ruby strings that span lines, heredoc
+    interpolation) stays incomplete.
+  - file contents: text that is not valid UTF-8 and holds no NUL byte, and
+    large UTF-8 text with a few stray NUL bytes (names are matched without them,
+    as bash removes them from a script; a source file is lexed with and without
+    them and is incomplete when the readings differ), are analyzed instead of skipped
+    (see [scan semantics](scanning.md)); each adds a warning that leaves the
+    scan complete (one warning per kind; `strict_coverage` makes each noted file a gap, and a
+    `CODEOWNERS` file with replaced bytes is an error). Dense NUL content, text mixed with other control characters
+    and UTF-16 or UTF-32 without a byte-order mark are still coverage gaps.
+  - agent definitions: a description with `: ` in a plain value is read after
+    quoting, as coding agents read it (see the [code connector](connectors/code.md)).
+  - JavaScript and TypeScript: the check that drops an SDK binding shadowed by a
+    method parameter was quadratic in the size of the file and could exceed the
+    0.1 s pattern budget on a 22 KB source, which discarded all analysis of that
+    file (`file analysis incomplete (TimeoutError)`). It now looks only at the
+    text around each use of the name and gives the same answer.
+  Because files that used to be skipped are now analyzed, a repository can gain
+  findings, including credentials, that earlier builds could not see.
+- **Less false evidence.** The `mcp.<vendor>.<tld>` host form of `protocol.mcp`
+  now ends in a country-code domain (except two-letter codes that are common file
+  extensions or property names, such as `py`, `md`, `rs`, `pl`, `ps`, `id` and `in`)
+  or one of a list of generic top-level domains (`host`, `info`, `page`, `live` and
+  other property or method names are left out), so a dotted identifier such as the
+  translation key `mcp.translator.translatekey` is no longer an MCP endpoint while
+  `mcp.example.de` still is. A `protocol.mcp` candidate followed by a call, an index,
+  an underscore or an assignment (`MCP.LOGGER.info("x")`, `mcp.client.is_connected()`,
+  `mcp.session.page = 2`) is code, and in a source file a candidate counts only where
+  a string or a URL starts with it or an `/mcp` or `/sse` path follows it, so the
+  property read `y = mcp.result.no` is not an endpoint. A
+  host on a line of a hosts file, ad-block list, resolver configuration or
+  Clash/Surge-style rule list (`0.0.0.0 chatgpt.com`, `||api.openai.com^`,
+  `address=/api.openai.com/0.0.0.0`, `DOMAIN-SUFFIX,openai.com,PROXY`) routes or
+  blocks the host and no longer counts as use of it; the same host elsewhere
+  still counts (the filter applies to documents that are not source files, so a `host, port = ...`
+  assignment or a `||` continuation line in code is unaffected). Strings in Rust, PHP and F# that span lines are no longer read
+  as code, which removes the framework names that appeared inside them.
+- **New evidence.** `protocol.mcp` matches the JSON-RPC method names an SDK-free
+  server or client dispatches on (`tools/list`, `tools/call`, `resources/list`,
+  `resources/read`, `prompts/list`, `prompts/get`,
+  `notifications/initialized`) at a `case`, a comparison, a `method:` field or
+  the start of a line, never inside a comment or a string, at weight 0.75. In
+  languages without an import binder (Go, Rust and others), such a match
+  establishes `protocol.mcp` only with an MCP import or dependency in the
+  project, like any lexical-only match; without one the scan names the file in
+  a note instead of reporting a finding.
+  `coding-agent.claude-code` gains `.claude/launch.json`, `.claude/rules/*.md`,
+  `.claude/output-styles/*.md` and the `.claude-plugin/plugin.json` and
+  `marketplace.json` manifests, at weight 0.8.
+
+### October 8 MCP server capability and model id attribution
+
+Re-scan code and compare risk scores before replacing a baseline or relying
+on a `--fail-on` threshold. Findings for projects that expose an MCP server
+(`FastMCP(`, `new McpServer(`, `server.NewMCPServer(`, `.AddMcpServer(`,
+`McpServer.sync(`, the server transports) now carry the `mcp-server`
+capability, which scores 5 risk points like `tool-use`, so their default risk
+rises by 5 without any repository change; a custom `risk_weights.capabilities`
+table may set `mcp-server` explicitly, and the default-weight digest pinned in
+the tests changed with it. The project finding of an implemented server is
+retitled on re-scan from `LLM usage in <dir>: ...` to `MCP server in <dir>:
+...` (finding identity and ids are unchanged; the title is prose), so a
+dashboard or filter keyed on `LLM usage in` titles sees those findings move
+to the new title. A project that only uses an MCP client next to an HTTP or
+socket server class constructed as `Server(` keeps its `LLM usage in` title
+and `tool-use` alone. Model-id attribution also moved: path-like strings
+such as `gpt-4-turbo-docs.md`, `command-line` or `claude-code-action` no
+longer attribute OpenAI, Cohere or Anthropic, LiteLLM-style routes
+(`bedrock/`, `vertex_ai/`, `openrouter/`, `ollama/`...) attribute the routed
+provider, `AnthropicBedrock(` and `AnthropicVertex(` attribute the platform
+instead of Anthropic, and `provider.openai-compatible` is reported only next
+to a `base_url` override, so provider lists and confidence may differ from an
+earlier candidate's report. Finding IDs are unchanged. These are detection
+corrections, not evidence of change in the scanned repositories.
+
+### October 8 corroboration rules: findings that disappear or shrink
+
+Review `shadowscan diff` output before accepting a baseline from this
+candidate: whole project findings can disappear, and others lose frameworks
+or providers, without any repository change. Four kinds of evidence no longer
+establish a technology on their own: a lexical code pattern whose signature
+has no import, dependency, file-name, image, IaC, model, bound-call,
+configuration or mention of weight 0.3 or more anywhere in the project; a
+signature known only from mentions below weight 0.3 (`huggingface.co` in a
+comment); a host, variable, display name, model id or CI image under a test
+path while `include_tests` is off; and a container image that runs a CI job
+(`.github/workflows/`, `.gitlab-ci.yml` and the like), which also no longer
+produces an `infra` finding. The evidence is kept, but such a signature moves
+from `frameworks[]` or `model_providers[]` to `metadata.potential_frameworks`
+or `metadata.potential_providers`, adds no capability and does not title the
+finding. A project whose only evidence is of these kinds yields no project
+finding; the scan instead records a warning, "evidence not reported because
+nothing in the project establishes a technology on its own", that names up to
+five of its files. That warning does not mark the scan incomplete, so the exit
+code does not change. Finding IDs are unchanged, so `diff` reports these
+findings as resolved and the shrunk ones as changed, and policy filters or
+`--fail-on` thresholds keyed on `frameworks[]` or `model_providers[]` stop
+matching them. Before accepting the baseline, take every finding that `diff`
+reports as resolved, or that lost a framework or provider. Find its project in
+the new report's `metadata.potential_*` lists and in the warnings that name
+files. Open those files and decide whether the project really uses the
+product, for example a vendored SDK without a manifest entry or an
+integration test that is in scope. Keep a finding you confirm under manual
+review, or re-scan with `include_tests: true` when test code is in scope.
+Record the rest as detection corrections, not remediation. These rules come
+from the author-written benchmark and its regression cases; they are not
+field-validated.
 
 ### October 7 distribution rename and PyPI publication
 
@@ -2245,8 +2485,7 @@ New incomplete (exit 3) and configuration-error outcomes:
 
 - **Unreadable analyzable files.** A file that `code.filesystem` analyzes by
   name and that still contains a NUL byte in its first 8 KiB (a binary `.plist`
-  or `.xml`, a UTF-16 file without a byte-order mark, a stray NUL in source or
-  Markdown) is a coverage gap named `binary or undecodable content in
+  or `.xml`, a UTF-16 file without a byte-order mark) is a coverage gap named `binary or undecodable content in
   analyzable file`. Fix the file or add it to `exclude`. UTF-8, UTF-16 and
   UTF-32 files with a byte-order mark, and Python sources with a PEP 263 coding
   cookie, are now decoded and analyzed, so dependency lists, `.env` files and
@@ -2400,6 +2639,57 @@ Redaction and lexing changes to review:
   hostile or machine-generated input, not configurable). Projects that vendor
   `emoji-regex` or similar generated tables stop reporting
   `incomplete source lexical analysis` for them.
+
+### Real-world robustness migration (unreleased)
+
+- **Crawler user-agent domains.** The provider-domain discount applies only
+  inside a complete quoted crawler UA value. A separate endpoint on the
+  same line, or another occurrence of that host later in the file, remains
+  evidence. A user-agent marker elsewhere on a line cannot suppress it.
+- **Input defects remain incomplete.** A checkout's own malformed content —
+  invalid TOML/JSON (cookiecutter templates, fixtures), invalid structured
+  configuration or agent-manifest syntax, an MCP configuration whose servers
+  value is not an object or array — is now a per-file `input defect:` warning
+  that preserves partial findings while keeping the scan incomplete (exit 3).
+  `strict_coverage: true` promotes that diagnostic to an error; it is not
+  needed to enforce incomplete coverage. There is no completeness exemption
+  for malformed templates or fixtures. Integrity and ambiguity failures (duplicate keys, conflicting
+  MCP dialects, YAML resource limits, undecodable analyzable files,
+  unscanned symlink targets) are unchanged and still fail closed.
+- **Flow exports with agent nodes are agents.** `code.filesystem` now emits
+  `kind: agent` for an exported flow whose nodes include a verified agent
+  node (n8n `.agent`/`agentTool`/`openAiAssistant`, Dify
+  `agent_mode: enabled`), titled `Exported agent workflow (…)`; chains
+  without an agent node stay `kind: workflow`. Finding identity does not
+  change (`resource_type` stays `workflow-export`), so diffs resolve across
+  the upgrade, but kind-based dashboards and `--fail-on` policies see such
+  findings move from `workflow` to `agent`, and metadata gains
+  `agent_flow`.
+- **Lexer.** Brace-less JSX elements as attribute values
+  (`description=<div>…</div>`, `title=<span>…</span>`, self-closing
+  `icon=<Plus/>`) are now lexed completely, and JSX is tried in plain
+  `.js`/`.mjs`/`.cjs` files when the plain walk is ambiguous (closing tags
+  after expressions no longer read as ambiguous regex-vs-division; see the
+  real-world benchmark follow-ups for when it is not used); repositories that reported
+  `incomplete source lexical analysis` for such files scan complete and may
+  gain findings there. A `<` right after another `<` (`mask<<shift`) is
+  part of a shift and never opens an element, so the code after it stays
+  visible and a file it leaves ambiguous stays incomplete.
+- **Credential pass on large files.** The per-execution regex allowance
+  scales linearly with input size inside the per-file wall budget, so
+  keyword-dense megabyte files no longer record
+  `credential detection incomplete (MatchTimeoutError)`. The ReDoS bar is
+  size-relative: allowed work is proportional to input length, and
+  `signatures.validate` rejects secret patterns slower than the allowance.
+- **Deadline degradation is deterministic.** The walk scans manifests, MCP
+  and coding-agent configuration, flow exports and IaC before source files
+  (largest last), and the deadline diagnostic names the exact remainder.
+  Order-sensitive truncated lists (example credentials, detection-rule
+  files) may list different members than an earlier release.
+- **Triage scans are always incomplete.** `triage: true` discloses the
+  skipped stages per root and exits 3 by design; never compare a triage
+  report against a full baseline (the configuration is part of the
+  comparison fingerprint, so `diff` refuses to resolve across the modes).
 
 Operational notes:
 

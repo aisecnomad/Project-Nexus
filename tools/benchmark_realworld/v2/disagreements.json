@@ -1,0 +1,115 @@
+[
+  {
+    "dir": "patrickjs/awesome-cursorrules",
+    "repo": "PatrickJS/awesome-cursorrules",
+    "rows": {
+      "B2": {
+        "label": "llm",
+        "confidence": "medium",
+        "evidence": [
+          "rules/*.mdc (257 Cursor rule files)",
+          "rules/vue.mdc",
+          "rules/clean-code.mdc"
+        ],
+        "rationale": "The 257 .mdc files are AI coding-assistant instruction files shipped as samples, which meets llm; no provider API calls or agent configuration were found, so the alternative label is none (curated awesome list)."
+      },
+      "C2": {
+        "label": "agent",
+        "confidence": "medium",
+        "evidence": [
+          "rules/helium-mcp-cursorrules-prompt-file.mdc (mcpServers)",
+          "rules/convex-cursorrules-prompt-file.mdc (openai.chat.completions.create)",
+          "rules/ (257 Cursor rule files)"
+        ],
+        "rationale": "Agent label rests on one sample rule that registers an mcpServers entry for Cursor, which matches criterion (b); the alternative candidate is llm (Cursor instruction files and an OpenAI call sample), and the awesome-list framing makes this borderline."
+      },
+      "D2": {
+        "label": "ambiguous",
+        "confidence": "low",
+        "evidence": [
+          "rules/helium-mcp-cursorrules-prompt-file.mdc (mcpServers)",
+          "rules/tokrepo-agent-discovery-cursorrules-prompt-file.mdc (.mcp.json)",
+          "rules/*.mdc"
+        ],
+        "rationale": "Candidates agent (one embedded mcpServers snippet in a curated rule file) and llm (257 .mdc assistant instruction files in a curated list), since repository scripts contain no provider or agent code."
+      }
+    }
+  },
+  {
+    "dir": "zie619/n8n-workflows",
+    "repo": "Zie619/n8n-workflows",
+    "rows": {
+      "B2": {
+        "label": "agent",
+        "confidence": "medium",
+        "evidence": [
+          "ai-stack/docker-compose.yml (service agent-zero, image frdel/agent-zero-run)",
+          "CLAUDE.md",
+          "CLAUDE_ZH.md",
+          "workflows/ (n8n-nodes-base.openAi)"
+        ],
+        "rationale": "Shipped compose config deploys the Agent Zero AI agent runtime (agent by configuration only; third-party image, no in-repo loop code); llm also present via CLAUDE.md and OpenAI nodes, the alternative reading."
+      },
+      "C2": {
+        "label": "agent",
+        "confidence": "medium",
+        "evidence": [
+          "workflows/Gmailtool/1142_Gmailtool_Stickynote_Automation_Triggered.json",
+          "workflows/Manual/1707_Manual_Stickynote_Automate_Webhook.json",
+          "n8n-nodes-mcp.mcpClient",
+          "n8n-nodes-mcp.mcpClientTool"
+        ],
+        "rationale": "Eight shipped sample workflows configure n8n-nodes-mcp MCP client nodes (agent b); CLAUDE.md, CLAUDE_ZH.md and one OpenAI template are llm-level only, and the MCP nodes are standalone rather than in a wired agent loop, so medium."
+      },
+      "D2": {
+        "label": "llm",
+        "confidence": "high",
+        "evidence": [
+          "CLAUDE.md",
+          "workflows/Webhook/1410_Webhook_Discord_Automate_Webhook.json (n8n-nodes-base.openAi)",
+          "workflows/Wait/0583_Wait_Splitout_Create_Webhook.json (n8n-nodes-base.openAi)",
+          "medcards-ai/package.json (@anthropic-ai/sdk declared, not imported)"
+        ],
+        "rationale": "Root CLAUDE.md is an AI coding-assistant instruction file and 32 shipped workflow JSON samples configure OpenAI nodes; no AI Agent or tool-node configuration exists, so agent is not supported."
+      }
+    }
+  },
+  {
+    "dir": "google/mediapipe",
+    "repo": "google/mediapipe",
+    "rows": {
+      "B2": {
+        "label": "llm",
+        "confidence": "medium",
+        "evidence": [
+          "mediapipe/tasks/web/genai/llm_inference/llm_inference.ts (LlmInference)",
+          "mediapipe/tasks/java/com/google/mediapipe/tasks/genai/llminference/LlmInference.java (LlmInference)",
+          "mediapipe/tasks/web/genai/llm_inference/llm_inference_test.ts (test)"
+        ],
+        "rationale": "Shipped on-device LLM inference SDK (LlmInference, Gemma) with tests and no hosted provider API; none (general ML framework) is the alternative reading; no agent markers."
+      },
+      "C2": {
+        "label": "ambiguous",
+        "confidence": "low",
+        "evidence": [
+          "mediapipe/tasks/web/genai/llm_inference/llm_inference.ts",
+          "mediapipe/tasks/web/genai/llm_inference/llm_inference_test.ts",
+          "mediapipe/tasks/java/com/google/mediapipe/tasks/genai/llminference/LlmInference.java",
+          "LlmInference"
+        ],
+        "rationale": "Ships an on-device LLM inference SDK used in shipped and test code but calls no provider API; candidates llm (LLM SDK call) vs none (ML model code with no provider API)."
+      },
+      "D2": {
+        "label": "ambiguous",
+        "confidence": "medium",
+        "evidence": [
+          "mediapipe/tasks/web/genai/llm_inference/llm_inference.ts (LlmInference, generateResponse)",
+          "mediapipe/tasks/java/com/google/mediapipe/tasks/genai/llminference/LlmInference.java (LlmInference)",
+          "mediapipe/tasks/web/genai/llm_inference/llm_inference_test.ts (test)",
+          "mediapipe/tasks/web/genai/README.md (on-device inference)"
+        ],
+        "rationale": "Shipped and test code use an on-device LLM inference SDK with no remote provider calls and no agent code, so llm (LLM SDK call) and none (ML model code calling no provider API) both fit."
+      }
+    }
+  }
+]

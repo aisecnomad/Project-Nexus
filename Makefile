@@ -22,19 +22,19 @@ install-hooks: install-dev ## Install pinned pre-commit hooks
 
 .PHONY: lint
 lint: ## Run ruff linter
-	ruff check shadowscan tests tools
+	ruff check shadowscan tests tools benchmarks
 
 .PHONY: format
 format: ## Run ruff formatter
-	ruff format shadowscan tests tools
+	ruff format shadowscan tests tools benchmarks
 
 .PHONY: format-check
 format-check: ## Check ruff formatting without changes
-	ruff format --check shadowscan tests tools
+	ruff format --check shadowscan tests tools benchmarks
 
 .PHONY: typecheck
 typecheck: ## Run mypy type checker
-	mypy shadowscan tools
+	mypy shadowscan tools benchmarks
 
 .PHONY: test
 test: ## Run test suite with coverage
@@ -81,6 +81,7 @@ evaluate: ## Run the bundled detection regression corpora
 	python -m tools.evaluation.evaluate --corpus tools/evaluation/field_review_corpus.json
 	python -m tools.evaluation.evaluate --corpus tools/evaluation/attribution_corpus.json
 	python -m tools.evaluation.evaluate --corpus tools/evaluation/current_idioms_corpus.json
+	python -m tools.evaluation.evaluate --corpus tools/evaluation/benchmark_followup_corpus.json
 	python -m tools.evaluation.evaluate --corpus tools/evaluation/independent_corpus.json \
 		--annotations tools/evaluation/independent_annotations.json
 

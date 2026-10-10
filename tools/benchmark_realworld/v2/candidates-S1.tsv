@@ -1,0 +1,44 @@
+# category	owner/repo	design_stratum	quota_note  (fixed before attachment; substitutions only from the same category list)
+agent-app	a2aproject/a2a-samples	ai-app	A2A agent samples
+agent-app	google/adk-samples	ai-app	ADK agent samples
+agent-app	OpenBMB/ChatDev	ai-app	multi-agent app
+agent-app	gptme/gptme	ai-app	agent CLI
+agent-app	OpenInterpreter/open-interpreter	ai-app	agent CLI
+agent-app	block/goose	ai-app	Rust agent with MCP
+agent-app	RooVetGit/Roo-Code	ai-app	VS Code coding agent
+agent-app	sst/opencode	ai-app	Go/TS coding agent
+agent-app	google-gemini/gemini-cli	ai-app	agent CLI
+agent-app	bytedance/UI-TARS-desktop	ai-app	monorepo agent app with MCP
+llm-app	datawhalechina/llm-universe	ai-app	non-English docs, notebooks
+llm-app	langchain4j/langchain4j-examples	ai-app	Java examples
+llm-app	Azure-Samples/azure-search-openai-demo-csharp	ai-app	C# RAG app
+llm-app	google-gemini/cookbook	ai-app	notebook cookbook
+llm-app	mistralai/cookbook	ai-app	notebook cookbook
+llm-app	huggingface/notebooks	ai-app	notebook-heavy, mostly ML
+llm-app	Azure-Samples/openai	ai-app	samples repo
+llm-app	lobehub/lobe-chat	ai-app	LLM app with plugins
+instruction-only	PatrickJS/awesome-cursorrules	hard-negative	cursor rules files
+instruction-only	hesreallyhim/awesome-claude-code	hard-negative	docs list of coding-agent resources
+instruction-only	e2b-dev/awesome-ai-agents	hard-negative	docs list
+instruction-only	steven2358/awesome-generative-ai	hard-negative	docs list
+workflow-export	Zie619/n8n-workflows	ai-app	n8n workflow JSON collection
+workflow-export	aws-samples/amazon-bedrock-samples	ai-app	IaC and notebooks
+workflow-export	Shubhamsaboo/awesome-llm-apps	ai-app	collection of apps
+hard-negative	osquery/osquery	hard-negative	agent name, endpoint agent
+hard-negative	open-telemetry/opentelemetry-collector	hard-negative	collector agent, Go
+hard-negative	openai/gym	hard-negative	RL agents, no LLM
+hard-negative	google/mediapipe	hard-negative	ML, no LLM
+hard-negative	scikit-learn/scikit-learn	hard-negative	ML library
+edge-data	jquery/jquery	ordinary	minified dist bundles
+edge-data	chartjs/Chart.js	ordinary	dist bundles
+edge-data	fivethirtyeight/data	ordinary	large CSV data
+ordinary-lang	spring-projects/spring-petclinic	ordinary	Java
+ordinary-lang	gin-gonic/gin	ordinary	Go
+ordinary-lang	BurntSushi/ripgrep	ordinary	Rust
+ordinary-lang	jekyll/jekyll	ordinary	Ruby
+ordinary-lang	laravel/laravel	ordinary	PHP skeleton
+ordinary-lang	vuejs/core	ordinary	TS monorepo
+ordinary-lang	vercel/turborepo	ordinary	monorepo Rust/TS
+ordinary-lang	dotnet/eShop	ordinary	C# reference app (may contain AI)
+ordinary-lang	square/okhttp	ordinary	Java/Kotlin
+ordinary-lang	sindresorhus/execa	ordinary	small TS

@@ -250,3 +250,34 @@ def test_linear_record_and_markup_passes_still_withhold_values():
     assert "a8f3c91d" not in safe and "b7e2c91d" not in safe and "c91d7e2b" not in safe
     assert safe.count(REDACTED) == 3
     assert safe.count("\n") == source.count("\n")
+
+
+def test_megabyte_keyword_dense_file_completes_with_secrets_scanned(tmp_path, index):
+    """A 1.3 MB markdown link list must not time the credential pass out.
+
+    Regression for the real-world benchmark: the per-execution regex cap was
+    size-blind, so keyword-dense megabyte files raised MatchTimeoutError and
+    failed whole scans closed. The allowance now scales with declared input
+    size (matcher.LINEAR_SECONDS_PER_MILLION_CHARS) inside the per-file wall
+    budget.
+    """
+    from shadowscan.connectors.base import ConnectorContext
+    from shadowscan.connectors.code.filesystem import FilesystemConnector
+
+    line = (
+        "- [awesome-api-key-manager](https://api.key-manager.example-host.io/docs/access-token) "
+        "manage every API key, access token, client secret, password and credential store.\n"
+    )
+    big = tmp_path / "README.md"
+    big.write_text(line * (1_400_000 // len(line)))
+    (tmp_path / "config.py").write_text(
+        'OPENAI_API_KEY = "sk-proj-3OoFmQTsHfOvesPLUXvRXpfToFF2XPOcdJ2kMQJ2g0"\n'
+    )
+    ctx = ConnectorContext(
+        config={"path": str(tmp_path), "use_git": False, "max_file_size": 4_000_000},
+        index=index,
+    )
+    findings = FilesystemConnector(ctx).run()
+    assert not ctx.stats.errors, ctx.stats.errors
+    assert not ctx.stats.incomplete
+    assert any(f.kind.value == "secret" for f in findings)

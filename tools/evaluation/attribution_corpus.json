@@ -130,7 +130,7 @@
     {
       "id": "spring-ai-tool-method",
       "family": "agent",
-      "description": "Spring AI ChatClient and tool annotation with no LangChain4j import",
+      "description": "Spring AI ChatClient and tool annotation with no LangChain4j import; the OpenAI starter attributes the model provider",
       "files": {
         "pom.xml": "<project><dependencies><dependency><groupId>org.springframework.ai</groupId><artifactId>spring-ai-openai-spring-boot-starter</artifactId></dependency></dependencies></project>\n",
         "src/main/java/example/TicketAssistant.java": "package example;\nimport org.springframework.ai.chat.client.ChatClient;\nimport org.springframework.ai.tool.annotation.Tool;\nclass TicketAssistant {\n    private ChatClient client;\n    @Tool(description = \"Look up a ticket\")\n    public String findTicket(String ticket) { return ticket; }\n    String answer(String question) {\n        return client.prompt().user(question).tools(this).call().content();\n    }\n}\n"
@@ -145,6 +145,7 @@
           {
             "kind": "agent",
             "product_signature": "framework.spring-ai",
+            "provider_signature": "provider.openai",
             "capabilities": [
               "tool-use"
             ]
@@ -162,7 +163,9 @@
             "product_signatures": [
               "framework.spring-ai"
             ],
-            "provider_signatures": []
+            "provider_signatures": [
+              "provider.openai"
+            ]
           }
         ]
       }
@@ -170,20 +173,20 @@
     {
       "id": "n8n-compose-workflow",
       "family": "workflow",
-      "description": "n8n AI Agent workflow with a Docker Compose service and no Kubernetes resources Known gap: a Docker Compose service is incorrectly credited to Kubernetes agent workloads.",
+      "description": "n8n AI Agent workflow with a Docker Compose service and no Kubernetes resources Known gap: a Docker Compose service is incorrectly credited to Kubernetes agent workloads (agent node present, so the export classifies as an agent).",
       "files": {
         "workflows/triage.json": "{\"name\": \"triage\", \"active\": true, \"nodes\": [{\"name\": \"AI Agent\", \"type\": \"@n8n/n8n-nodes-langchain.agent\", \"parameters\": {}}, {\"name\": \"Model\", \"type\": \"@n8n/n8n-nodes-langchain.lmChatOpenAi\", \"parameters\": {}}], \"connections\": {}}\n",
         "docker-compose.yml": "services:\n  n8n:\n    image: docker.n8n.io/n8nio/n8n:1.70.0\n    ports:\n      - \"127.0.0.1:5678:5678\"\n"
       },
       "target": {
-        "kind": "workflow",
+        "kind": "agent",
         "signature": "platform.n8n"
       },
       "present": true,
       "assertions": {
         "expected_findings": [
           {
-            "kind": "workflow",
+            "kind": "agent",
             "product_signature": "platform.n8n",
             "provider_signature": "provider.openai"
           }
@@ -196,7 +199,7 @@
         ],
         "exact_findings": [
           {
-            "kind": "workflow",
+            "kind": "agent",
             "product_signatures": [
               "platform.n8n"
             ],

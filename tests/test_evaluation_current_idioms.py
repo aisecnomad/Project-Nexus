@@ -27,6 +27,11 @@ def test_current_idiom_cases_are_authored_and_labeled_with_explicit_selectors() 
 def test_current_idiom_corpus_passes_with_only_its_documented_gap() -> None:
     report = evaluate(CORPUS)
     assert report["passed"]
-    assert report["metrics"]["all"] | {"tp": 16, "fp": 0, "fn": 1, "tn": 7} == report["metrics"]["all"]
+    assert report["metrics"]["all"] | {"tp": 16, "fp": 0, "fn": 1, "tn": 11} == report["metrics"]["all"]
+    # The MCP server cases pin the exact capability set: the protocol's tool-use
+    # and mcp-server, nothing the arithmetic tools do not imply; the client
+    # next to an HTTP server class keeps tool-use alone.
+    servers = [row for row in report["cases"] if row["family"] == "mcp-server"]
+    assert len(servers) == 4 and all(row["correct"] for row in servers)
     assert report["known_gaps"]["failing"] == ["ai-sdk7-single-step-imported-tool"]
     assert report["known_gaps"]["passing"] == [] and report["known_gaps"]["regressions"] == []

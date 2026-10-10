@@ -539,3 +539,21 @@ def test_parser_limits_keep_an_ordinary_config_scan_incomplete(tmp_path, index):
 def test_syntax_errors_in_ordinary_configs_still_only_warn(tmp_path, index):
     _, ctx = _scan(index, tmp_path, {"flows/workflow.json": '{"nodes": '})
     assert not ctx.stats.incomplete and not ctx.stats.errors
+
+
+def test_shared_documents_equal_a_fresh_parse_and_failures_stay_reported(index):
+    data = {"nodes": [{"type": "@n8n/n8n-nodes-langchain.agent"}]}
+    text = json.dumps(data)
+    shared = structured_code_matches(index, "workflow.json", text, documents=[data])
+    fresh = structured_code_matches(index, "workflow.json", text)
+    assert [(m.signature_id, m.value) for m in shared] == [(m.signature_id, m.value) for m in fresh]
+    assert shared
+    yaml_text = yaml.safe_dump(data)
+    shared = structured_code_matches(index, "workflow.yaml", yaml_text, documents=[yaml.safe_load(yaml_text)])
+    assert [(m.signature_id, m.value) for m in shared] == [(m.signature_id, m.value) for m in fresh]
+    # A caller without a document (its parse failed) still gets the failure here.
+    errors: list[str] = []
+    assert structured_code_matches(index, "workflow.json", "{nope", errors) == []
+    assert errors == ["invalid structured configuration syntax"]
+    # A format the shared parse never covers is parsed here even with documents.
+    assert structured_code_matches(index, "metadata.xml", "<a/>", documents=[data]) == []
