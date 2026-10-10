@@ -1378,7 +1378,8 @@ def test_unrecognized_approval_configuration_leaves_a_trusted_scan_incomplete(tm
     result = _engine_run(
         index, fixture=export, trusted_registries=[{"registry": "aws-agent-registry", "id": REGISTRY_ARN}]
     )
-    # An unknown approval mode approves in a trusted registry, so the scan is never complete.
+    # An unrecognized configuration hides how records are approved, so the scan is never complete
+    # (an unknown approval mode approves only with allow_auto_approved).
     assert not result.complete
     assert _by_resource(result)[f"{REGISTRY_ARN}/record/rec000000001"].metadata[RECORD_KEY][
         "approval_mode"
