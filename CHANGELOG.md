@@ -63,6 +63,15 @@ summarizes each release for people who install and operate ShadowScan.
   the code scan skips because the connector deadline was reached, and one that
   a `code.github` or `code.gitlab` API snapshot does not include (a link, too
   large, past the sample cap or not downloaded), counts as unreadable.
+- `identity.entra` attests a live collection scope only for app-only
+  credentials. An `access_token` issued to a user (it has `scp`, or its
+  `idtyp` is not `app`) or that cannot be decoded lists only what that user
+  may see, as a delegated token does, so its scan is no longer attested even
+  without agent collections. It still completes, with an advisory warning, and
+  `shadowscan diff` reports such a comparison incomplete instead of resolving
+  findings that a user with a narrower view did not see.
+- Repository policy tests check the egress example's default deny, its
+  live-only allowance and the private and metadata ranges it excludes.
 
 ### Operational controls guide
 

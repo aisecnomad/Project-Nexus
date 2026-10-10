@@ -716,7 +716,7 @@ def test_entra_domain_tenant_id_attests_the_reported_tenant(index, monkeypatch):
 
 def _delegated_run(index, monkeypatch, scopes: str = "User.Read Application.Read.All") -> dict[str, Any]:
     token = pyjwt.encode(
-        {"tid": TENANT, "scp": scopes, "exp": int(time.time()) + 3600},
+        {"aud": "https://graph.microsoft.com", "tid": TENANT, "scp": scopes, "exp": int(time.time()) + 3600},
         _TEST_HMAC_KEY,
         algorithm="HS256",
     )
@@ -759,6 +759,35 @@ def test_delegated_scan_by_a_user_who_sees_less_never_resolves_findings(index, m
     comparison = compare_reports(administrator, restricted)
     assert comparison["comparable"] is False and comparison["resolved"] == []
     assert comparison["unknown"]
+
+
+@pytest.mark.parametrize(
+    "claims,attested",
+    [
+        ({"idtyp": "app", "roles": ["Application.Read.All"]}, True),
+        # What `az account get-access-token --resource-type ms-graph` gives a signed-in user.
+        ({"idtyp": "user", "scp": "User.Read Application.Read.All"}, False),
+        ({"scp": "User.Read Application.Read.All"}, False),
+    ],
+)
+def test_pre_issued_entra_token_is_attested_only_when_app_only(index, monkeypatch, claims, attested):
+    """A user's access_token lists what that user may see, like a delegated scan: never attested."""
+    token = pyjwt.encode(
+        {"aud": "https://graph.microsoft.com", "tid": TENANT, "exp": int(time.time()) + 3600, **claims},
+        _TEST_HMAC_KEY,
+        algorithm="HS256",
+    )
+    _graph(monkeypatch, organization=_organization())
+    spec = ConnectorSpec("identity.entra", {"tenant_id": TENANT, "access_token": token})
+    report = Engine(ScanConfig(connectors=[spec]), index=index).run().to_dict()
+    assert token not in json.dumps(report)
+    assert report["summary"]["complete"] is True, report["stats"]
+    scope = report["collection_scope"]
+    assert scope["comparable"] is attested
+    (live,) = scope["live"]
+    assert (live["principal"] is not None) is attested
+    if not attested:
+        assert scope["reason"] == "live principal could not be verified"
 
 
 def test_delegated_scan_of_another_tenant_still_stops(index, monkeypatch):

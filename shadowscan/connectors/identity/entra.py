@@ -382,6 +382,10 @@ class EntraConnector(BaseConnector):
         token = self.ctx.get("access_token", env="GRAPH_ACCESS_TOKEN")
         if token and (self.include_agent_registry or self.include_agent_identities):
             self._check_app_only_token(token)
+        elif token:
+            # Not bound without agent collections, but a user's token still lists only what that
+            # user may see, so its live collection scope is never attested.
+            self._caller_scoped = not _app_only(_unverified_claims(token) if isinstance(token, str) else None)
         if not token:
             cid = self.ctx.get("client_id", env="AZURE_CLIENT_ID")
             secret = self.ctx.get("client_secret", env="AZURE_CLIENT_SECRET")
@@ -440,12 +444,16 @@ class EntraConnector(BaseConnector):
         # A domain name in tenant_id cannot be compared; the reported tenant is attested.
         if _TENANT_ID.fullmatch(configured) and configured != tenant:
             raise ConnectorError("identity.entra: the authenticated tenant does not match tenant_id")
-        if self.auth_mode == "delegated":
-            # Delegated listings return what the signed-in user may see. Another user in the
-            # same tenant would see less without any error, so the tenant alone attests nothing.
+        if self._caller_scoped:
+            # Delegated listings, and those of a pre-issued token that is not app-only, return what
+            # one user may see. Another user in the same tenant would see less without any error,
+            # so the tenant alone attests nothing.
             self.ctx.warn(
                 "identity.entra: delegated listings are scoped to the signed-in user; live collection "
-                "scope not attested",
+                "scope not attested"
+                if self.auth_mode == "delegated"
+                else "identity.entra: the access_token is not a decodable app-only token, so listings are "
+                "scoped to its user; live collection scope not attested",
                 incomplete=False,
             )
             return
@@ -498,7 +506,7 @@ class EntraConnector(BaseConnector):
             tenant, account = claims.get("tid"), self._binding_account()
             if isinstance(tenant, str) and account and tenant.lower() == account.strip().lower():
                 self._bound_tenant = tenant
-        if claims is None or "scp" in claims or claims.get("idtyp") != "app":
+        if not _app_only(claims):
             self._caller_scoped = True
 
     def _check_token_tenant(self, token: Any, label: str) -> dict[str, Any]:
@@ -1975,6 +1983,11 @@ def _binding_coverage(state: str, coverage: _Coverage) -> str:
     if state == "complete" and coverage.listing_scope == "registry" and not coverage.rejected:
         return "in-scope"
     return "unknown"
+
+
+def _app_only(claims: dict[str, Any] | None) -> bool:
+    """Whether unverified token claims show an app-only token (``idtyp: app`` and no ``scp``)."""
+    return claims is not None and "scp" not in claims and claims.get("idtyp") == "app"
 
 
 def _check_graph_audience(claims: dict[str, Any], label: str) -> None:

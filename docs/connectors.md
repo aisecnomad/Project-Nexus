@@ -599,8 +599,9 @@ comparisons; a `tenant_id` GUID that differs stops the scan. The call needs
 `Organization.Read.All` or `Directory.Read.All` (application) or `User.Read`
 (delegated) and matters only for comparable drift: when it is denied the scan
 still completes, with an advisory warning, but its scope is not attested.
-Delegated scans are never attested, because their listings return only what
-the signed-in user may see.
+Delegated scans, and scans with an `access_token` that is not a decodable
+app-only token, are never attested, because their listings return only what
+one user may see.
 
 ### `identity.google-workspace`
 Admin SDK `users/{id}/tokens` for every user, aggregated per OAuth client:

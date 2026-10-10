@@ -112,7 +112,8 @@ following scans attest it:
 - `gateway.logs` when both scans were keyed with the same
   `SHADOWSCAN_IDENTITY_KEY`;
 - the live connectors `cloud.aws`, `cloud.azure`, `cloud.gcp` and
-  `identity.entra` (app-only scans; a delegated scan is never attested). Each
+  `identity.entra` (app-only credentials; a delegated scan, or one with a
+  user's `access_token`, is never attested). Each
   records its verified principal, its requested scope and the outcome of every
   enumeration, and attests only when every enumeration succeeded. Without
   `projects` or `subscriptions`, the GCP or Azure principal is the discovered

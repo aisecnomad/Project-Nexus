@@ -1046,6 +1046,19 @@ USER_TOKEN_WARNING = (
     "what its user can see; agent registry coverage incomplete (use auth_mode: delegated for a "
     "signed-in user's token)"
 )
+# One user's listings never attest a live collection scope (tests/unit/test_live_scope_attestation.py).
+DELEGATED_SCOPE_WARNING = (
+    "identity.entra: delegated listings are scoped to the signed-in user; live collection scope not attested"
+)
+USER_SCOPE_WARNING = (
+    "identity.entra: the access_token is not a decodable app-only token, so listings are scoped to its "
+    "user; live collection scope not attested"
+)
+
+
+def _mock_organization():
+    # The Graph reports a tenant ID; TENANT is not one, so the connector does not compare them.
+    responses.get(GRAPH + "/organization", json={"value": [{"id": "00000000-0000-0000-0000-000000000365"}]})
 
 
 def _token(**claims):
@@ -1062,6 +1075,7 @@ def _token(**claims):
 
 
 def _mock_graph(*, detail_status=200, detail_body=None, second_page_status=200):
+    _mock_organization()
     for path in (
         "/servicePrincipals",
         "/oauth2PermissionGrants",
@@ -1101,8 +1115,8 @@ def test_delegated_token_comes_only_from_the_named_environment_variable(monkeypa
         include_agent_identities=True,
     )
     findings = EntraConnector(ctx).run()
-    # The only diagnostic: a delegated listing is one user's view, so the scan is incomplete.
-    assert ctx.stats.warnings == [DELEGATED_WARNING] and not ctx.stats.errors
+    # A delegated listing is one user's view: the scan is incomplete and its scope never attested.
+    assert ctx.stats.warnings == [DELEGATED_SCOPE_WARNING, DELEGATED_WARNING] and not ctx.stats.errors
     _assert_incomplete(ctx, findings)
     assert responses.calls and all(call.request.method == "GET" for call in responses.calls)
     assert {call.request.headers["Authorization"] for call in responses.calls} == {f"Bearer {token}"}
@@ -1139,6 +1153,7 @@ def test_empty_delegated_listing_is_incomplete_not_empty(monkeypatch, index, col
     # The signed-in user sees no package and no agent identity. That is one user's view of the
     # tenant, not an empty registry: the scan must exit 3, with one fixed warning.
     monkeypatch.setenv("GRAPH_DELEGATED_TOKEN", _token())
+    _mock_organization()
     for path in ("/servicePrincipals", "/oauth2PermissionGrants", "/applications", COPILOT_PACKAGES):
         responses.get(GRAPH + path, json={"value": []})
     responses.get(AGENT_IDENTITIES, json={"value": []})
@@ -1153,17 +1168,19 @@ def test_empty_delegated_listing_is_incomplete_not_empty(monkeypatch, index, col
     assert result.findings == [] and not result.complete
     assert _exit_code(result, None) == 3
     [stats] = [s for s in result.stats if s.connector == "identity.entra"]
-    assert stats.warnings == [DELEGATED_WARNING] and not stats.errors
+    assert stats.warnings == [DELEGATED_SCOPE_WARNING, DELEGATED_WARNING] and not stats.errors
 
 
 @responses.activate
 def test_delegated_scan_without_agent_collections_has_no_caller_scope_warning(monkeypatch, index):
     monkeypatch.setenv("GRAPH_DELEGATED_TOKEN", _token())
+    _mock_organization()
     for path in ("/servicePrincipals", "/oauth2PermissionGrants", "/applications"):
         responses.get(GRAPH + path, json={"value": []})
     ctx = _context(index, tenant_id=TENANT, auth_mode="delegated")
     assert EntraConnector(ctx).run() == []
-    assert not ctx.stats.incomplete and not ctx.stats.warnings
+    # Complete, with no agent registry warning; only its live scope is not attested.
+    assert not ctx.stats.incomplete and ctx.stats.warnings == [DELEGATED_SCOPE_WARNING]
 
 
 @responses.activate
@@ -1188,7 +1205,7 @@ def test_user_token_as_app_only_access_token_is_caller_scoped(monkeypatch, index
     records = list(connector.collect())
     findings = list(connector.analyze(records))
     _assert_incomplete(ctx, findings)
-    assert ctx.stats.warnings == [USER_TOKEN_WARNING]
+    assert ctx.stats.warnings == [USER_SCOPE_WARNING, USER_TOKEN_WARNING]
     assert records[-1]["listingScope"] == "caller"
     record = _record(_by_resource(findings)["entra:copilot-package:P_1"])
     assert record["listing_scope"] == "caller" and record["listing_complete"] is False
@@ -1209,7 +1226,7 @@ def test_undecodable_access_token_without_tenant_is_caller_scoped(monkeypatch, i
     ctx = _context(index, include_agent_identities=True)
     findings = EntraConnector(ctx).run()
     _assert_incomplete(ctx, findings)
-    assert ctx.stats.warnings == [USER_TOKEN_WARNING]
+    assert ctx.stats.warnings == [USER_SCOPE_WARNING, USER_TOKEN_WARNING]
 
 
 @responses.activate
@@ -1255,7 +1272,7 @@ def test_graph_token_audiences_are_accepted(monkeypatch, index, audience):
     _mock_graph()
     ctx = _context(index, tenant_id=TENANT, auth_mode="delegated", include_agent_registry=True)
     findings = EntraConnector(ctx).run()
-    assert not ctx.stats.skipped and ctx.stats.warnings == [DELEGATED_WARNING]
+    assert not ctx.stats.skipped and ctx.stats.warnings == [DELEGATED_SCOPE_WARNING, DELEGATED_WARNING]
     assert "entra:copilot-package:P_1" in _by_resource(findings)
 
 
@@ -1345,9 +1362,10 @@ def test_pre_issued_token_tenant_is_checked_only_for_attributed_registry_records
     records = [registry_record(f) for f in findings if "registry_record" in f.metadata]
     assert all(record is not None and record.registry_id == "" for record in records)
     assert bool(records) == bool(config.get("include_agent_registry"))
-    # An opaque token cannot show it is app-only, so its agent listings are caller-scoped.
+    # An opaque token cannot show it is app-only, so its listings are caller-scoped: never attested,
+    # and its agent listings make the scan incomplete.
     collected = bool(config.get("include_agent_registry"))
-    assert ctx.stats.warnings == ([USER_TOKEN_WARNING] if collected else [])
+    assert ctx.stats.warnings == [USER_SCOPE_WARNING, *([USER_TOKEN_WARNING] if collected else [])]
     assert ctx.stats.incomplete is collected
     assert all(record is not None and record.listing_scope == "caller" for record in records)
 
