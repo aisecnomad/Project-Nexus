@@ -54,7 +54,8 @@ Evidence lives under `.github/ai-review/` in the head checkout:
   reported no matching evidence. An absent/denied scan is not an empty scan.
 
 The digest is SHA-256 of UTF-8 compact JSON (`separators=(",", ":")`) encoding
-the sorted list of `[filename, sha, status]` triples from the complete GitHub
+`[base_sha, sorted_file_triples]`, where the triples are `[filename, sha, status]`
+from the complete GitHub
 PR files API, excluding paths starting `.github/ai-review/`. This avoids a
 circular head-SHA requirement when evidence is committed, binds findings to
 file blobs/status, and permits evidence-only updates. Regenerate it after any
@@ -131,7 +132,9 @@ review/check for the same SHA; each run posts at most one of each.
 
 ## Human gate and branch protection
 
-Maintainers must manually require **AI Review Gate**, existing CI/scanner
+Maintainers must manually require **AI Review Gate**, **AI review publication**
+(covers checkout, interpreter and API failures before custom-check creation),
+existing CI/scanner
 checks, and human/CODEOWNER approval in branch protection/rulesets. Keep
 stale-approval dismissal and prevent the author from self-approving. Do not
 enable a bypass label, lower approval counts or weaken rulesets for this gate.

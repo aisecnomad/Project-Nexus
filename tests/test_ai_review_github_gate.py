@@ -14,6 +14,7 @@ from tools.ai_review.github_gate import (
     GitHub,
     diff_digest,
     high_risk,
+    main,
     prepare,
     publish,
     snapshot,
@@ -165,6 +166,33 @@ def test_digest_and_high_risk() -> None:
     assert high_risk(["docs/guide.md"]) is False
     assert high_risk(["shadowscan/cli.py"]) is True
     assert high_risk(["unknown.sh"]) is True
+
+
+def test_digest_binds_base(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PR_BASE_SHA", "a" * 40)
+    first = diff_digest(FILES)
+    monkeypatch.setenv("PR_BASE_SHA", "b" * 40)
+    assert diff_digest(FILES) != first
+
+
+def test_pending_check_precedes_failed_snapshot(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    api = FakeGitHub()
+    api.head = "c" * 40
+    monkeypatch.setattr("tools.ai_review.github_gate.GitHub", lambda: api)
+    monkeypatch.setattr("sys.argv", ["github_gate", "publish"])
+    for name, value in {
+        "PR_NUMBER": "1",
+        "PR_HEAD_SHA": HEAD,
+        "AI_REVIEW_INPUT": str(tmp_path / "missing"),
+        "AI_REVIEW_OUT_DIR": str(tmp_path / "out"),
+    }.items():
+        monkeypatch.setenv(name, value)
+    assert main() == 1
+    assert api.calls[0][0] == "check-runs"
+    assert api.calls[-1][1]["conclusion"] == "failure"
 
 
 def test_workflow_security_boundary() -> None:

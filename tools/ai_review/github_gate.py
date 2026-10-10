@@ -75,6 +75,9 @@ def snapshot(api: GitHub, number: int, head: str) -> tuple[list[Any], list[str]]
     pr = api.request(f"pulls/{number}")
     if pr["head"]["sha"] != head:
         raise GateError("superseded pull request")
+    expected_base = os.environ.get("PR_BASE_SHA")
+    if expected_base and pr["base"]["sha"] != expected_base:
+        raise GateError("superseded base revision")
     files = api.pages(f"pulls/{number}/files")
     if len(files) != pr["changed_files"]:
         raise GateError("incomplete diff")
@@ -84,7 +87,8 @@ def snapshot(api: GitHub, number: int, head: str) -> tuple[list[Any], list[str]]
         raise GateError("diff paths malformed")
     if any(not isinstance(label, str) or "," in label or "\n" in label for label in labels):
         raise GateError("labels malformed")
-    if api.request(f"pulls/{number}")["head"]["sha"] != head:
+    current = api.request(f"pulls/{number}")
+    if current["head"]["sha"] != head or (expected_base and current["base"]["sha"] != expected_base):
         raise GateError("superseded pull request")
     return files, labels
 
@@ -102,11 +106,14 @@ def high_risk(paths: list[str]) -> bool:
 def diff_digest(files: list[Any]) -> str:
     return hashlib.sha256(
         json.dumps(
-            sorted(
-                (file["filename"], file["sha"], file["status"])
-                for file in files
-                if not file["filename"].startswith(".github/ai-review/")
-            ),
+            [
+                os.environ.get("PR_BASE_SHA", ""),
+                sorted(
+                    (file["filename"], file["sha"], file["status"])
+                    for file in files
+                    if not file["filename"].startswith(".github/ai-review/")
+                ),
+            ],
             separators=(",", ":"),
         ).encode()
     ).hexdigest()
@@ -155,6 +162,7 @@ def prepare(api: GitHub, number: int, head: str, root: Path, out: Path) -> int:
     try:
         digest = diff_digest(files)
         validate_evidence(root, digest)
+        (out / "validated-digest.txt").write_text(digest, encoding="utf-8")
         target = out / "validated"
         target.mkdir()
         for role in sorted(set(AGENTS) - {"orchestrator"}):
@@ -182,7 +190,14 @@ def prepare(api: GitHub, number: int, head: str, root: Path, out: Path) -> int:
     return synthesize.main()
 
 
-def publish(api: GitHub, number: int, head: str, out: Path, failed: bool) -> int:
+def publish(
+    api: GitHub,
+    number: int,
+    head: str,
+    out: Path,
+    failed: bool,
+    check: dict[str, Any] | None = None,
+) -> int:
     # Re-evaluate against current labels/diff; never replay a prior decision.
     if failed:
         decision = {"event": "COMMENT", "conclusion": "failure", "reason": "bypass_unavailable"}
@@ -200,7 +215,9 @@ def publish(api: GitHub, number: int, head: str, out: Path, failed: bool) -> int
     ):
         decision.update(conclusion="failure", reason="bypass_unavailable")
         body += "\n\nPreflight did not complete successfully. Gate failed closed."
-    _, labels = snapshot(api, number, head)
+    files, labels = snapshot(api, number, head)
+    if not failed and diff_digest(files) != synthesize.read_input(out / "validated-digest.txt"):
+        raise GateError("superseded evidence")
     if synthesize.BLOCKED_LABEL in labels:
         decision.update(event="REQUEST_CHANGES", conclusion="failure", reason="blocked_label")
         body += "\n\nBlocked by maintainer label."
@@ -208,7 +225,7 @@ def publish(api: GitHub, number: int, head: str, out: Path, failed: bool) -> int
     # findings in the summary instead of risking a partial review POST (422).
     for comment in comments:
         body += "\n\n" + comment["body"]
-    check = api.request(
+    check = check or api.request(
         "check-runs",
         {
             "name": "AI Review Gate",
@@ -260,12 +277,31 @@ def main() -> int:
             return prepare(api, number, head, root, out)
         if mode == "publish":
             # The second stage independently executes the trusted synthesizer.
-            failed = False
+            check = api.request(
+                "check-runs",
+                {
+                    "name": "AI Review Gate",
+                    "head_sha": head,
+                    "status": "in_progress",
+                },
+            )
             try:
-                prepare(api, number, head, root, out)
+                failed = False
+                try:
+                    prepare(api, number, head, root, out)
+                except (GateError, synthesize.GateInputError, OSError, ValueError, KeyError, TypeError):
+                    failed = True
+                return publish(api, number, head, out, failed, check)
             except (GateError, synthesize.GateInputError, OSError, ValueError, KeyError, TypeError):
-                failed = True
-            return publish(api, number, head, out, failed)
+                api.request(
+                    f"check-runs/{check['id']}",
+                    {
+                        "status": "completed",
+                        "conclusion": "failure",
+                        "output": {"title": "AI Review Gate", "summary": "bypass_unavailable"},
+                    },
+                )
+                raise
         raise GateError("invalid mode")
     except (GateError, synthesize.GateInputError, OSError, ValueError, KeyError, TypeError, IndexError):
         print("AI Review Gate: bypass_unavailable; no untrusted diagnostics emitted", file=sys.stderr)

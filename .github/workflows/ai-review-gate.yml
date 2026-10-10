@@ -35,6 +35,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           AI_REVIEW_INPUT: ${{ github.workspace }}/evidence/.github/ai-review
           AI_REVIEW_OUT_DIR: ${{ runner.temp }}/ai-review-preflight
         run: python -m tools.ai_review.github_gate preflight
@@ -70,6 +71,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           AI_REVIEW_INPUT: ${{ github.workspace }}/evidence/.github/ai-review
           AI_REVIEW_OUT_DIR: ${{ runner.temp }}/ai-review-synthesis
         run: python -m tools.ai_review.github_gate publish
