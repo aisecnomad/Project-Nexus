@@ -5,6 +5,14 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## Unreleased
 
+### AI-assisted review gate
+
+- Add a deterministic, fail-closed AI Review Gate with read-only preflight,
+  base-commit-only synthesis, and narrowly scoped review/check publication.
+  Missing or malformed specialist evidence blocks the gate. AI cannot approve
+  or merge; human/CODEOWNER review and branch protections remain required.
+  This is not independent human review and does not authorize a release.
+
 ### Scan evidence, completeness and replay corrections
 
 - Report only the exception type when a connector, or one `code.github` or
