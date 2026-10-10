@@ -17,7 +17,13 @@ from click.testing import CliRunner
 import shadowscan.connectors as registry
 from shadowscan.cli import main
 from shadowscan.config import ConnectorSpec, ScanConfig, parse_set_options
-from shadowscan.connectors.base import ConnectorContext, ConnectorError
+from shadowscan.connectors.base import (
+    BaseConnector,
+    ConnectorContext,
+    ConnectorError,
+    _raise_connector_error,
+    failure_summary,
+)
 from shadowscan.engine import Engine
 from shadowscan.incremental import IncrementalCache
 from shadowscan.models import Finding, Kind, ScanStats, Surface, now_iso
@@ -345,6 +351,58 @@ def test_broken_plugin_metadata_does_not_hide_later_plugins(monkeypatch):
     valid = EntryPoint(name="cloud.reviewed", value="reviewed:Connector", group="shadowscan.connectors")
     monkeypatch.setattr(registry, "entry_points", lambda **kwargs: [BrokenEntry(), valid])
     assert registry.available_connectors()["cloud.reviewed"] == "reviewed:Connector"
+
+
+def test_unlistable_plugin_metadata_keeps_builtins_and_reports_only_the_type(monkeypatch):
+    def unlistable(**kwargs):
+        raise OSError("distribution metadata at /opt/private/site-packages is corrupt")
+
+    monkeypatch.setattr(registry, "entry_points", unlistable)
+    assert "code.filesystem" in registry.available_connectors()
+    diagnostics = registry.plugin_registry_errors()
+    assert [(d.rule, d.message) for d in diagnostics if d.rule == "unreadable-metadata"] == [
+        ("unreadable-metadata", "plugin metadata listing failed: OSError")
+    ]
+    assert not any("/opt/private" in d.message for d in diagnostics)
+
+
+def test_broken_plugin_entry_reports_only_the_exception_type(monkeypatch):
+    class BrokenEntry:
+        @property
+        def name(self):
+            raise RuntimeError("token=hunter2 in distribution metadata")
+
+    monkeypatch.setattr(registry, "entry_points", lambda **kwargs: [BrokenEntry()])
+    registry.available_connectors()
+    messages = [d.message for d in registry.plugin_registry_errors()]
+    assert "plugin entry is unreadable: RuntimeError" in messages
+    assert not any("hunter2" in message for message in messages)
+
+
+def test_failure_summary_keeps_text_only_from_shadowscan_raise_sites():
+    with pytest.raises(ConnectorError) as own:
+        _raise_connector_error("offline input must be a directory")
+    assert failure_summary(own.value) == "ConnectorError: offline input must be a directory"
+    with pytest.raises(json.JSONDecodeError) as foreign:
+        json.loads('{"token": "opaque')
+    assert failure_summary(foreign.value) == "JSONDecodeError"
+    assert failure_summary(ValueError("never raised")) == "ValueError"
+
+
+def test_unexpected_connector_failure_reports_only_the_exception_type():
+    class Exploding(BaseConnector):
+        name = "test.exploding"
+
+        def collect(self):
+            raise RuntimeError("SDK echoed Authorization: Bearer opaque-sdk-token")
+
+        def analyze(self, records):
+            return []
+
+    ctx = ConnectorContext(index=SignatureIndex([]))
+    assert Exploding(ctx).run() == []
+    assert ctx.stats.incomplete
+    assert ctx.stats.errors == ["test.exploding: RuntimeError"]
 
 
 def test_ambiguous_plugin_names_never_depend_on_installation_order(monkeypatch):

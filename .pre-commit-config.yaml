@@ -51,7 +51,7 @@ repos:
     rev: 2834ec6639549dd6796205c8f011dedcd587288b # v2.4.0
     hooks:
       - id: mypy
-        files: ^(shadowscan|tools)/
+        files: ^(shadowscan|tools|benchmarks)/
         # The hook runs in its own environment. click ships its own types; without
         # it the decorated CLI is untyped and its `type: ignore` comments read as
         # unused. Keep this pin equal to requirements.lock.

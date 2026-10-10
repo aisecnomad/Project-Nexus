@@ -23,10 +23,8 @@ patterns but shares the same conflict of interest.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import math
-import os
 import platform
 import random
 import shutil
@@ -34,17 +32,15 @@ import sys
 import tempfile
 import time
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from benchmarks.sab_realworld.corpus import CASES, CORPUS_METADATA, RealWorldCase
 from shadowscan import __version__
 from shadowscan.connectors.base import ConnectorContext
 from shadowscan.connectors.code.filesystem import FilesystemConnector
-from shadowscan.models import Kind
 from shadowscan.signatures import get_index
-
-from benchmarks.sab_realworld.corpus import CASES, CORPUS_METADATA, RealWorldCase
 
 Z95 = 1.959963984540054
 
@@ -59,9 +55,7 @@ def wilson(k: int, n: int) -> tuple[float | None, float | None, float | None]:
     return p, max(0.0, centre - half), min(1.0, centre + half)
 
 
-def bootstrap_f1(
-    rows: list[dict[str, Any]], reps: int = 2000, seed: int = 42
-) -> tuple[float, float]:
+def bootstrap_f1(rows: list[dict[str, Any]], reps: int = 2000, seed: int = 42) -> tuple[float, float]:
     rng = random.Random(seed)
     vals = []
     for _ in range(reps):
@@ -92,9 +86,16 @@ def confusion(rows: list[dict[str, Any]]) -> dict[str, Any]:
     denom = math.sqrt((tp + fp) * (tp + fn) * (tn + fp) * (tn + fn))
     mcc = (tp * tn - fp * fn) / denom if denom else 0.0
     return {
-        "n": len(rows), "tp": tp, "fp": fp, "fn": fn, "tn": tn,
-        "recall": recall, "specificity": specificity, "precision": precision,
-        "f1": round(f1, 4), "mcc": round(mcc, 4),
+        "n": len(rows),
+        "tp": tp,
+        "fp": fp,
+        "fn": fn,
+        "tn": tn,
+        "recall": recall,
+        "specificity": specificity,
+        "precision": precision,
+        "f1": round(f1, 4),
+        "mcc": round(mcc, 4),
     }
 
 
@@ -126,12 +127,14 @@ def _scan(case: RealWorldCase, root: Path, index: Any) -> dict[str, Any]:
     # The connector records failures instead of raising. A scan that did not
     # finish is not an answer: an empty incomplete scan must never score as a
     # correct negative, so it becomes an error row.
-    if ctx.stats.incomplete or ctx.stats.errors or ctx.stats.skipped:
-        raise IncompleteScanError("scan incomplete: " + "; ".join(ctx.stats.errors[:3]))
+    stats = ctx.stats
+    if stats is None:
+        raise IncompleteScanError("scan incomplete: the connector recorded no statistics")
+    if stats.incomplete or stats.errors or stats.skipped:
+        raise IncompleteScanError("scan incomplete: " + "; ".join(stats.errors[:3]))
     detected = len(findings) > 0
     agentic = any(
-        f.kind.value in {"agent", "mcp-server", "agent-config", "bot-app", "workflow"}
-        for f in findings
+        f.kind.value in {"agent", "mcp-server", "agent-config", "bot-app", "workflow"} for f in findings
     )
     items = [
         {
@@ -185,9 +188,7 @@ def label_signatures(label: str, index: Any) -> frozenset[str]:
     return frozenset(ids)
 
 
-def _check_expectations(
-    case: RealWorldCase, scan_result: dict[str, Any], index: Any
-) -> dict[str, Any]:
+def _check_expectations(case: RealWorldCase, scan_result: dict[str, Any], index: Any) -> dict[str, Any]:
     all_sigs = set()
     for item in scan_result["items"]:
         all_sigs.update(item["signatures"])
@@ -195,9 +196,8 @@ def _check_expectations(
     found_expected = {label for label in expected_hit if label_signatures(label, index) & all_sigs}
     missed_expected = expected_hit - found_expected
 
-    correct_detection = (
-        (case.label != "none" and scan_result["detected"])
-        or (case.label == "none" and not scan_result["detected"])
+    correct_detection = (case.label != "none" and scan_result["detected"]) or (
+        case.label == "none" and not scan_result["detected"]
     )
     correct_agent_tier = True
     if case.label == "agent" and scan_result["detected"]:
@@ -210,9 +210,7 @@ def _check_expectations(
         "correct_agent_tier": correct_agent_tier,
         "found_expected_signatures": sorted(found_expected),
         "missed_expected_signatures": sorted(missed_expected),
-        "signature_recall": (
-            len(found_expected) / len(expected_hit) if expected_hit else None
-        ),
+        "signature_recall": (len(found_expected) / len(expected_hit) if expected_hit else None),
     }
 
 
@@ -248,28 +246,30 @@ def run_benchmark(output_dir: Path) -> dict[str, Any]:
                 "status": "ok",
             }
             results.append(row)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - one case's failure is an error row, not the run's end
             errors.append(f"{case.id}: {type(exc).__name__}: {exc}")
-            results.append({
-                "case_id": case.id,
-                "category": case.category,
-                "family": case.family,
-                "label": case.label,
-                "difficulty": case.difficulty,
-                "surface": case.surface,
-                "detected": False,
-                "agentic": False,
-                "finding_count": 0,
-                "seconds": 0.0,
-                "items": [],
-                "correct_detection": False,
-                "correct_agent_tier": False,
-                "found_expected_signatures": [],
-                "missed_expected_signatures": case.expected_signatures,
-                "signature_recall": 0.0,
-                "status": "error",
-                "error": str(exc)[:300],
-            })
+            results.append(
+                {
+                    "case_id": case.id,
+                    "category": case.category,
+                    "family": case.family,
+                    "label": case.label,
+                    "difficulty": case.difficulty,
+                    "surface": case.surface,
+                    "detected": False,
+                    "agentic": False,
+                    "finding_count": 0,
+                    "seconds": 0.0,
+                    "items": [],
+                    "correct_detection": False,
+                    "correct_agent_tier": False,
+                    "found_expected_signatures": [],
+                    "missed_expected_signatures": case.expected_signatures,
+                    "signature_recall": 0.0,
+                    "status": "error",
+                    "error": str(exc)[:300],
+                }
+            )
         finally:
             shutil.rmtree(work_dir, ignore_errors=True)
 
@@ -281,7 +281,7 @@ def run_benchmark(output_dir: Path) -> dict[str, Any]:
     manifest = {
         "benchmark": "sab-realworld",
         "version": CORPUS_METADATA["version"],
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": datetime.now(UTC).isoformat(),
         "tool": "shadowscan",
         "tool_version": __version__,
         "python": platform.python_version(),
@@ -290,17 +290,13 @@ def run_benchmark(output_dir: Path) -> dict[str, Any]:
         "case_count": len(CASES),
         "errors": errors,
     }
-    (output_dir / "manifest.json").write_text(
-        json.dumps(manifest, indent=2) + "\n", encoding="utf-8"
-    )
+    (output_dir / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
 
     summary = _build_summary(results)
     report = render_report(summary, manifest)
     (output_dir / "REPORT.md").write_text(report, encoding="utf-8")
 
-    (output_dir / "summary.json").write_text(
-        json.dumps(summary, indent=2) + "\n", encoding="utf-8"
-    )
+    (output_dir / "summary.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
     return summary
 
 
@@ -313,9 +309,7 @@ def _build_summary(results: list[dict[str, Any]]) -> dict[str, Any]:
     by_category: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for r in ok_rows:
         by_category[r["category"]].append(r)
-    category_metrics = {
-        cat: confusion(rows) for cat, rows in sorted(by_category.items())
-    }
+    category_metrics = {cat: confusion(rows) for cat, rows in sorted(by_category.items())}
 
     by_label: dict[str, dict[str, int]] = defaultdict(lambda: {"correct": 0, "total": 0})
     for r in ok_rows:
@@ -333,21 +327,16 @@ def _build_summary(results: list[dict[str, Any]]) -> dict[str, Any]:
     by_surface: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for r in ok_rows:
         by_surface[r["surface"]].append(r)
-    surface_metrics = {
-        s: confusion(rows) for s, rows in sorted(by_surface.items())
-    }
+    surface_metrics = {s: confusion(rows) for s, rows in sorted(by_surface.items())}
 
-    best_surface_f1 = max(
-        (m["f1"] for m in surface_metrics.values()), default=0.0
-    )
-    best_surface_name = max(
-        surface_metrics, key=lambda s: surface_metrics[s]["f1"], default=""
-    )
+    best_surface_f1 = max((m["f1"] for m in surface_metrics.values()), default=0.0)
+    best_surface_name = max(surface_metrics, key=lambda s: surface_metrics[s]["f1"], default="")
 
     total_surface_cases = sum(m["n"] for m in surface_metrics.values())
     surface_normalized = (
         sum(m["f1"] * m["n"] for m in surface_metrics.values()) / total_surface_cases
-        if total_surface_cases else 0.0
+        if total_surface_cases
+        else 0.0
     )
 
     by_family: dict[str, dict[str, Any]] = {}
@@ -366,7 +355,8 @@ def _build_summary(results: list[dict[str, Any]]) -> dict[str, Any]:
     agent_tier_rows = [r for r in ok_rows if r["label"] == "agent" and r["detected"]]
     agent_tier_accuracy = (
         sum(r["correct_agent_tier"] for r in agent_tier_rows) / len(agent_tier_rows)
-        if agent_tier_rows else None
+        if agent_tier_rows
+        else None
     )
 
     sig_recalls = [r["signature_recall"] for r in ok_rows if r["signature_recall"] is not None]
@@ -433,7 +423,8 @@ def render_report(summary: dict[str, Any], manifest: dict[str, Any]) -> str:
     lines.append(f"- **Families**: {len(summary['by_family'])}")
     lines.append(f"- **Timestamp**: {manifest['timestamp']}")
     lines.append(f"- **Python**: {manifest['python']}")
-    lines.append(f"- **Errors** (incomplete or failed scans, excluded from the metrics): {summary['error_count']}")
+    errors_label = "- **Errors** (incomplete or failed scans, excluded from the metrics)"
+    lines.append(f"{errors_label}: {summary['error_count']}")
     lines.append("")
 
     o = summary["overall"]
@@ -588,16 +579,20 @@ def render_report(summary: dict[str, Any], manifest: dict[str, Any]) -> str:
 
 def main() -> int:
     import argparse
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--output", type=Path,
+        "--output",
+        type=Path,
         default=Path(__file__).parent / "results",
     )
     args = parser.parse_args()
     summary = run_benchmark(args.output)
     o = summary["overall"]
-    print(f"Cases: {o['n']}  F1: {o['f1']}  MCC: {o['mcc']}  "
-          f"TP: {o['tp']} FP: {o['fp']} FN: {o['fn']} TN: {o['tn']}")
+    print(
+        f"Cases: {o['n']}  F1: {o['f1']}  MCC: {o['mcc']}  "
+        f"TP: {o['tp']} FP: {o['fp']} FN: {o['fn']} TN: {o['tn']}"
+    )
     if summary["error_count"]:
         print(f"Errors: {summary['error_count']} (excluded from the metrics above)")
 

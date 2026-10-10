@@ -969,6 +969,15 @@ scan of the default branch as the comparison baseline. The option needs Git
 2.45 or later; when the diff cannot be computed the connector warns and scans
 the whole tree.
 
+An unexpected connector failure, and an unexpected failure while scanning one
+`code.github` or `code.gitlab` repository, reports the exception text only when
+ShadowScan code raised it; those messages are fixed or already sanitized. An
+exception raised inside a third-party SDK or plugin reports only its type
+(`code.github: acme/app: RuntimeError`), because its text can echo request data
+or opaque credentials that redaction does not recognize. The scan is still
+incomplete (exit 3). Alerting keyed on SDK exception text should key on the
+connector name and exception type.
+
 ## Candidate change history
 
 These notes record unreleased corrections and earlier candidate changes.

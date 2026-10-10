@@ -7,6 +7,19 @@ summarizes each release for people who install and operate ShadowScan.
 
 ### Scan evidence, completeness and replay corrections
 
+- Report only the exception type when a connector, or one `code.github` or
+  `code.gitlab` repository, fails unexpectedly inside third-party code, so
+  opaque SDK exception text cannot reach reports. Exceptions raised by
+  ShadowScan code keep their fixed or sanitized message, such as the HTTP
+  layer's transport and read-deadline diagnostics. Plugin-metadata error paths
+  are no longer excluded from coverage, and regression tests pin each path
+  (from #171).
+- Restore the package classifier and the signature-validation command in the
+  README, both mistyped on `main`.
+- Lint, format-check and type-check `benchmarks/` with the rest of the tree in
+  `make`, CI, pre-commit and CONTRIBUTING.md. `benchmarks/README.md` indexes the
+  seven benchmarks, and `.gitattributes` marks their corpora, labels and stored
+  runs as generated.
 - Resolve supported Go SDK import aliases before publishing credential-bearing
   source evidence, and keep excerpts aligned with LF-based source locations when
   literals contain carriage returns. Reports remain confidential; dynamic call
