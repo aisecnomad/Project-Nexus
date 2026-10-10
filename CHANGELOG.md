@@ -7,6 +7,9 @@ summarizes each release for people who install and operate ShadowScan.
 
 ### Scan evidence, completeness and replay corrections
 
+- Report only the exception type when a connector fails unexpectedly, so
+  opaque SDK exception text cannot reach reports. Plugin-metadata error paths
+  are no longer excluded from coverage.
 - Resolve supported Go SDK import aliases before publishing credential-bearing
   source evidence, and keep excerpts aligned with LF-based source locations when
   literals contain carriage returns. Reports remain confidential; dynamic call
