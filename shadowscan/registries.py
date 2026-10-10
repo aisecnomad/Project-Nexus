@@ -386,8 +386,9 @@ class TrustedRegistry:
 
     ``allow_auto_approved`` also accepts approved records of a registry that approves every
     record without a person (``approval_mode: auto``); ``allow_registered_only`` also accepts
-    ``registered`` records of a registry without an approval workflow. Both default to false:
-    neither kind of record shows that a person reviewed the agent.
+    ``registered`` records (of a registry without an approval workflow, or that no approval was
+    requested for). Both default to false: neither kind of record shows that a person reviewed
+    the agent.
     """
 
     registry: str

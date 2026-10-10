@@ -397,6 +397,37 @@ summarizes each release for people who install and operate ShadowScan.
   token of another tenant never produces records attributed to the trusted one.
   `ConnectorContext.secret_env` reads such a variable and registers its value
   for redaction.
+- Delegated tokens, and pre-issued `access_token` values whose claims decode
+  when an opt-in collection is on, must carry a Microsoft Graph audience
+  (`aud` `https://graph.microsoft.com`, with or without a trailing slash, or
+  `00000003-0000-0000-c000-000000000000`); a same-tenant token for another
+  resource skips the connector before any request is sent.
+- A signed-in user's token passed as the app-only `access_token` (it has `scp`
+  or no `idtyp: app`), or one that cannot be decoded, no longer reports a
+  complete registry listing when an opt-in collection is on: the coverage marker
+  and records are caller-scoped (`listing_complete: false`, `unknown` binding
+  coverage) and a fixed warning, which names `auth_mode: delegated` and never
+  the token, makes the scan incomplete (exit 3).
+- A delegated scan with `include_agent_registry` or `include_agent_identities`
+  now warns once that it lists only what the signed-in user can see and is
+  incomplete (exit 3), so an empty caller-scoped listing never reads as an
+  empty catalog. A replayed caller-scoped export is incomplete too.
+- An Agent 365 package whose detail call failed, was throttled or was beyond
+  `max_package_lookups` is `unknown` with no bindings instead of `approved`:
+  `requestStatus` is read from the details, so the package may have a pending
+  request.
+- An organization's own package (`custom`, `shared` or `lob`) with no approval
+  request, such as an agent a user shared, is `registered` instead of
+  `approved`. A trusted tenant entry accepts it, with the app registration and
+  agent identity it binds, only with `allow_registered_only`;
+  `allow_auto_approved` no longer approves it without a reviewer.
+- A binding's coverage is `unknown` instead of `in-scope` when any record of the
+  export was rejected as malformed, so a present but malformed app registration
+  or agent identity is not reported `registered-not-observed`.
+- The coverage marker records the tenant the credential is bound to
+  (`tenantId`). A replay whose `tenant_id` differs from it is incomplete and its
+  records get an empty registry id, so they cannot be trusted; an older export
+  without the field replays as before.
 - The fixtures and Graph payloads in the tests are synthetic, modeled on
   Microsoft's Graph reference pages; nothing was validated against a live
   tenant.

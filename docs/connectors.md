@@ -570,19 +570,25 @@ or `beta`) and reads each package's details, at most `max_package_lookups`
 (default 2000); each package becomes a vendor registry record finding
 (`microsoft-agent-365`, registry id `tenant_id`). It needs
 `CopilotPackages.Read.All`, and a pre-issued `access_token` must be a JWT whose
-`tid` claim is `tenant_id`. A package binds only a listed agent identity and,
-for an organization's own package, its app registration.
+`tid` claim is `tenant_id`. With an opt-in collection, a pre-issued token must
+be issued for Microsoft Graph (`aud`), and one that is not app-only (`scp`, or
+no `idtyp: app`) gives caller-scoped listings and an incomplete scan. A package
+binds only a listed agent identity and, for an organization's own package, its
+app registration; a package whose details are missing is `unknown` and binds
+nothing, and an organization's own package with no approval request is
+`registered`, not `approved`.
 `include_agent_identities: true` lists Entra Agent ID
 agent identities from the Graph beta API; they enrich the service principal
 finding of the same id or stand alone, and are always reported. Records of the
 deprecated Entra agent registry are read from offline exports only, as
 `deprecated` records that never approve. `auth_mode: delegated` reads a
 signed-in user's Graph token from the environment variable named by
-`delegated_token_env` (default `GRAPH_DELEGATED_TOKEN`), checks its tenant and
-delegated claims, never refreshes it and refuses `access_token`, `client_id`
-and `client_secret`; delegated package listings are caller-scoped and never
-complete. Statuses, bindings, coverage and the delegated token rules are in the
-[identity connector guide](connectors/identity.md#identityentra).
+`delegated_token_env` (default `GRAPH_DELEGATED_TOKEN`), checks its tenant,
+Graph audience and delegated claims, never refreshes it and refuses
+`access_token`, `client_id` and `client_secret`; delegated package listings are
+caller-scoped and never complete, so a delegated scan with an opt-in collection
+warns and exits 3. Statuses, bindings, coverage and the delegated token rules
+are in the [identity connector guide](connectors/identity.md#identityentra).
 
 ### `identity.google-workspace`
 Admin SDK `users/{id}/tokens` for every user, aggregated per OAuth client:
