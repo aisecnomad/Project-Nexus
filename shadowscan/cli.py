@@ -26,6 +26,7 @@ from rich.text import Text
 from shadowscan import __version__
 from shadowscan.comparison import (
     DRIFT_CLASSES,
+    MAX_BASELINE_AGE_DAYS,
     MAX_REPORT_BYTES,
     ReportDigestMismatch,
     compare_reports,
@@ -1386,7 +1387,7 @@ def _sha256_option(ctx: click.Context, param: click.Parameter, value: str | None
 )
 @click.option(
     "--max-baseline-age-days",
-    type=click.IntRange(min=1),
+    type=click.IntRange(min=1, max=MAX_BASELINE_AGE_DAYS),
     default=None,
     metavar="DAYS",
     help=(

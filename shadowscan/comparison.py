@@ -30,6 +30,7 @@ from shadowscan.config import PATH_KEYS, ConnectorSpec, ScanConfig
 from shadowscan.connectors import _BUILTIN
 from shadowscan.models import FINDING_IDENTITY_SCHEMA, Finding
 from shadowscan.registries import RECONCILIATION_KEY, RECONCILIATION_STATUSES
+from shadowscan.risk import MITIGATING_TAGS
 from shadowscan.signatures import SignatureIndex
 from shadowscan.utils.digest import scanner_source_digest
 from shadowscan.utils.files import read_policy_bytes
@@ -61,6 +62,8 @@ _CAPABILITY_LISTS = ("permissions", "capabilities", "frameworks", "model_provide
 _GOVERNANCE_TAGS = frozenset({UNDERSTATED_TAG})
 # A baseline written on a host whose clock runs slightly ahead is not from the future.
 _CLOCK_SKEW = timedelta(minutes=5)
+# About a century: far beyond any review cycle, and well inside what timedelta can represent.
+MAX_BASELINE_AGE_DAYS = 36_500
 
 
 class ReportDigestMismatch(ValueError):
@@ -422,6 +425,19 @@ def _list_parts(field: str, values: list[str]) -> list[tuple[str, set[str]]]:
     return [("capability", items - _GOVERNANCE_TAGS), ("governance", items & _GOVERNANCE_TAGS)]
 
 
+def _widens(field: str, added: set[str], removed: set[str]) -> bool:
+    """Whether a list change is adverse: something new, or a lost mitigating tag.
+
+    Anything new the finding can do or reach is adverse, whatever it lost. A
+    mitigating tag (:data:`~shadowscan.risk.MITIGATING_TAGS`) records a limit, so
+    losing one (``disabled`` on an agent enabled again) is adverse and gaining
+    one is not.
+    """
+    if field != "tags":
+        return bool(added)
+    return bool(added - MITIGATING_TAGS or removed & MITIGATING_TAGS)
+
+
 def _drift(
     before: dict[str, Any], after: dict[str, Any], shown_before: dict[str, Any], shown_after: dict[str, Any]
 ) -> list[dict[str, Any]]:
@@ -464,8 +480,7 @@ def _drift(
                     "class": drift_class,
                     "field": field,
                     "direction": "replaced" if added and removed else "added" if added else "removed",
-                    # Anything new the finding can do or reach is adverse, whatever it lost.
-                    "adverse": bool(added),
+                    "adverse": _widens(field, added, removed),
                     "added": sorted(shown_new - shown_old),
                     "removed": sorted(shown_old - shown_new),
                 }
@@ -552,8 +567,10 @@ def baseline_lifecycle_reasons(
     """
     if max_age_days is None:
         return []
-    if type(max_age_days) is not int or max_age_days < 1:
-        raise ValueError("maximum baseline age must be a positive number of days")
+    if type(max_age_days) is not int or not 1 <= max_age_days <= MAX_BASELINE_AGE_DAYS:
+        raise ValueError(
+            f"maximum baseline age must be a positive number of days, at most {MAX_BASELINE_AGE_DAYS}"
+        )
     moment = now or _utcnow()
     started, current_started = _started_at(baseline), _started_at(current)
     if started is None:

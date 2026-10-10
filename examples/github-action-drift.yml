@@ -14,8 +14,9 @@
 #   SHADOWSCAN_BASELINE_TOKEN       fine-grained token with read-only Contents
 #                                   access to the baseline repository alone
 #
-# Exit codes are preserved: 2 means adverse drift, 3 an incomplete scan or
-# comparison (an unattested live connector, a denied API, an expired baseline),
+# Exit codes are preserved: 2 means adverse drift, or a scan that reached the
+# reviewed configuration's options.fail_on level; 3 an incomplete scan or
+# comparison (an unattested live connector, a denied API, an expired baseline);
 # 1 no usable result. The job summary shows counts per drift class only; the
 # reports are run artifacts kept for 14 days. Nothing here opens issues: that
 # needs a write token, so add it as a separate job with only `issues: write`
@@ -104,10 +105,12 @@ jobs:
           fi
           # -q keeps connector diagnostics, which can name accounts and tenants, out of the log.
           # An incomplete scan (exit 3) still writes its report, and the comparison exits 3 too.
+          # Exit 2 (options.fail_on reached) is not in the report, so the next step reads it here.
           status=0
           shadowscan -q scan -c "$SHADOWSCAN_CONFIG" --format json -o "$RUNNER_TEMP/current.json" \
             --job-deadline-seconds 2700 || status=$?
           echo "scan exit code: $status"
+          echo "$status" > "$RUNNER_TEMP/scan-status"
           case "$status" in
             0|2|3) ;;
             *) exit "$status" ;;
@@ -129,6 +132,11 @@ jobs:
             echo "Set SHADOWSCAN_BASELINE_SHA256 to the reviewed baseline's SHA-256" >&2
             exit 1
           fi
+          scan_status="$(cat "$RUNNER_TEMP/scan-status")"
+          case "$scan_status" in
+            0|2|3) ;;
+            *) echo "The scan step recorded no exit code" >&2; exit 1 ;;
+          esac
           # The comparison goes to a file, never the log. Exit 2 is adverse drift,
           # 3 an incomplete comparison; both fail this step after the file is written.
           status=0
@@ -137,6 +145,11 @@ jobs:
             --baseline-sha256 "$SHADOWSCAN_BASELINE_SHA256" \
             --max-baseline-age-days 35 > "$RUNNER_TEMP/drift.json" || status=$?
           echo "diff exit code: $status"
+          # A scan that failed its own gate (options.fail_on reached, exit 2, or incomplete,
+          # exit 3) fails the job even when the comparison found nothing to report.
+          if [ "$status" -eq 0 ] && [ "$scan_status" -ne 0 ]; then
+            status="$scan_status"
+          fi
           exit "$status"
       - name: Summarize drift counts
         if: always()

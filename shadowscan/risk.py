@@ -165,6 +165,27 @@ TAG_WEIGHTS: dict[str, tuple[int, str]] = {
     "mcp-registry-outdated": (0, "MCP server uses a version or endpoint other than the registry's latest"),
     "mcp-registry-unidentified": (0, "MCP server's package or endpoint could not be identified"),
 }
+# Tags that record a limit or a control rather than something the finding can do: every tag
+# with a negative built-in weight, an install still awaiting approval, a credential in a
+# managed store and an MCP server its registry still publishes. Losing one widens the finding
+# (a disabled agent enabled again, evidence no longer confined to tests), so drift treats its
+# removal as adverse and its addition as not.
+MITIGATING_TAGS = frozenset(
+    {
+        "disabled",
+        "inactive",
+        "suspended",
+        "expired",
+        "asks-user",
+        "test-code-only",
+        "docs-only",
+        "example-code-only",
+        "generated-code-only",
+        "pending-request",
+        "managed-secret",
+        "mcp-registry-published",
+    }
+)
 
 PROVIDER_WEIGHTS: dict[str, tuple[int, str]] = {
     "provider.google-gemini": (5, "uses the consumer Gemini API (API keys outside cloud IAM)"),

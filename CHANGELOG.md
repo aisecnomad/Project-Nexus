@@ -22,7 +22,10 @@ summarizes each release for people who install and operate ShadowScan.
   or whose value at one of these paths is malformed.
 - Adverse drift: new findings and changed kinds; added permissions,
   capabilities, frameworks, model providers, models and tags (MCP registry
-  status tags included); a changed or lost tool definition digest; a higher
+  status tags included); a removed mitigating tag (`disabled`, `inactive`,
+  `suspended`, `expired`, `asks-user`, the `*-code-only` and `docs-only`
+  scope tags, `pending-request`, `managed-secret`, `mcp-registry-published`),
+  whose addition is not adverse; a changed or lost tool definition digest; a higher
   autonomy floor or ceiling, oversight moving towards `bypassed` and
   initiation moving away from `human`; a lost owner, a finding becoming
   shadow, a lost or changed registry match, a reconciliation status becoming
@@ -34,7 +37,12 @@ summarizes each release for people who install and operate ShadowScan.
   baseline whose raw file bytes have another SHA-256, before parsing or
   printing it) and `--max-baseline-age-days N` (an expired, undatable or
   future baseline, or one that started after the current scan, makes the
-  comparison incomplete, exit 3). `--fail-on-new` is unchanged.
+  comparison incomplete, exit 3; the limit is at most 36500 days).
+  `--fail-on-new` is unchanged.
+- A fleet report's `started_at` is now the earliest source start time
+  compared as instants, not as text. When any source lacks a valid
+  timezone-aware start time, the fleet's `started_at` is `null` instead of
+  the merge time, so an age limit cannot pass an undated fleet baseline.
 - Add `read_policy_bytes` and `load_report_with_digest` so the pinned digest
   and the parsed report come from one bounded, link-refusing read.
 - Add the weekly `examples/github-action-drift.yml` workflow and
@@ -42,7 +50,8 @@ summarizes each release for people who install and operate ShadowScan.
   trigger, top-level `contents: read`, `id-token: write` on its one job, a
   named environment, pinned actions and `persist-credentials: false` on both
   checkouts. It writes only counts per drift class to the job summary and
-  keeps reports as 14-day artifacts. Repository policy tests check both
+  keeps reports as 14-day artifacts. Both templates fail with the scan's own
+  exit code 2 (`options.fail_on`) or 3 when the comparison exits 0. Repository policy tests check both
   templates. Add the scheduled drift detection page, which covers the record
   and replay pitfalls.
 - Add authored regression tests for each drift class and the baseline

@@ -21,6 +21,7 @@ from click.testing import CliRunner
 
 from shadowscan.cli import main
 from shadowscan.comparison import (
+    MAX_BASELINE_AGE_DAYS,
     ReportDigestMismatch,
     baseline_age_days,
     baseline_lifecycle_reasons,
@@ -282,10 +283,18 @@ def test_current_report_without_a_start_time_is_incomplete(tmp_path):
     assert any(reason.startswith("current start time") for reason in json.loads(result.output)["reasons"])
 
 
-@pytest.mark.parametrize("value", ["0", "-1", "1.5", "soon"])
+@pytest.mark.parametrize("value", ["0", "-1", "1.5", "soon", "36501", "1000000000"])
 def test_invalid_age_limit_is_a_usage_error(tmp_path, value):
     result = _diff(tmp_path, _report(), _report(), "--max-baseline-age-days", value)
     assert result.exit_code == 1, result.output
+    # A usage error, never an unhandled exception such as an overflowing timedelta.
+    assert result.exception is None or isinstance(result.exception, SystemExit), result.exception
+    assert "Traceback" not in result.output
+
+
+def test_largest_age_limit_is_accepted(tmp_path):
+    result = _diff(tmp_path, _report(), _report(), "--max-baseline-age-days", str(MAX_BASELINE_AGE_DAYS))
+    assert result.exit_code == 0, result.output
 
 
 def test_expiry_combines_with_a_pin_and_the_drift_gate(tmp_path):
@@ -316,7 +325,7 @@ def test_lifecycle_reasons_use_the_injected_clock():
     assert baseline_age_days(_report(started=None), now=later) is None
 
 
-@pytest.mark.parametrize("value", [0, -3, True, 1.5])
+@pytest.mark.parametrize("value", [0, -3, True, 1.5, MAX_BASELINE_AGE_DAYS + 1, 10**9])
 def test_lifecycle_rejects_invalid_age_limits(value):
     with pytest.raises(ValueError, match="positive number of days"):
         baseline_lifecycle_reasons(_report(), _report(), max_age_days=value, now=NOW)
@@ -360,3 +369,45 @@ def test_fleet_baseline_age_is_the_age_of_its_oldest_source(tmp_path):
     assert EXPIRED in document["reasons"] and document["baseline"]["age_days"] == 40
     fresh = _diff(tmp_path, fleet, current, "--max-baseline-age-days", "45")
     assert fresh.exit_code == 0, fresh.output
+
+
+def test_fleet_with_an_undated_source_is_undated(tmp_path):
+    """Dating an undated fleet by its merge time would let an old baseline pass any age limit."""
+    old = _source("host-a.json", NOW - timedelta(days=400))
+    undated = _source("host-b.json", NOW - timedelta(days=1))
+    undated[1].pop("started_at")
+    fleet = merge_reports([old, undated]).to_dict()
+    assert fleet["started_at"] is None and fleet["summary"]["complete"] is True
+    assert baseline_age_days(fleet, now=NOW) is None
+    current = merge_reports([_source("host-a.json", NOW), _source("host-b.json", NOW)]).to_dict()
+    result = _diff(tmp_path, fleet, current, "--max-baseline-age-days", "35", "--json")
+    assert result.exit_code == 3, result.output
+    assert any(reason.startswith(MISSING) for reason in json.loads(result.output)["reasons"])
+    # Without an age limit the undated fleet still compares as before.
+    unlimited = _diff(tmp_path, fleet, current)
+    assert unlimited.exit_code == 0, unlimited.output
+
+
+@pytest.mark.parametrize("started", ["last tuesday", "2026-10-01T00:00:00", 12345])
+def test_fleet_with_an_unparseable_source_start_is_undated(started):
+    source = _source("host-b.json", NOW)
+    source[1]["started_at"] = started
+    fleet = merge_reports([_source("host-a.json", NOW - timedelta(days=2)), source]).to_dict()
+    assert fleet["started_at"] is None
+
+
+def test_fleet_start_is_the_earliest_instant_across_timezone_offsets():
+    tokyo = datetime(2026, 10, 1, 10, 0, tzinfo=timezone(timedelta(hours=9)))  # 01:00Z
+    london = datetime(2026, 10, 1, 5, 0, tzinfo=UTC)
+    fleet = merge_reports([_source("host-a.json", london), _source("host-b.json", tokyo)]).to_dict()
+    # The earliest instant, not the lexically smallest string; its offset is kept.
+    assert fleet["started_at"] == tokyo.isoformat()
+    assert baseline_age_days(fleet, now=NOW) == (NOW - tokyo).days
+
+
+def test_fleet_of_fleets_stays_undated():
+    undated = _source("host-b.json", NOW)
+    undated[1].pop("started_at")
+    inner = merge_reports([_source("host-a.json", NOW), undated]).to_dict()
+    outer = merge_reports([("fleet-1.json", inner), _source("host-c.json", NOW)]).to_dict()
+    assert outer["started_at"] is None

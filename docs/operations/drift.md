@@ -32,14 +32,25 @@ comma-separated, and an unknown class is a usage error (exit 1).
 | Class | Compared fields | Adverse when |
 | --- | --- | --- |
 | `inventory` | New and resolved findings; `kind`, `resource_type` | A finding is new, or its kind or resource type changed. A resolved finding is drift but not adverse. |
-| `capability` | `permissions`, `capabilities`, `frameworks`, `model_providers`, `models`, `tags` (except `autonomy-understated`), `metadata.tool_definition_sha256` | Any item is added, including MCP registry tags such as `mcp-registry-deprecated`, `mcp-registry-deleted`, `mcp-registry-version-unpublished` and `mcp-unpublished`. A tool definition digest changes or disappears. |
+| `capability` | `permissions`, `capabilities`, `frameworks`, `model_providers`, `models`, `tags` (except `autonomy-understated`), `metadata.tool_definition_sha256` | Any item is added, including MCP registry tags such as `mcp-registry-deprecated`, `mcp-registry-deleted`, `mcp-registry-version-unpublished` and `mcp-unpublished`. A mitigating tag is removed (see below). A tool definition digest changes or disappears. |
 | `autonomy` | `metadata.autonomy.floor`, `.ceiling`, `.oversight`, `.initiation` | A value rises. For the floor and the ceiling, rising means a higher level. For oversight, it means moving from `gated` towards `unknown` or `bypassed`. For initiation, it means moving from `human` towards `unknown`, `event` or `schedule`. |
 | `governance` | `owner`, `shadow`, `registry_match`, `metadata.registry_reconciliation.status`, tag `autonomy-understated` | The owner is cleared, or the finding becomes shadow. `registry_match` is cleared or changed. The reconciliation status becomes `observed-not-registered` or leaves `registered-and-observed`. `autonomy-understated` is added. |
 | `coverage` | The comparison itself | The comparison is incomplete. Such a comparison always exits 3. |
 
+Some tags record a limit rather than something the finding can do:
+`disabled`, `inactive`, `suspended`, `expired`, `asks-user`,
+`test-code-only`, `docs-only`, `example-code-only`, `generated-code-only`,
+`pending-request`, `managed-secret` and `mcp-registry-published`. They are
+every tag with a negative risk weight, plus three that record a control.
+Their polarity is reversed: losing one is adverse (a disabled agent enabled
+again, a suspended app restored, evidence no longer confined to tests), and
+gaining one is not. Moving an MCP server from `mcp-registry-deprecated` to
+`mcp-registry-published` is therefore drift but not adverse.
+
 Some changes are drift but not adverse:
 
-- an item that is only removed;
+- an item that is only removed, unless it is a mitigating tag;
+- a mitigating tag that is added;
 - a first value, such as a first tool digest or a first autonomy
   classification (an unclassified finding was never known to be low);
 - an owner or registry match that is newly set;
@@ -127,7 +138,10 @@ A baseline is a reviewed artifact, not a cache:
   same reviewed change. In the baseline repository, add `*.json -text` to
   `.gitattributes` so that checkouts never convert line endings.
 - **Expiry.** `--max-baseline-age-days N` measures age from the baseline's
-  `started_at`. A fleet report's `started_at` is that of its oldest source.
+  `started_at`. A fleet report's `started_at` is the earliest start time of
+  its sources, compared as instants rather than as text. When any source has
+  no valid timezone-aware start time, the fleet's `started_at` is `null`, so
+  an age limit treats it as undatable instead of dating it by the merge.
   Choose N a little longer than your re-baselining cadence, for example 35
   days for monthly reviews of a weekly job. These conditions make the
   comparison incomplete (exit 3):
@@ -176,7 +190,10 @@ is meant for a private operations repository:
   Anyone who can read the repository's Actions runs can download them, so
   keep the repository private.
 - **Exit codes.** Exit codes 2 and 3 fail the comparison step after the
-  comparison file is written. No step hides them.
+  comparison file is written. No step hides them. The scan's own exit code is
+  kept as well. When the comparison exits 0, the job still fails with the
+  scan's 2 (the reviewed configuration's `options.fail_on` level was reached)
+  or 3 (the scan was incomplete). The Kubernetes CronJob does the same.
 
 | Setting | Kind | Value |
 | --- | --- | --- |

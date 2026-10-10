@@ -1,6 +1,7 @@
 # Weekly ShadowScan drift CronJob: scans with a reviewed configuration,
 # compares the report with a reviewed, pinned baseline and fails the Job on
-# adverse drift (exit 2) or an incomplete scan or comparison (exit 3). See
+# adverse drift or a scan that reached the configuration's options.fail_on
+# level (exit 2), or an incomplete scan or comparison (exit 3). See
 # docs/operations/drift.md. Replace the image digest, the service account
 # binding and the baseline digest before rollout.
 # Live collection needs egress to the provider APIs: route it through the
@@ -59,13 +60,13 @@ spec:
                 - |
                   set -eu
                   umask 077
-                  status=0
+                  scan_status=0
                   shadowscan -q scan -c /config/shadowscan.yaml --format json \
-                    -o /output/current.json --job-deadline-seconds 2700 || status=$?
-                  echo "scan exit code: $status"
-                  case "$status" in
+                    -o /output/current.json --job-deadline-seconds 2700 || scan_status=$?
+                  echo "scan exit code: $scan_status"
+                  case "$scan_status" in
                     0|2|3) ;;
-                    *) exit "$status" ;;
+                    *) exit "$scan_status" ;;
                   esac
                   [ -f /output/current.json ] || exit 3
                   status=0
@@ -74,6 +75,12 @@ spec:
                     --baseline-sha256 "$SHADOWSCAN_BASELINE_SHA256" \
                     --max-baseline-age-days 35 > /output/drift.json || status=$?
                   echo "diff exit code: $status"
+                  # A scan that failed its own gate (options.fail_on reached, exit 2,
+                  # or incomplete, exit 3) fails the Job even when the comparison
+                  # found nothing to report: it cannot see the scan's exit code.
+                  if [ "$status" -eq 0 ] && [ "$scan_status" -ne 0 ]; then
+                    status="$scan_status"
+                  fi
                   # Upload /output/current.json and /output/drift.json to a private,
                   # access-controlled report store here, then keep the exit code.
                   exit "$status"

@@ -2082,6 +2082,87 @@ def test_drift_workflow_summary_writes_counts_per_class_only(tmp_path: Path, com
         assert written == "No drift result: see the exit codes of the scan and comparison steps.\n"
 
 
+# (scan exit, diff exit, job exit): a scan that failed its own gate fails the job even when
+# the comparison passes, and the comparison's verdict wins whenever it is not 0.
+_EXIT_PROPAGATION = [(0, 0, 0), (2, 0, 2), (3, 0, 3), (0, 2, 2), (0, 3, 3), (2, 3, 3), (3, 2, 2), (1, 0, 1)]
+_STUB_SHADOWSCAN = """#!/bin/sh
+for arg do
+  case "$prev" in -o) printf '{}' > "$arg" ;; esac
+  prev="$arg"
+done
+case " $* " in *" scan "*) exit "$STUB_SCAN_EXIT" ;; esac
+printf '{}'
+exit "$STUB_DIFF_EXIT"
+"""
+
+
+def _stub_environment(tmp_path: Path, scan: int, diff: int) -> dict[str, str]:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    stub = bin_dir / "shadowscan"
+    stub.write_text(_STUB_SHADOWSCAN, encoding="utf-8")
+    stub.chmod(0o755)
+    return {
+        "PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}",
+        "STUB_SCAN_EXIT": str(scan),
+        "STUB_DIFF_EXIT": str(diff),
+        "SHADOWSCAN_BASELINE_SHA256": "a" * 64,
+    }
+
+
+@pytest.mark.skipif(not shutil.which("bash"), reason="needs bash")
+@pytest.mark.parametrize(("scan", "diff", "expected"), _EXIT_PROPAGATION)
+def test_drift_workflow_job_fails_when_the_scan_or_the_comparison_does(
+    tmp_path: Path, scan: int, diff: int, expected: int
+) -> None:
+    _, job = _drift_job()
+    config = tmp_path / "shadowscan.yaml"
+    config.write_text("connectors: []\n", encoding="utf-8")
+    env = {
+        **_stub_environment(tmp_path, scan, diff),
+        "RUNNER_TEMP": str(tmp_path),
+        "SHADOWSCAN_CONFIG": str(config),
+        "SHADOWSCAN_BASELINE": str(tmp_path / "baseline.json"),
+    }
+    status = 0
+    for text in ("shadowscan -q scan", "shadowscan diff"):
+        step = subprocess.run(
+            ["bash", "-c", _step_running(job, text)["run"]],
+            cwd=tmp_path,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        status = step.returncode
+        if text.endswith("scan") and status not in (0, 2, 3):
+            break  # the job stops at a scan that produced no usable result
+    assert status == expected
+
+
+@pytest.mark.skipif(not shutil.which("sh"), reason="needs sh")
+@pytest.mark.parametrize(("scan", "diff", "expected"), _EXIT_PROPAGATION)
+def test_kubernetes_drift_cronjob_fails_when_the_scan_or_the_comparison_does(
+    tmp_path: Path, scan: int, diff: int, expected: int
+) -> None:
+    (cronjob,) = yaml.safe_load_all(
+        (ROOT / "examples" / "k8s-drift-cronjob.yaml").read_text(encoding="utf-8")
+    )
+    ((script,),) = [container["args"] for container in _pod_spec(cronjob)["containers"]]
+    for mount in ("/output", "/config", "/baseline"):
+        (tmp_path / mount.strip("/")).mkdir()
+        script = script.replace(f"{mount}/", f"{tmp_path}{mount}/")
+    result = subprocess.run(
+        ["sh", "-c", script],
+        cwd=tmp_path,
+        env=_stub_environment(tmp_path, scan, diff),
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == expected, result.stderr
+
+
 def _pod_spec(manifest: dict[str, Any]) -> dict[str, Any]:
     if manifest["kind"] == "CronJob":
         return manifest["spec"]["jobTemplate"]["spec"]["template"]["spec"]

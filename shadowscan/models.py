@@ -623,6 +623,8 @@ class ScanStats:
 class ScanResult:
     findings: list[Finding] = field(default_factory=list)
     stats: list[ScanStats] = field(default_factory=list)
+    # Empty only when the report cannot be dated (a fleet merge with an undated source); it is
+    # published as null.
     started_at: str = field(default_factory=lambda: now_iso())
     finished_at: str | None = None
     version: str = ""
@@ -674,7 +676,7 @@ class ScanResult:
         return {
             "version": self.version,
             "finding_identity_schema": FINDING_IDENTITY_SCHEMA,
-            "started_at": self.started_at,
+            "started_at": self.started_at or None,
             "finished_at": self.finished_at,
             "inventory_size": self.inventory_size,
             "inventory_present": self.inventory_present,

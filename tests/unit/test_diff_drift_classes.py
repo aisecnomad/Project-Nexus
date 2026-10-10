@@ -23,6 +23,7 @@ from shadowscan.comparison import DRIFT_CLASSES, compare_reports
 from shadowscan.config import ConnectorSpec, ScanConfig
 from shadowscan.engine import Engine
 from shadowscan.models import Finding, Kind, ScanResult, ScanStats, Surface
+from shadowscan.risk import MITIGATING_TAGS, TAG_WEIGHTS
 
 _SCORES = {"critical": 90, "high": 55, "medium": 35, "low": 15, "info": 3}
 
@@ -168,6 +169,57 @@ def test_mcp_registry_status_tags_are_adverse_capability_drift(tag):
     assert entry["adverse"] and entry["added"] == [tag]
 
 
+def test_mitigating_tags_are_every_tag_that_lowers_risk():
+    lowering = {tag for tag, (weight, _) in TAG_WEIGHTS.items() if weight < 0}
+    assert lowering <= MITIGATING_TAGS
+    assert set(TAG_WEIGHTS) >= MITIGATING_TAGS
+
+
+@pytest.mark.parametrize(
+    ("tag", "changes"),
+    [
+        (
+            "disabled",
+            dict(surface=Surface.IDENTITY, connector="identity.entra", resource_type="service-principal"),
+        ),
+        ("suspended", dict(surface=Surface.SAAS, connector="saas.github_apps", resource_type="github-app")),
+        ("inactive", dict(surface=Surface.LOWCODE, connector="lowcode.automation", resource_type="workflow")),
+        ("expired", dict(surface=Surface.IDENTITY, connector="identity.jwt", resource_type="token")),
+        ("test-code-only", {}),
+        ("asks-user", {}),
+    ],
+)
+def test_losing_a_mitigating_tag_is_adverse_capability_drift(tag, changes):
+    # An agent enabled again, an app unsuspended, or evidence no longer confined to tests.
+    comparison = _pair(_make(**changes, tags=["write-access", tag]), _make(**changes, tags=["write-access"]))
+    entry = _entry(comparison, "tags", "capability")
+    assert entry["direction"] == "removed" and entry["removed"] == [tag]
+    assert entry["adverse"] and comparison["adverse"]["capability"] is True
+
+
+@pytest.mark.parametrize("tag", sorted(MITIGATING_TAGS))
+def test_gaining_a_mitigating_tag_is_drift_but_not_adverse(tag):
+    comparison = _pair(_make(tags=["write-access"]), _make(tags=["write-access", tag]))
+    entry = _entry(comparison, "tags", "capability")
+    assert entry["direction"] == "added" and not entry["adverse"]
+    assert comparison["adverse"]["capability"] is False
+
+
+def test_mitigating_tag_traded_for_a_widening_one_is_adverse():
+    comparison = _pair(_make(tags=["test-code-only"]), _make(tags=["docs-only", "write-access"]))
+    entry = _entry(comparison, "tags", "capability")
+    assert entry["direction"] == "replaced" and entry["adverse"]
+
+
+def test_mcp_server_published_again_is_not_adverse():
+    server = dict(kind=Kind.MCP_SERVER, resource="mcp:filesystem", resource_type="mcp-server")
+    comparison = _pair(
+        _make(**server, tags=["mcp-registry-deprecated"]), _make(**server, tags=["mcp-registry-published"])
+    )
+    entry = _entry(comparison, "tags", "capability")
+    assert entry["direction"] == "replaced" and not entry["adverse"]
+
+
 def _tool(digest: str | None) -> Finding:
     metadata = {"server": "https://mcp.acme.com", "tool": "read_file"}
     if digest is not None:
@@ -220,6 +272,44 @@ def test_rewritten_mcp_tool_definition_is_adverse_drift_through_the_engine(tmp_p
     unchanged = compare_reports(after, Engine(config, index).run().to_dict())
     assert unchanged["comparable"] and unchanged["changed"] == []
     assert not any(unchanged["adverse"].values())
+
+
+def test_service_principal_enabled_again_is_adverse_drift_through_the_engine(tmp_path, index):
+    """Re-enabling a disabled Entra service principal only removes a tag, and still gates."""
+    fixture = Path(__file__).parents[1] / "fixtures" / "identity" / "entra_graph.json"
+    records = json.loads(fixture.read_text(encoding="utf-8"))
+    (principal,) = [
+        record
+        for record in records
+        if record.get("displayName") == "procurement-agent-svc" and "accountEnabled" in record
+    ]
+    source = tmp_path / "entra_graph.json"
+    config = ScanConfig(
+        connectors=[ConnectorSpec("identity.entra", {"input": str(source), "tenant_id": "t"})]
+    )
+
+    def scan(enabled: bool) -> dict[str, Any]:
+        principal["accountEnabled"] = enabled
+        source.write_text(json.dumps(records), encoding="utf-8")
+        return Engine(config, index).run().to_dict()
+
+    disabled, enabled = scan(False), scan(True)
+    enabling = compare_reports(disabled, enabled)
+    assert enabling["comparable"], enabling["reasons"]
+    entries = [
+        entry for change in enabling["changed"] for entry in change["drift"] if entry["field"] == "tags"
+    ]
+    assert [(entry["removed"], entry["adverse"]) for entry in entries] == [(["disabled"], True)]
+    assert enabling["adverse"]["capability"] is True
+    disabling = compare_reports(enabled, disabled)
+    assert disabling["adverse"]["capability"] is False
+    baseline, current = tmp_path / "before.json", tmp_path / "after.json"
+    gate = ["--fail-on-drift", "inventory,capability,autonomy,governance"]
+    for before, after, expected in ((disabled, enabled, 2), (enabled, disabled, 0)):
+        baseline.write_text(json.dumps(before))
+        current.write_text(json.dumps(after))
+        result = CliRunner().invoke(main, ["diff", str(baseline), str(current), *gate])
+        assert result.exit_code == expected, result.output
 
 
 # ------------------------------------------------------------------- autonomy
