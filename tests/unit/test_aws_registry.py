@@ -1418,9 +1418,13 @@ def test_approved_record_of_an_unknown_relation_does_not_sanction_the_runtime(tm
 
 def test_trusted_registry_of_another_account_sanctions_its_approved_record(index):
     record = f"{FOREIGN_REGISTRY_ARN}/record/ext000000001"
-    result = _engine_run(
-        index, trusted_registries=[{"registry": "aws-agent-registry", "id": FOREIGN_REGISTRY_ARN}]
-    )
+    entry = {"registry": "aws-agent-registry", "id": FOREIGN_REGISTRY_ARN}
+    # Data-plane records report approval_mode unknown: no reviewer is known, so they need
+    # allow_auto_approved to count, and then register only their own record.
+    result = _engine_run(index, trusted_registries=[entry])
+    assert result.complete
+    assert _by_resource(result)[record].registry_match is None
+    result = _engine_run(index, trusted_registries=[{**entry, "allow_auto_approved": True}])
     assert result.complete
     assert _by_resource(result)[record].registry_match == "aws-agent-registry:ext000000001"
     # Its records bind nothing, so no runtime is approved through it.

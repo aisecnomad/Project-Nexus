@@ -278,10 +278,14 @@ options:
 ```
 
 In a trusted registry, a record approves when its status is `approved` and its
-`approval_mode` is not `auto`. Two optional per-registry switches widen that:
+`approval_mode` is `manual`: the registry shows that a person approved it. Two
+optional per-registry switches widen that:
 
-- `allow_auto_approved: true` also accepts approved records of a registry that
-  approves every record without a person. Auto-approval is not human review.
+- `allow_auto_approved: true` also accepts approved records whose approval no
+  person is known to have made: `approval_mode: auto` (the registry approves
+  every record without a person) and `approval_mode: unknown` (the connector
+  could not establish how the registry approves records). Auto-approval is not
+  human review.
 - `allow_registered_only: true` also accepts `registered` records of a registry
   without an approval workflow.
 
@@ -290,10 +294,10 @@ warning (`trusted registry <type> <id>: N auto-approved ... record(s) were not
 treated as sanctioned`). Records of the deprecated `entra-agent-registry` source
 never approve, and the configuration refuses to trust that type.
 
-A record whose `approval_mode` is `unknown` (the connector could not read how
-the registry approves records) and whose status is `approved` does approve in a
-trusted registry: listing the registry vouches for its approvals. Trust such a
-registry only when you know who approves records in it.
+A record whose `approval_mode` is `unknown` and whose status is `approved` does
+not approve by default: the warning counts it as `approved without a known
+reviewer`. Set `allow_auto_approved` on the entry only when you know who
+approves records in that registry.
 
 Each record that approves:
 
@@ -403,8 +407,9 @@ everyone who can create, update or approve its records. AgentCore registry
 records, and records read from another account's registry through
 `registry_arns`, carry no provenance: trusting them registers only the record
 findings themselves. Records read through `registry_arns` have
-`approval_mode: unknown`, so trusting such a registry accepts every approved
-record in it, however it was approved.
+`approval_mode: unknown`, so they approve only when that registry's entry sets
+`allow_auto_approved`; it then accepts every approved record in it, however it
+was approved.
 
 `approval_mode` reflects the registry's approval configuration when the scan
 reads it, not how each record was approved. A record approved while an
@@ -440,8 +445,9 @@ tenant, whatever ids it declares. Blocked, pending, rejected, draft and unknown
 packages approve nothing.
 Only an organization's own package whose request a person approved has
 `approval_mode: manual`; an approved Microsoft or partner package has
-`approval_mode: unknown` and, in a trusted tenant, approves its record and a
-listed agent identity it names. Trust the
+`approval_mode: unknown` and approves nothing unless the tenant's entry sets
+`allow_auto_approved`, which then approves its record and a listed agent
+identity it names. Trust the
 tenant only when the packages allowed in its catalog are ones your organization
 has decided to sanction. Without `tenant_id` the records have an empty registry
 id and cannot be trusted; with it, a pre-issued `access_token` must carry that

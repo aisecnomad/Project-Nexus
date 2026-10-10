@@ -407,9 +407,9 @@ class TrustedApprovals:
 
     Built from the findings of the current run every time; nothing is cached, so a revoked or
     deleted record stops approving on the next scan. Only a record whose registry type and exact
-    id are trusted approves anything, and only when its status is ``approved`` (with
-    ``approval_mode: auto`` only if the trusted entry sets ``allow_auto_approved``) or
-    ``registered`` with ``allow_registered_only`` set. Records of
+    id are trusted approves anything, and only when its status is ``approved`` with
+    ``approval_mode: manual`` (any other approval mode only if the trusted entry sets
+    ``allow_auto_approved``) or ``registered`` with ``allow_registered_only`` set. Records of
     :data:`UNTRUSTABLE_REGISTRY_TYPES` never approve:
 
     * the record finding itself is registered as ``<registry>:<record_id>``; and
@@ -509,14 +509,19 @@ class TrustedApprovals:
 
 def _withheld_reason(record: RegistryRecord, policy: TrustedRegistry) -> str | None:
     """Why the trust policy declines a record that would otherwise approve, for the warning."""
-    if record.status == "approved" and record.approval_mode == "auto" and not policy.allow_auto_approved:
-        return "auto-approved (set allow_auto_approved to accept them)"
+    if record.status == "approved" and record.approval_mode != "manual" and not policy.allow_auto_approved:
+        if record.approval_mode == "auto":
+            return "auto-approved (set allow_auto_approved to accept them)"
+        return "approved without a known reviewer (set allow_auto_approved to accept them)"
     if record.status == "registered" and not policy.allow_registered_only:
         return "registered-only (set allow_registered_only to accept them)"
     return None
 
 
 def _approves(record: RegistryRecord, policy: TrustedRegistry) -> bool:
+    # Only an approval the registry shows a person made is sanctioned by default: an
+    # automatic approval, or one whose approval mode the connector could not establish,
+    # needs the operator's explicit allow_auto_approved for that registry.
     if record.status == "approved":
-        return record.approval_mode != "auto" or policy.allow_auto_approved
+        return record.approval_mode == "manual" or policy.allow_auto_approved
     return record.status == "registered" and policy.allow_registered_only

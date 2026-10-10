@@ -71,7 +71,8 @@ and both spellings Microsoft's pages use (`allowedForAll` and `all`,
 are and never approve. `approval_mode` is `manual` only for an organization's
 own package (`type` `custom`, `shared` or `lob`) whose request was approved. Microsoft
 and partner packages are vendor-published and get `unknown`, which a trusted
-registry still accepts when the package is `approved`.
+registry accepts for an `approved` package only when its entry sets
+`allow_auto_approved`.
 
 Bindings (provider `entra`, account `tenant_id`) name only objects the package
 can own in this tenant, because the ids come from the package and an approved

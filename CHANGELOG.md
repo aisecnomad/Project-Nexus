@@ -91,8 +91,9 @@ summarizes each release for people who install and operate ShadowScan.
   an approval workflow), `approval_mode` (`auto`, `manual`, `none`,
   `unknown`) and `listing_scope` (`registry` or `caller`; a caller-scoped
   listing is never complete). A trusted registry's approved records with
-  `approval_mode: auto` approve only when its entry sets
-  `allow_auto_approved: true`, and `registered` records only with
+  `approval_mode: auto` or `unknown` approve only when its entry sets
+  `allow_auto_approved: true` (by default only `manual` approvals count),
+  and `registered` records only with
   `allow_registered_only: true`; declined records are counted in an advisory
   `engine.inventory` warning. The deprecated `entra-agent-registry` source
   cannot be trusted.

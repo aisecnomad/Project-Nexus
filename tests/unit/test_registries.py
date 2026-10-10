@@ -62,6 +62,8 @@ def record(**overrides: Any) -> dict[str, Any]:
         "publisher": "platform-team",
         "updated_at": "2026-09-01T00:00:00Z",
         "listing_complete": True,
+        # A person approved it; other approval modes need allow_auto_approved.
+        "approval_mode": "manual",
     }
     value.update(overrides)
     return value

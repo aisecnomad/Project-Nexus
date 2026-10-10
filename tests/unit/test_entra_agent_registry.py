@@ -498,8 +498,9 @@ def test_conflicting_deprecated_records_are_unresolved(tmp_path, run_connector):
 
 
 # ------------------------------------------------------------------ engine: trust and reconciliation
-def _scan(index, source, *, trusted=True, **config):
-    options = {"trusted_registries": [{"registry": "microsoft-agent-365", "id": TENANT}]} if trusted else {}
+def _scan(index, source, *, trusted=True, allow_auto_approved=False, **config):
+    entry = {"registry": "microsoft-agent-365", "id": TENANT, "allow_auto_approved": allow_auto_approved}
+    options = {"trusted_registries": [entry]} if trusted else {}
     cfg = ScanConfig.from_dict(
         {
             "connectors": [{"name": "identity.entra", "input": str(source), "tenant_id": TENANT, **config}],
@@ -520,10 +521,10 @@ def test_trusted_agent_365_registry_approves_only_approved_manual_package_bindin
         "entra:copilot-package:P_hr-agent-0001": hr,
         "entra:sp:sp-agent-hr": hr,
         "entra:app:app-hr-agent": hr,
-        # An approved vendor package (approval_mode unknown) registers its own record in a
-        # trusted registry; its binding names no object in this tenant.
-        "entra:copilot-package:P_vendor-addin-0006": "microsoft-agent-365:P_vendor-addin-0006",
     }
+    # An approved vendor package has approval_mode unknown: no person in this tenant is known
+    # to have approved it, so it stays shadow unless the entry sets allow_auto_approved.
+    assert by["entra:copilot-package:P_vendor-addin-0006"].shadow is True
     # Bindings of blocked packages never approve.
     assert by["entra:sp:ai-sales"].shadow is True and by["entra:app:app-sales-agent"].shadow is True
     # The deprecated registry never approves, even for an object it binds.
@@ -578,21 +579,24 @@ _TENANT_APP = [
 @pytest.mark.parametrize("package_type", ["external", "microsoft", "unknownFutureValue"])
 def test_vendor_packages_never_approve_tenant_objects(index, tmp_path, package_type):
     # Vendor-declared ids name a tenant app registration and a service principal that is not an
-    # agent identity; an approved vendor package in a trusted tenant approves only its own record.
+    # agent identity. An approved vendor package has no known reviewer in this tenant, so it
+    # approves nothing by default; with allow_auto_approved it approves only its own record.
     package = _package(
         "P_vendor", type=package_type, requestStatus=None, appId="app-tenant", agentIdentityId="sp-priv"
     )
     source = tmp_path / "entra.json"
     source.write_text(json.dumps([COMPLETE_MARKER, *_TENANT_APP, package]), encoding="utf-8")
-    result = _scan(index, source)
-    assert result.complete
-    by = _by_resource(result.findings)
-    record = registry_record(by["entra:copilot-package:P_vendor"])
-    assert record is not None and record.status == "approved" and record.bindings == ()
-    assert by["entra:copilot-package:P_vendor"].registry_match == "microsoft-agent-365:P_vendor"
-    for resource in ("entra:app:app-tenant", "entra:sp:sp-priv"):
-        assert by[resource].shadow is True and by[resource].registry_match is None
-        assert "registry_bound" not in by[resource].metadata
+    for allow, expected in ((False, None), (True, "microsoft-agent-365:P_vendor")):
+        result = _scan(index, source, allow_auto_approved=allow)
+        assert result.complete
+        by = _by_resource(result.findings)
+        record = registry_record(by["entra:copilot-package:P_vendor"])
+        assert record is not None and record.status == "approved" and record.bindings == ()
+        assert record.approval_mode == "unknown"
+        assert by["entra:copilot-package:P_vendor"].registry_match == expected
+        for resource in ("entra:app:app-tenant", "entra:sp:sp-priv"):
+            assert by[resource].shadow is True and by[resource].registry_match is None
+            assert "registry_bound" not in by[resource].metadata
 
 
 def test_vendor_package_binds_a_listed_agent_identity(tmp_path, run_connector):
