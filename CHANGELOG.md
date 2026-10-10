@@ -101,6 +101,50 @@ summarizes each release for people who install and operate ShadowScan.
 - The records in the tests are synthetic; nothing was validated against a live
   registry.
 
+### Microsoft Agent 365, Entra Agent ID and delegated Graph auth in identity.entra
+
+- `identity.entra` gains two opt-in collections, both off by default.
+  `include_agent_registry` lists the Microsoft Agent 365 package catalog
+  (`agent_registry_api`: `v1.0` by default, or `beta`; `CopilotPackages.Read.All`)
+  and reads each package's details, bounded by `max_package_lookups`. Each
+  package is a `microsoft-agent-365` registry record finding
+  (`entra:copilot-package:<id>`, resource type `copilot-package`) with registry
+  id `tenant_id`, a status mapped from `isBlocked`, `requestStatus` and
+  `availableTo`, `approval_mode: manual` only for an organization's own package
+  whose request was approved, and bindings to the agent identity and app
+  registration it names. Unknown enum members become `unknown`; both enum
+  spellings Microsoft's pages use are accepted. Member lists are stored as
+  counts only; the package file and element definitions are not kept.
+- `include_agent_identities` lists Entra Agent ID agent identities from the
+  Graph beta API. An agent identity enriches the service principal finding of
+  the same id (tag `entra-agent-identity`) or stands alone as `entra:sp:<id>`
+  with resource type `service-principal/AgentIdentity`; the finding id is the
+  same either way. Agent identities, and service principals and app
+  registrations a package names, are reported even without AI signals.
+- Records of the deprecated Entra agent registry (`agentInstance`,
+  `agentCardManifest`) are accepted from offline exports only, as
+  `entra-agent-registry` records with status `deprecated` that never approve.
+- `identity.entra` declares the `emits_registry_records` hook for
+  `microsoft-agent-365` and `entra-agent-registry`.
+- Live collection with an opt-in appends an `agentRegistryCoverage` record, so
+  a replayed export keeps listing completeness and binding coverage and reports
+  incomplete collections again. Denied, failed, capped, conflicting or malformed
+  package listings make the scan incomplete and the listing not complete; an
+  export without the marker has unknown coverage.
+- New credential policy: `auth_mode: delegated` reads a signed-in user's Graph
+  token from the environment variable named by `delegated_token_env` (default
+  `GRAPH_DELEGATED_TOKEN`). There is no configuration key for the token itself.
+  Delegated mode requires `tenant_id`, refuses `access_token`, `client_id` and
+  `client_secret`, never falls back to app-only credentials, checks the
+  unverified `tid`, `scp`, `idtyp` and `exp` claims before any request, and never
+  refreshes the token; a token that expires during the scan makes it
+  incomplete. Delegated package listings are caller-scoped and never complete.
+  `ConnectorContext.secret_env` reads such a variable and registers its value
+  for redaction.
+- The fixtures and Graph payloads in the tests are synthetic, modeled on
+  Microsoft's Graph reference pages; nothing was validated against a live
+  tenant.
+
 ### Autonomy tiers and Capability Card schema version 2
 
 - Classify agents, agent configurations, MCP servers, workflows, bots, gateway

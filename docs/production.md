@@ -948,6 +948,25 @@ establish live tenant acceptance; the tests use synthetic records.
 | Approval rules | A card and a trusted record approving the same finding are ambiguous and leave it shadow; bindings of one record that cover the same finding are one approval. A revoked, rejected or deleted record stops approving on the next scan. | Approve each object in one place: remove card bindings that duplicate trusted registry bindings. |
 | Approval policy | Auto-approved records (`approval_mode: auto`) and registered-only records approve only with `allow_auto_approved` or `allow_registered_only` on the trusted entry; caller-scoped listings are never complete; `entra-agent-registry` cannot be trusted; a connector keeps only records of the registry types it declares. | Leave both switches off unless a person reviews records in that registry by other means: auto-approval and registration are not human review. |
 
+### October 10 Microsoft Agent 365, Entra Agent ID and delegated Graph auth (unreleased)
+
+This candidate lets `identity.entra` read the Microsoft Agent 365 package
+catalog as a vendor registry, report Entra Agent ID agent identities and
+authenticate as a signed-in user. Both collections are off by default, so
+existing configurations collect what they did before. It does not change the
+published 0.1.2 artifact, create a release, or establish live tenant
+acceptance: the fixtures and Graph payloads in the tests are synthetic, modeled
+on Microsoft's Graph reference pages, and were not validated against a live
+tenant. See the [identity connector guide](connectors/identity.md#identityentra).
+
+| Area | Changed behavior | Migration check |
+| --- | --- | --- |
+| Opt-in collection | `include_agent_registry` lists Agent 365 packages (`CopilotPackages.Read.All`; `agent_registry_api` `v1.0` or `beta`; detail calls capped by `max_package_lookups`). `include_agent_identities` lists agent identities from the Graph beta API. The new permissions are needed only when the switches are on. | Grant the permission before enabling a switch: a denied or unlicensed catalog makes the scan incomplete (exit 3), never empty. Beta API changes surface as malformed records and incomplete scans. |
+| Finding identity | New resources `entra:copilot-package:<id>` (`copilot-package`), `entra:agent-registry-instance:<id>` and `entra:agent-registry-card:<id>` (offline only). A standalone agent identity is `entra:sp:<id>` with the same finding id as its service principal. Agent identities, and service principals and app registrations a package names, are reported even without AI signals, so enabling a switch can add findings for existing principals. | Rebaseline when you enable a switch: new findings are expected, and existing service principal findings gain the `entra-agent-identity` tag and agent identity metadata. |
+| Registry records | Packages are `microsoft-agent-365` records with registry id `tenant_id`; deprecated agent registry records are `entra-agent-registry` and never approve. Approved Microsoft and partner packages have `approval_mode: unknown` and approve in a trusted tenant. | Trust a tenant (`trusted_registries`, registry `microsoft-agent-365`, id `tenant_id`) only when the packages allowed in its catalog are ones your organization sanctions. Set `tenant_id`: without it the records cannot be trusted. |
+| Credential policy | `auth_mode: delegated` reads a signed-in user's Graph token from the environment variable named by `delegated_token_env` (default `GRAPH_DELEGATED_TOKEN`); no configuration key holds the token. The tenant and delegated claims are checked before any request; the token is never refreshed, logged, exported or reported, and app-only credentials are never used as a fallback. | Decide which operator signs in and with which role; a delegated scan sees only what that user may see. Do not put the token in configuration through `${VAR}`. Set the variable only for the scan: process-mode plugin workers inherit the environment. Expect exit 3 when the token expires during a long scan. |
+| Comparison | Delegated package listings are caller-scoped and never complete, so they produce no `observed-not-registered` statuses. Delegated and app-only scans cover different scopes. | Do not compare delegated and app-only scans for drift; keep `auth_mode` fixed for a baseline. |
+
 ### October 10 autonomy tiers and card schema version 2 (unreleased)
 
 This candidate adds the [autonomy tiers](concepts/autonomy.md). It does not

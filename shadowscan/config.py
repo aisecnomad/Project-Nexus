@@ -155,7 +155,9 @@ _BOOLEAN_CONNECTOR_KEYS: dict[str, frozenset[str]] = {
         }
     ),
     "gateway.logs": frozenset({"llm_hosts_only"}),
-    "identity.entra": frozenset({"include_first_party"}),
+    "identity.entra": frozenset(
+        {"include_agent_identities", "include_agent_registry", "include_first_party"}
+    ),
     "identity.okta": frozenset({"fetch_tokens", "include_inactive"}),
     "lowcode.power-platform": frozenset({"include_bots"}),
     "saas.generic": frozenset({"keep_all"}),

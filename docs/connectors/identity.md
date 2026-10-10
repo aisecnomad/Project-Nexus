@@ -32,6 +32,150 @@ an approved resource identity.
 A service principal exported with conflicting records is reported the same way,
 keeping AI evidence from up to 16 of its snapshots (64 evidence items).
 
+### Microsoft Agent 365 packages (opt-in)
+
+`include_agent_registry: true` lists the Microsoft Agent 365 catalog
+(`GET /copilot/admin/catalog/packages`) and reads each package's details
+(`GET /copilot/admin/catalog/packages/{id}`). `agent_registry_api` chooses the
+Graph version: `v1.0` (default) or `beta`. Paging follows the opaque
+`@odata.nextLink` until it is absent; a failed page or the page bound leaves the
+listing incomplete. `max_package_lookups` (default 2000) caps the detail calls;
+reaching it leaves details partial and the scan incomplete. Permission:
+`CopilotPackages.Read.All`, as an application permission or delegated for a work
+or school account. Microsoft documents the API for the global cloud only and
+notes licensing prerequisites for package management. A 403 or 404 (no
+licence, role or permission) makes the scan incomplete; it is never read as an
+empty catalog.
+
+Each package becomes a finding `entra:copilot-package:{id}` (resource type
+`copilot-package`, account `tenant_id`). Its kind is `agent` when its
+`elementTypes` include `bot`, `declarativeAgent` or `customEngineAgent`, or its
+`governanceMetadata` is an agent class (every documented class except
+`AIApp`), and `ai-app` otherwise. It carries a
+[vendor registry record](../inventory.md#vendor-registries-as-inventory-sources)
+with registry `microsoft-agent-365`, registry id `tenant_id`, descriptor type
+`package`, and evidence `registry:microsoft-agent-365`:
+
+| Package | Record status |
+|---|---|
+| `isBlocked: true` | `blocked` (tag `registry-blocked`) |
+| `requestStatus: pending` | `pending` |
+| `requestStatus: rejected` | `rejected` |
+| `availableTo: allowedForNone` (or `none`) | `draft` |
+| `isBlocked: false`, available to all or some users, and no request or an approved one | `approved` |
+| any other combination, such as a missing `isBlocked` or an unknown enum member | `unknown` |
+
+The rules apply in that order. Enum members are compared case-insensitively,
+and both spellings Microsoft's pages use (`allowedForAll` and `all`,
+`allowedForSome` and `some`) are accepted; unknown members are recorded as they
+are and never approve. `approval_mode` is `manual` only for an organization's
+own package (`type` `custom` or `shared`) whose request was approved. Microsoft
+and partner packages are vendor-published and get `unknown`, which a trusted
+registry still accepts when the package is `approved`.
+
+Bindings name `entra:sp:{agentIdentityId}` and `entra:app:{appId}` (provider
+`entra`, account `tenant_id`). A binding's coverage is `in-scope` only when the
+same run, or the run that wrote the replayed export, collected that object type
+completely: agent identities need `include_agent_identities`, and app
+registrations count only for an organization's own package, because a vendor
+package's app is registered in the vendor's tenant. Otherwise it is `unknown`.
+Service principals and app registrations a package names are reported even
+without AI signals of their own (`metadata.registry_bound`), so the bindings
+can match them. `listing_complete` is true only when the listing and every
+detail call finished without a warning, cap, conflicting or malformed record.
+Without `tenant_id` the registry id is empty and the records can never be
+trusted. To let approved packages approve the objects they bind, list the
+tenant in
+[`trusted_registries`](../inventory.md#microsoft-agent-365).
+
+Member lists (`allowedUsersAndGroups`, `acquireUsersAndGroups`,
+`sharedWithUsersAndGroups`) are reduced to counts when collected and reported
+as `allowed_principals`, `acquired_principals` and `shared_principals`; member
+ids are never stored. The package file (`zipFile`) and element definitions are
+not kept. `metadata.app_id` carries the package's appId, so an Azure Bot Service
+finding with the same `msa_app_id` is linked. Package records with the same id
+and different content are reported once with `identity_unresolved`, status
+`unknown` and no bindings, and make the scan incomplete.
+
+### Entra Agent ID agent identities (opt-in)
+
+`include_agent_identities: true` lists agent identities from the Graph beta API
+(`GET https://graph.microsoft.com/beta/servicePrincipals/microsoft.graph.agentIdentity`).
+Microsoft documents agent identities in beta only, so this listing uses beta
+whatever `agent_registry_api` says. An agent identity whose id is also a listed
+service principal enriches that finding; otherwise it is its own finding
+`entra:sp:{id}` with resource type `service-principal/AgentIdentity`. Both keep
+the identity discriminator `service-principal`, so the finding id does not
+change when the service principal listing starts returning the agent identity.
+Agent identities are always reported, as `service-identity` findings with tag
+`entra-agent-identity` and `metadata.agent_identity`,
+`agent_identity_blueprint_id` and `created_by_app_id`. Agent identity records
+with the same id and different content give an unresolved finding and make the
+scan incomplete. The Microsoft Graph pages these notes were checked against do
+not name a dedicated read permission for the listing; confirm the
+least-privileged permission on Microsoft's current beta reference before
+granting one.
+
+Beta APIs change without notice. A changed field shape makes the record
+malformed and the scan incomplete; it never approves anything.
+
+### Deprecated Entra agent registry (offline only)
+
+Records exported from the deprecated beta `agentRegistry` (`agentInstance` and
+`agentCardManifest`) are read from offline exports only and never collected
+live. An instance becomes `entra:agent-registry-instance:{id}` with its embedded
+card summarized in `metadata.agent_card`; a card that no exported instance
+embeds becomes `entra:agent-registry-card:{id}`. Their registry records
+(`entra-agent-registry`) have status `deprecated` and never approve, and the
+configuration refuses to trust that registry type. Graph envelopes all use
+`value`, so keep one kind per file or give each record a `_kind`.
+
+### Coverage marker and replay
+
+When an opt-in collection ran, live collection appends one
+`agentRegistryCoverage` record (`packages`, `agentIdentities`: `complete`,
+`incomplete` or `not-collected`; `applications`: `complete` or `incomplete`;
+`listingScope`: `registry` or `caller`). It is exported with the other records,
+so a replay keeps `listing_complete` and `in-scope` bindings and reports an
+incomplete collection, or a package whose details were missing, as incomplete
+again. An export without the marker, for example one taken from Graph by hand,
+gives `listing_complete: false` and `unknown` binding coverage. The fixture
+`tests/fixtures/identity/entra_agent_registry.json` is synthetic, modeled on
+Microsoft's Graph reference pages, and has not been validated against a live
+tenant.
+
+### Delegated auth
+
+`auth_mode: delegated` uses a signed-in user's Graph access token, read from the
+environment variable named by `delegated_token_env` (default
+`GRAPH_DELEGATED_TOKEN`). There is no configuration key for the token itself; do
+not pass it through `${VAR}` expansion in a configuration file. Delegated mode
+requires `tenant_id` and refuses `access_token`, `client_id` and
+`client_secret`. It never falls back to `GRAPH_ACCESS_TOKEN` or the
+`AZURE_CLIENT_*` variables and never calls the token endpoint.
+
+Before any request, the token must be at most 16 KiB of token characters and an
+unexpired JWT whose unverified claims show a tenant (`tid`) equal to
+`tenant_id` (use the tenant ID, not a domain), a `scp` claim, and no
+`idtyp: app`. A client cannot verify the signature of a Graph token, so these
+checks bind the token to the configured scope; they do not authenticate it. A
+failure names the variable, never the token or its claims, and skips the
+connector (exit 3). The token is held only in the HTTP session headers, never
+in records, findings, exports or diagnostics. It is not refreshed: a token
+that expires during the scan (Microsoft access tokens usually last 60 to 90
+minutes) returns HTTP 401 and the collection is incomplete.
+
+The scan sees what the signed-in user may see. Grant the delegated
+`CopilotPackages.Read.All` permission for packages, and have the operator who
+signs in hold a Microsoft Entra role that can read the agent catalog, such as
+AI Administrator; check Microsoft's current role guidance. Delegated package
+listings are caller-scoped (`listing_scope: caller`): they are never complete,
+so they never mark findings `observed-not-registered`. Delegated and app-only
+scans cover different scopes and are not comparable for drift; `auth_mode` is
+recorded in the connector configuration. Every process the scanner starts,
+including approved plugins in process mode, inherits the environment variable:
+set it only for the duration of the scan.
+
 ## `identity.google-workspace`
 Admin SDK `users/{id}/tokens` for every user, aggregated per OAuth client:
 "Fireflies has Gmail + Calendar for 214 users". Auth: service account with

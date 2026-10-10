@@ -69,7 +69,7 @@ number, a boolean or non-numeric text is a configuration error, never a silent
 one-page scan; reaching the page bound marks coverage incomplete. The other
 integer limits (`max_lambda`, `max_ecs_api_calls`, `max_projects`,
 `min_events`, `max_teams`, `max_records`, `max_users`,
-`max_app_role_lookups`) follow the same rule, and the look-back windows
+`max_app_role_lookups`, `max_package_lookups`) follow the same rule, and the look-back windows
 `cloudtrail_days` and `audit_days` are non-negative integers, where 0 switches
 the lookup off: `cloudtrail_days: 0.5` is an error, not a disabled lookup.
 
@@ -530,6 +530,23 @@ principals that match no AI signature; Copilot ones are always kept.
 `max_app_role_lookups` caps the per-service-principal `appRoleAssignments`
 calls (default 2000). Reaching the cap leaves app-only permissions partial and
 the scan incomplete.
+
+Two collections are off by default. `include_agent_registry: true` lists the
+Microsoft Agent 365 package catalog (`agent_registry_api: v1.0`, the default,
+or `beta`) and reads each package's details, at most `max_package_lookups`
+(default 2000); each package becomes a vendor registry record finding
+(`microsoft-agent-365`, registry id `tenant_id`). It needs
+`CopilotPackages.Read.All`. `include_agent_identities: true` lists Entra Agent ID
+agent identities from the Graph beta API; they enrich the service principal
+finding of the same id or stand alone, and are always reported. Records of the
+deprecated Entra agent registry are read from offline exports only, as
+`deprecated` records that never approve. `auth_mode: delegated` reads a
+signed-in user's Graph token from the environment variable named by
+`delegated_token_env` (default `GRAPH_DELEGATED_TOKEN`), checks its tenant and
+delegated claims, never refreshes it and refuses `access_token`, `client_id`
+and `client_secret`; delegated package listings are caller-scoped and never
+complete. Statuses, bindings, coverage and the delegated token rules are in the
+[identity connector guide](connectors/identity.md#identityentra).
 
 ### `identity.google-workspace`
 Admin SDK `users/{id}/tokens` for every user, aggregated per OAuth client:
@@ -1029,7 +1046,7 @@ All connectors are read-only. Prefer dedicated audit credentials:
 | Zoom | Server-to-Server OAuth app with `marketplace:read:list_apps:admin` |
 | Atlassian | site admin basic auth with an API token for the Universal Plugin Manager listing |
 | Auth0 | Management API v2 token with `read:clients`, `read:client_grants` |
-| Entra / Teams / Power Platform | app permissions `Application.Read.All`, `DelegatedPermissionGrant.Read.All`, `Directory.Read.All`, `AppCatalog.Read.All`, `Team.ReadBasic.All`, `TeamsAppInstallation.ReadForTeam.All`; Power Platform admin application user |
+| Entra / Teams / Power Platform | app permissions `Application.Read.All`, `DelegatedPermissionGrant.Read.All`, `Directory.Read.All`, `AppCatalog.Read.All`, `Team.ReadBasic.All`, `TeamsAppInstallation.ReadForTeam.All`; Power Platform admin application user. Opt-in Agent 365 packages: `CopilotPackages.Read.All` (application, or delegated for a work or school account whose user holds a role that can read the agent catalog). Opt-in agent identities: Graph beta service principal read; confirm the least-privileged permission on Microsoft's current beta reference |
 | Google Workspace | DWD scopes `admin.directory.user.readonly`, `admin.directory.user.security`, `admin.directory.customer.readonly` |
 | AWS | `SecurityAudit` managed policy + `bedrock:List*/Get*`, `bedrock-agentcore:List*/Get*`, `cloudtrail:LookupEvents`; ECS additionally needs `ecs:ListClusters`, `ecs:ListTasks`, `ecs:DescribeTasks`, `ecs:ListServices`, `ecs:DescribeServices`, `ecs:ListTaskDefinitionFamilies`, `ecs:DescribeTaskDefinition` |
 | GCP | `roles/viewer` + `roles/iam.securityReviewer` (+ `roles/logging.privateLogViewer` for audit logs) |

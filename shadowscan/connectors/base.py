@@ -174,6 +174,19 @@ class ConnectorContext:
             raise ConnectorError(f"missing required config '{key}'{hint}")
         return val
 
+    def secret_env(self, name: str) -> str | None:
+        """Read a credential from the environment variable *name*; None when unset or empty.
+
+        For a credential the configuration names by environment variable rather than
+        holding it. The value is registered like a configured secret, so diagnostics
+        redact it wherever an upstream message echoes it.
+        """
+        value = os.environ.get(name)
+        if not value:
+            return None
+        self._resolved_config[f"_secret_env_{name}_access_token"] = value
+        return value
+
     def sanitize_message(self, msg: str) -> str:
         """Remove configured credentials even when an upstream error echoes them."""
         try:

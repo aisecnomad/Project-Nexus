@@ -181,6 +181,8 @@ def test_reused_engine_rejects_path_alias_added_after_a_run(tmp_path, index):
         ("code.gitlab", "include_archived"),
         ("gateway.logs", "llm_hosts_only"),
         ("identity.entra", "include_first_party"),
+        ("identity.entra", "include_agent_identities"),
+        ("identity.entra", "include_agent_registry"),
         ("identity.okta", "fetch_tokens"),
         ("lowcode.power-platform", "include_bots"),
         ("saas.generic", "keep_all"),
