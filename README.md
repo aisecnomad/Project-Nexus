@@ -422,7 +422,7 @@ turns shadow findings into card skeletons for review. See
 
 ```bash
 pip install -e ".[cloud,dev]"
-python -m shadowscan. signatures.validate
+python -m shadowscan.signatures.validate
 ruff check shadowscan tests tools
 ruff format --check shadowscan tests tools
 mypy shadowscan tools
@@ -471,7 +471,7 @@ connectors. See [CONTRIBUTING.md](https://github.com/aisecnomad/Project-Nexus/bl
   as `NexusShadowScan`. Confirm publication and artifact identity on
   [PyPI](https://pypi.org/project/NexusShadowScan/0.1.2/) and the
   [GitHub release](https://github.com/aisecnomad/Project-Nexus/releases/tag/v0.1.2).
-  The package classifier is `Development Status:: 3 - Alpha`.
+  The package classifier is `Development Status :: 3 - Alpha`.
 * **Single maintainer, AI-assisted development.** Apart from Dependabot updates, every commit was written
   by a single maintainer or generated with an AI coding assistant (Claude, Codex, Grok, GitHub Copilot, Google Antigravity, Perplexity, Meta AI, etc.). The logs under
   [archive/reviews/](https://github.com/aisecnomad/Project-Nexus/tree/main/archive/reviews) are AI-assisted, not third-party reviews.
