@@ -716,13 +716,17 @@ Offline input: JSON / JSONL (exported endpoint records or osquery results).
 
 ### `endpoint.mcp`
 
-Analyze offline MCP server tool, resource, and prompt inventory exports.
+MCP and A2A endpoint inventory: offline MCP tool-list exports and opt-in A2A Agent Card probes.
 
 Offline input: JSON / JSONL / YAML export.
 
 | Key | Description |
 | --- | --- |
-| `input` | Offline MCP list-responses JSON / JSONL export; live probes require explicit opt-in. |
+| `input` | Offline MCP list-responses JSON / JSONL export, or A2A card records from --dump-records. |
+| `agent_card_urls` | opt-in live probe: list of HTTPS A2A Agent Card URLs or agent origins; an origin is probed at /.well-known/agent-card.json (then /.well-known/agent.json on 404); URLs inside a card are never fetched; refused together with input |
+| `max_agent_cards` | maximum number of agent\_card\_urls (default 100); a longer list is refused, never truncated |
+| `agent_card_jwks_url` | optional operator-trusted HTTPS JWKS endpoint that verifies Agent Card signatures; keys or key URLs named by a card are never used |
+| `ca_bundle` | optional PEM file trusted instead of the default CA store for Agent Card and JWKS endpoints (private CA) |
 | `max_input_bytes` | offline: maximum expanded bytes read across all input files (default 256 MiB, hard ceiling 512 MiB) |
 | `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
 | `max_input_files` | offline: maximum files read from a directory input (default 10,000) |

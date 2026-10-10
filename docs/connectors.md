@@ -41,12 +41,20 @@ export suffixes (a `README.md`, `.DS_Store` or rotated log): remove it or point
 
 The offline inventories (`endpoint.host`, `endpoint.mcp`, `endpoint.ollama`,
 `endpoint.models`, `endpoint.ebpf`, `gateway.otel`, `cloud.kubernetes` and
-`cloud.openshift`) are **offline-only**. See the
+`cloud.openshift`) analyze exports. See the
 [Kubernetes and OpenShift guide](connectors/kubernetes.md) for workload exports
 and the [endpoint guide](connectors/endpoint.md) for MCP, OTLP, Ollama,
-model-artifact metadata, and eBPF exports. These connectors do not perform live
-probes or local host filesystem discovery, and their findings carry no device
-name, so lifecycle links do not apply to them.
+model-artifact metadata, and eBPF exports. These connectors do not perform
+local host filesystem discovery, and their findings carry no device name, so
+lifecycle links do not apply to them. The one live probe among them is opt-in:
+`endpoint.mcp` fetches the A2A Agent Cards listed in `agent_card_urls` (at most
+`max_agent_cards`, default 100), optionally verifies their signatures against
+the operator-trusted keys at `agent_card_jwks_url`, and trusts a private CA
+from `ca_bundle` (see the
+[A2A Agent Card probe](connectors/endpoint.md#a2a-agent-card-probe)). It never
+fetches a URL declared inside a card and never contacts an MCP server. A job
+that sets both `input` and `agent_card_urls` is refused (exit 3), because a
+replay never probes.
 Model metadata is not parsed from GGUF/safetensors files, and MCP fingerprints
 have no rug-pull baseline. When no `input` is set, `endpoint.inventory` reads a
 fixed list of local user-scope locations and `runtime.processes` reads `/proc`
@@ -299,7 +307,15 @@ agent findings. An A2A card that names its agent and declares an endpoint,
 skills or capabilities but misses other required fields still gets its own
 `protocol.a2a` framework-usage finding, tagged `incomplete-agent-card` with
 the errors in `metadata.card_errors`, never an agent finding; the errors also
-keep the scan incomplete. JSON/YAML descriptions are not
+keep the scan incomplete. A card's `metadata.agent_card` is the projection the
+[A2A Agent Card probe](connectors/endpoint.md#a2a-agent-card-probe) uses: A2A 1.0 `supportedInterfaces` and 0.3
+`url`/`additionalInterfaces` (scheme, host, port and path only), and a
+signature state of `absent`, `present-unverified` or `invalid` (card files are
+never verified). Cards are tagged `no-auth-declared`, `a2a-plaintext-interface`
+(an `http://` or `ws://` interface to a remote host) and
+`a2a-card-signature-invalid` (a malformed signature entry). A card that
+declares a protocol version other than 0.x or 1.x is still reported, with a
+warning that makes the scan incomplete. JSON/YAML descriptions are not
 executed or treated as source; low-code
 matching projects operational fields only. These predicates are not complete
 versioned vendor schema validators.

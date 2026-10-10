@@ -121,6 +121,7 @@ Release 2026.09 (dist/v6/ATLAS-2026.09.yaml, format 6.0.0). Only the techniques 
 | `mitre-atlas-2026.09:AML.T0109` | AI Supply Chain Rug Pull |
 | `mitre-atlas-2026.09:AML.T0110.000` | AI Agent Tool Poisoning: Definition and Instructions |
 | `mitre-atlas-2026.09:AML.T0118` | Autonomous AI Agent Communication |
+| `mitre-atlas-2026.09:AML.T0118.001` | Autonomous AI Agent Communication: Direct Agent Communication |
 | `mitre-atlas-2026.09:AML.T0132` | Misconfigured or Publicly Exposed AI Services |
 
 ### `nist-ai-rmf-1.0`
@@ -223,6 +224,8 @@ From `shadowscan/mappings/data/rules/threats.yaml`.
 | `multi-agent-capability` | capability `multi-agent` | `owasp-asi-2026:ASI07`, `owasp-asi-2026:ASI08`, `mitre-atlas-2026.09:AML.T0118` | Agents that exchange messages can pass a compromise or a fault from one agent to the next. |
 | `delegated-identity-capability` | capability `delegated-identity` | `owasp-asi-2026:ASI03` | An agent acting with a user's delegated identity can be used to exercise that user's privileges. |
 | `agent-card-without-security-scheme` | tag `no-auth-declared` | `owasp-asi-2026:ASI07`, `owasp-asi-2026:ASI03` | An A2A Agent Card that declares no security scheme invites peers to call the agent without authenticating. |
+| `a2a-plaintext-interface` | tag `a2a-plaintext-interface` | `owasp-asi-2026:ASI07`, `mitre-atlas-2026.09:AML.T0118.001` | An A2A interface over plaintext HTTP lets anyone on the network path read or alter the messages agents exchange directly. |
+| `a2a-card-signature-invalid` | tag `a2a-card-signature-invalid` | `owasp-asi-2026:ASI07`, `owasp-asi-2026:ASI04` | An Agent Card whose signature is malformed or does not verify may have been altered after signing, so peers cannot rely on the identity, endpoints and skills it advertises. |
 | `high-autonomy` | `metadata.autonomy.floor` at least 4 | `owasp-llm-2026:LLM03`, `owasp-asi-2026:ASI08` | Evidence places the agent at high or full autonomy, where actions run without per-step human review and errors can compound. |
 
 ### Layer rules

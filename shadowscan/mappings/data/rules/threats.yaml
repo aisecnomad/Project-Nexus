@@ -255,6 +255,25 @@ rules:
       An A2A Agent Card that declares no security scheme invites peers to call
       the agent without authenticating.
 
+  - id: a2a-plaintext-interface
+    when: {tags_any: [a2a-plaintext-interface]}
+    refs:
+      - owasp-asi-2026:ASI07
+      - mitre-atlas-2026.09:AML.T0118.001
+    rationale: >-
+      An A2A interface over plaintext HTTP lets anyone on the network path read
+      or alter the messages agents exchange directly.
+
+  - id: a2a-card-signature-invalid
+    when: {tags_any: [a2a-card-signature-invalid]}
+    refs:
+      - owasp-asi-2026:ASI07
+      - owasp-asi-2026:ASI04
+    rationale: >-
+      An Agent Card whose signature is malformed or does not verify may have
+      been altered after signing, so peers cannot rely on the identity,
+      endpoints and skills it advertises.
+
   - id: high-autonomy
     when: {autonomy_floor_at_least: 4}
     refs:

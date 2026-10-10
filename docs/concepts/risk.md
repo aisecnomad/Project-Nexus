@@ -107,6 +107,9 @@ include:
 | `tag:posture-unauthenticated-gateway` | That exposed gateway has no auth token | 15 |
 | `tag:exposed-llm-server` | LLM inference service is reachable beyond loopback or cluster scope | 15 |
 | `tag:tool-poisoning` | MCP tool description contains prompt-injection or exfiltration indicators | 15 |
+| `tag:no-auth-declared` | An A2A Agent Card declares no security scheme | 10 |
+| `tag:a2a-plaintext-interface` | An A2A Agent Card declares an `http://` or `ws://` interface to a host other than loopback | 10 |
+| `tag:a2a-card-signature-invalid` | An A2A Agent Card signature is malformed or does not verify against the operator-trusted keys (`agent_card_jwks_url`) | 10 |
 | `tag:unsafe-serialization` | Model artifact uses an unsafe serialization format | 15 |
 | `tag:cluster-admin` | Workload service account is bound to cluster-admin | 20 |
 | `tag:privileged-pod` | Workload requests privileged host access | 15 |

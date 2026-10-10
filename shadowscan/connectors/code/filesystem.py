@@ -137,12 +137,16 @@ from shadowscan.connectors.code.python_reexports import (
 )
 from shadowscan.connectors.code.rule_packs import detection_rule_format
 from shadowscan.connectors.code.semantic_config import (
+    a2a_card_metadata,
+    a2a_card_tags,
+    a2a_unsupported_protocol_version,
     agent_manifest_kind,
     has_template_markers,
     is_agent_config_path,
     parse_agent_manifest,
     structured_code_matches,
 )
+from shadowscan.connectors.code.semantic_config import bounded_metadata as _clip
 from shadowscan.connectors.code.source_identity import named_construction_spans
 from shadowscan.connectors.code.source_ranges import noncode_ranges, nul_reading_ranges
 from shadowscan.connectors.code.source_semantics import (
@@ -5370,7 +5374,7 @@ class FilesystemConnector(BaseConnector):
                 )
             )
         if kind == "a2a":
-            self._describe_a2a_card(f, rel, data)
+            self._describe_a2a_card(f, rel, validation.data or {}, data)
         elif kind == "m365":
             self._describe_m365_agent(f, rel, data)
         elif kind == "langgraph":
@@ -5389,27 +5393,18 @@ class FilesystemConnector(BaseConnector):
             f.kind = Kind.AGENT
         return f
 
-    def _describe_a2a_card(self, f: Finding, rel: str, data: dict[str, Any]) -> None:
-        f.metadata["agent_card"] = {
-            "name": data.get("name"),
-            "description": truncate(sanitize_text(str(data.get("description", ""))), 300),
-            "url": data.get("url"),
-            "version": data.get("version"),
-            "protocol_version": data.get("protocolVersion"),
-            "skills": [
-                s.get("name") or s.get("id") for s in data.get("skills", []) or [] if isinstance(s, dict)
-            ],
-            "capabilities": _clip(data.get("capabilities")),
-            "security_schemes": _clip(
-                list((data.get("securitySchemes") or {}).keys())
-                if isinstance(data.get("securitySchemes"), dict)
-                else data.get("authentication")
-            ),
-        }
-        if data.get("url"):
-            apply_matches(f, self.index.match_domains_in_text(str(data["url"])), location=rel)
-        if not data.get("securitySchemes") and not data.get("authentication"):
-            f.add_tag("no-auth-declared")
+    def _describe_a2a_card(self, f: Finding, rel: str, card: dict[str, Any], shown: dict[str, Any]) -> None:
+        """Project the card as every A2A source does; ``shown`` is its whole-document sanitized copy."""
+        if a2a_unsupported_protocol_version(card):
+            self.ctx.warn(
+                f"code.filesystem: {rel}: A2A card declares a protocol version other than 0.x or 1.x; "
+                "its fields were read as A2A 0.3 and 1.0 fields"
+            )
+        f.metadata["agent_card"] = agent_card = a2a_card_metadata(card, shown)
+        for interface in agent_card["interfaces"]:
+            apply_matches(f, self.index.match_domains_in_text(interface["url"]), location=rel)
+        for tag in a2a_card_tags(card, agent_card["signature"]):
+            f.add_tag(tag)
 
     @staticmethod
     def _describe_m365_agent(f: Finding, rel: str, data: dict[str, Any]) -> None:
@@ -5706,21 +5701,6 @@ def _quote_glob_values(front_matter: str) -> str:
 
 _MAX_CARD_FILES = 200
 _MAX_AGENT_DEFINITIONS = 50
-_CLIP_ITEMS = 50
-_CLIP_CHARS = 200
-
-
-def _clip(value: Any, depth: int = 0) -> Any:
-    """Bound a projected metadata value so aggregates stay within the sanitizer budget."""
-    if isinstance(value, str):
-        return truncate(value, _CLIP_CHARS)
-    if depth >= 4:
-        return None if isinstance(value, (dict, list, tuple)) else value
-    if isinstance(value, dict):
-        return {str(k)[:_CLIP_CHARS]: _clip(v, depth + 1) for k, v in list(value.items())[:_CLIP_ITEMS]}
-    if isinstance(value, (list, tuple)):
-        return [_clip(v, depth + 1) for v in value[:_CLIP_ITEMS]]
-    return value
 
 
 def _excerpt(lines: list[str], line: int, secret: str | None = None, width: int = 160) -> str:

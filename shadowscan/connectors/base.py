@@ -487,6 +487,14 @@ class BaseConnector(ABC):
         return _offline.unwrap(cls, data, on_error if on_error is not None else _raise_connector_error)
 
     # ------------------------------------------------------------------- run
+    def _export_record(self, record: dict[str, Any]) -> dict[str, Any]:
+        """The record as exported, before the shared sanitizer; analysis keeps the original.
+
+        A connector overrides this to withhold values its records carry that
+        the sanitizer does not recognize. It never adds content.
+        """
+        return record
+
     def _tee(self, records: Iterable[dict[str, Any]], path: str) -> Iterator[dict[str, Any]]:
         """Export sanitized records atomically, with owner-only permissions.
 
@@ -509,7 +517,10 @@ class BaseConnector(ABC):
                 for rec in records:
                     offset = fh.tell()
                     try:
-                        clean = sanitize(rec, env_values_are_secrets=not self._ENV_VALUES_ARE_CONFIGURATION)
+                        clean = sanitize(
+                            self._export_record(rec),
+                            env_values_are_secrets=not self._ENV_VALUES_ARE_CONFIGURATION,
+                        )
                     except SanitizationLimitError:
                         rejected = True
                         self.ctx.error(
