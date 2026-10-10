@@ -1263,3 +1263,35 @@ def test_catalog_switches_are_strict_configuration_booleans():
     assert (spec.config["agent_registry"], spec.config["gemini_enterprise"]) == (True, False)
     with pytest.raises(ConfigValidationError, match="agent_registry"):
         ScanConfig.from_dict({"connectors": [{"name": "cloud.gcp", "agent_registry": "yes"}]})
+
+
+@pytest.mark.parametrize(
+    "reference,attributed",
+    [
+        ("//aiplatform.googleapis.com/projects/acme-ml/locations/us-central1/reasoningEngines/456", True),
+        (
+            "//us-central1-aiplatform.googleapis.com/projects/acme-ml/locations/us-central1/reasoningEngines/456",
+            True,
+        ),
+        # The service name appearing anywhere else in the URI is not a Vertex AI reference.
+        (
+            "//evil.example/aiplatform.googleapis.com/projects/acme-ml/locations/us-central1/reasoningEngines/456",
+            False,
+        ),
+        ("https://aiplatform.googleapis.com.evil.example/projects/p/locations/l/reasoningEngines/1", False),
+        ("//dialogflow.googleapis.com/projects/acme-ml/locations/global/agents/9", False),
+        ("//aiplatform.googleapis.com/projects/acme-ml/locations/us-central1/endpoints/1", False),
+    ],
+)
+def test_only_a_vertex_reasoning_engine_reference_attributes_agent_engine(
+    index, tmp_path, reference, attributed
+):
+    records = [
+        {**record, "runtime_reference": reference}
+        if record["_kind"] == "agent-registry-agent" and record.get("name", "").endswith("/negotiator")
+        else record
+        for record in fixture_records()
+    ]
+    findings = by_resource(scan(index, write_records(tmp_path, records)).findings)
+    negotiator = findings["projects/123/locations/global/agents/negotiator"]
+    assert ("cloud.gcp-vertex-agent-engine" in negotiator.frameworks) is attributed

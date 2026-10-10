@@ -76,6 +76,7 @@ from shadowscan.connectors.cloud.gcp_registry import (
     normalize_ar_item,
     normalize_ge_agent,
     record_entry,
+    runtime_reference,
     urls,
     valid_location,
 )
@@ -1195,7 +1196,10 @@ class GcpConnector(BaseConnector):
             if framework and key in framework.lower():
                 f.add_framework(sig)
         reference = rec.get("runtime_reference")
-        if isinstance(reference, str) and "aiplatform.googleapis.com/" in reference:
+        # Only a well-formed Vertex AI reasoning engine reference, never a URI that merely
+        # contains the service name somewhere, attributes the record to Agent Engine.
+        runtime = runtime_reference(reference)
+        if runtime is not None and runtime.kind == "reasoning-engine":
             f.add_framework("cloud.gcp-vertex-agent-engine")
         metadata.update(
             api_version=rec.get("_api_version"),
