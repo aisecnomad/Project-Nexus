@@ -90,6 +90,18 @@
   color: "5319e7"
   description: Opened by a coding assistant (Claude Code or Copilot) for a maintainer; not independent review.
 
+- name: "review: coding-assistant"
+  color: "d4c5f9"
+  description: Reviewed, or review requested, by a coding assistant (Copilot code review); not human review.
+
+- name: "review: human-requested"
+  color: "fbca04"
+  description: Review requested from a human collaborator; no approval from them yet.
+
+- name: "review: human-approved"
+  color: "0e8a16"
+  description: Approved by a human other than the author.
+
 - name: integration
   color: "1d76db"
   description: Combines other pull requests into one change.
