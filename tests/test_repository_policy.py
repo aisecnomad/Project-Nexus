@@ -1953,3 +1953,179 @@ def test_label_sync_only_mutates_labels_from_main() -> None:
     assert parsers, "no step parses .github/labels.yml"
     for index in parsers:
         assert index > install and '"$RUNNER_TEMP/labels-venv/bin/python" - <<' in scripts[index]
+
+
+# Consumer examples are copied verbatim into other repositories and clusters, so
+# the weekly drift templates follow the same rules as this repository's workflows.
+DRIFT_WORKFLOW = ROOT / "examples" / "github-action-drift.yml"
+KUBERNETES_EXAMPLES = sorted((ROOT / "examples").glob("k8s-*.yaml"))
+_DRIFT_CLASSES_GATED = "--fail-on-drift inventory,capability,autonomy,governance"
+
+
+def _drift_job() -> tuple[str, dict[str, Any]]:
+    ((name, job),) = _load(DRIFT_WORKFLOW)["jobs"].items()
+    return name, job
+
+
+def _step_running(job: dict[str, Any], text: str) -> dict[str, Any]:
+    (step,) = [step for step in job["steps"] if text in step.get("run", "")]
+    return step
+
+
+def _joined(script: str) -> str:
+    return " ".join(script.replace("\\\n", " ").split())
+
+
+def test_drift_workflow_is_scheduled_least_privilege_and_fail_closed() -> None:
+    workflow = _load(DRIFT_WORKFLOW)
+    text = DRIFT_WORKFLOW.read_text(encoding="utf-8")
+    # A pull request must never run a job that can assume cloud roles or read the baseline.
+    assert _trigger_names(workflow) == {"schedule", "workflow_dispatch"}
+    assert "pull_request" not in text
+    assert workflow["permissions"] == {"contents": "read"}
+    assert workflow["concurrency"]["cancel-in-progress"] is False
+    name, job = _drift_job()
+    # OIDC federation is the only write scope, and only the collecting job has it.
+    assert job["permissions"] == {"contents": "read", "id-token": "write"}
+    assert job["environment"] == "shadowscan-drift"
+    without_oidc = json.loads(json.dumps(workflow))
+    without_oidc["jobs"][name]["permissions"] = {"contents": "read"}
+    assert not [
+        *_trigger_violations(workflow),
+        *_job_violations(DRIFT_WORKFLOW.name, without_oidc),
+        *_concurrency_violations(DRIFT_WORKFLOW.name, workflow),
+        *_run_violations(DRIFT_WORKFLOW.name, workflow),
+        *_publication_violations(text),
+    ]
+    assert not _SUPPRESSION.search(text), "the drift example must preserve exit codes 2 and 3"
+    checkouts = [step for step in job["steps"] if step.get("uses", "").startswith("actions/checkout@")]
+    assert len(checkouts) == 2 and all(step["with"]["persist-credentials"] is False for step in checkouts)
+    baseline = next(step for step in checkouts if "repository" in step["with"])
+    assert baseline["with"]["repository"] == "${{ vars.SHADOWSCAN_BASELINE_REPOSITORY }}"
+    assert baseline["with"]["token"] == "${{ secrets.SHADOWSCAN_BASELINE_TOKEN }}"
+    (upload,) = [step for step in job["steps"] if step.get("uses", "").startswith("actions/upload-artifact@")]
+    assert upload["with"]["retention-days"] == 14 and upload.get("if") == "always()"
+
+
+def test_drift_workflow_compares_against_a_pinned_unexpired_baseline() -> None:
+    _, job = _drift_job()
+    scan = _joined(_step_running(job, "shadowscan -q scan")["run"])
+    assert '-c "$SHADOWSCAN_CONFIG" --format json -o "$RUNNER_TEMP/current.json"' in scan
+    compare = _joined(_step_running(job, "shadowscan diff")["run"])
+    assert _DRIFT_CLASSES_GATED in compare
+    assert '--baseline-sha256 "$SHADOWSCAN_BASELINE_SHA256"' in compare
+    assert "--max-baseline-age-days 35" in compare
+    # The comparison holds findings: it goes to a file, never the log.
+    assert "--json" in compare and '> "$RUNNER_TEMP/drift.json"' in compare
+    assert compare.endswith('exit "$status"')
+    for step in job["steps"]:
+        if re.search(r"\b(?:python3?|shadowscan)\b", step.get("run", "")):
+            assert step.get("working-directory") == "${{ runner.temp }}", step.get("name")
+    if shutil.which("bash"):
+        for step in job["steps"]:
+            if "run" in step:
+                checked = subprocess.run(
+                    ["bash", "-n"], input=step["run"], text=True, capture_output=True, timeout=30
+                )
+                assert checked.returncode == 0, (step.get("name"), checked.stderr)
+
+
+def _summary_script() -> str:
+    _, job = _drift_job()
+    script = _step_running(job, "GITHUB_STEP_SUMMARY")["run"]
+    return script.split("<<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
+
+
+@pytest.mark.parametrize("comparison", ["drift", "missing", "malformed"])
+def test_drift_workflow_summary_writes_counts_per_class_only(tmp_path: Path, comparison: str) -> None:
+    from shadowscan.comparison import DRIFT_CLASSES, compare_reports
+    from shadowscan.models import Finding, Kind, ScanResult, ScanStats, Surface
+
+    def report(*permissions: str) -> dict[str, Any]:
+        finding = Finding(
+            surface=Surface.CODE,
+            connector="code.filesystem",
+            kind=Kind.AGENT,
+            title="tenant-4711 private agent",
+            resource="acme/private-agent",
+            resource_type="repository",
+            permissions=list(permissions),
+        )
+        scope = {"schema": "shadowscan.collection-scope/v1", "comparable": True, "fingerprint": "a" * 64}
+        return ScanResult(
+            findings=[finding],
+            stats=[ScanStats(connector="code.filesystem", started_at="2026-01-01")],
+            collection_scope=scope,
+        ).to_dict()
+
+    if comparison == "drift":
+        document = compare_reports(report("Mail.Read"), report("Mail.Read", "Mail.Send"))
+        (tmp_path / "drift.json").write_text(json.dumps(document), encoding="utf-8")
+    elif comparison == "malformed":
+        (tmp_path / "drift.json").write_text('{"drift_summary": []}', encoding="utf-8")
+    summary = tmp_path / "summary.md"
+    result = subprocess.run(
+        [sys.executable, "-I", "-"],
+        input=_summary_script(),
+        text=True,
+        capture_output=True,
+        env={"RUNNER_TEMP": str(tmp_path), "GITHUB_STEP_SUMMARY": str(summary)},
+        timeout=60,
+    )
+    assert result.returncode == 0 and not result.stdout and not result.stderr, result.stderr
+    written = summary.read_text(encoding="utf-8")
+    assert "tenant-4711" not in written and "private-agent" not in written and "Mail" not in written
+    if comparison == "drift":
+        assert "| capability | 1 | yes |" in written
+        assert all(f"| {name} |" in written for name in DRIFT_CLASSES)
+    else:
+        assert written == "No drift result: see the exit codes of the scan and comparison steps.\n"
+
+
+def _pod_spec(manifest: dict[str, Any]) -> dict[str, Any]:
+    if manifest["kind"] == "CronJob":
+        return manifest["spec"]["jobTemplate"]["spec"]["template"]["spec"]
+    return manifest["spec"]["template"]["spec"]
+
+
+@pytest.mark.parametrize("path", KUBERNETES_EXAMPLES, ids=lambda path: path.name)
+def test_kubernetes_examples_run_non_root_read_only_and_digest_pinned(path: Path) -> None:
+    manifests = list(yaml.safe_load_all(path.read_text(encoding="utf-8")))
+    workloads = [manifest for manifest in manifests if manifest["kind"] in {"Job", "CronJob"}]
+    assert workloads, f"{path.name} defines no Job or CronJob"
+    for workload in workloads:
+        job = workload["spec"]["jobTemplate"]["spec"] if workload["kind"] == "CronJob" else workload["spec"]
+        assert job["backoffLimit"] == 0
+        assert type(job["activeDeadlineSeconds"]) is int and job["activeDeadlineSeconds"] > 0
+        pod = _pod_spec(workload)
+        assert pod["restartPolicy"] == "Never" and pod["automountServiceAccountToken"] is False
+        context = pod["securityContext"]
+        assert context["runAsNonRoot"] is True and context["seccompProfile"] == {"type": "RuntimeDefault"}
+        for container in pod["containers"]:
+            assert re.fullmatch(r"\S+@sha256:\S+", container["image"]), container["image"]
+            security = container["securityContext"]
+            assert security["allowPrivilegeEscalation"] is False
+            assert security["readOnlyRootFilesystem"] is True
+            assert security["capabilities"] == {"drop": ["ALL"]}
+            assert "limits" in container["resources"]
+
+
+def test_kubernetes_drift_cronjob_never_overlaps_and_mounts_inputs_read_only() -> None:
+    (cronjob,) = yaml.safe_load_all(
+        (ROOT / "examples" / "k8s-drift-cronjob.yaml").read_text(encoding="utf-8")
+    )
+    assert cronjob["kind"] == "CronJob" and cronjob["spec"]["concurrencyPolicy"] == "Forbid"
+    pod = _pod_spec(cronjob)
+    (container,) = pod["containers"]
+    mounts = {mount["name"]: mount for mount in container["volumeMounts"]}
+    for name in ("config", "baseline"):
+        # Volume keys are links, which ShadowScan refuses; subPath mounts the file itself.
+        assert mounts[name]["readOnly"] is True and mounts[name]["subPath"]
+    volumes = {volume["name"]: volume for volume in pod["volumes"]}
+    assert "emptyDir" in volumes["output"]
+    (script,) = container["args"]
+    assert _DRIFT_CLASSES_GATED in _joined(script)
+    assert not _SUPPRESSION.search(script) and script.rstrip().endswith('exit "$status"')
+    if shutil.which("sh"):
+        checked = subprocess.run(["sh", "-n"], input=script, text=True, capture_output=True, timeout=30)
+        assert checked.returncode == 0, checked.stderr

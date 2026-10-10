@@ -118,6 +118,7 @@ nav:
       - Assurance results (2026-09-24): assurance-results.md
       - Tenant canaries: canaries.md
       - CI integration: operations/ci.md
+      - Scheduled drift detection: operations/drift.md
       - AI bill of materials: operations/ai-bom.md
       - OCSF events: operations/ocsf.md
       - LLM triage: operations/llm-triage.md

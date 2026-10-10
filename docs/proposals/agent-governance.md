@@ -281,6 +281,13 @@ Scope:
 
 ## 2. Scheduled drift detection (DRIFT)
 
+Status: DRIFT-2 to DRIFT-4 are implemented, unreleased: `--fail-on-drift`,
+`--baseline-sha256`, `--max-baseline-age-days` and the weekly workflow and
+CronJob templates; DRIFT-0 is documented. See
+[Scheduled drift detection](../operations/drift.md). The tests use synthetic
+reports, not live tenants. The rest of this section records the proposal as
+drafted.
+
 ### Problem
 
 Security teams want a scheduled job, typically weekly, that answers what

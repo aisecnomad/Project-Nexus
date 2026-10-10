@@ -858,6 +858,41 @@ resource. Regenerate comparison baselines after upgrading from legacy IDs;
 cross-schema comparisons retain missing findings as unknown. Incompatible cache
 entries cause a full rescan.
 
+### Drift classes and baseline lifecycle
+
+Every changed finding lists its `drift` in addition to its `changed_fields`.
+Each drift entry names a class:
+
+- `inventory`: new and resolved findings, kind and resource type;
+- `capability`: permissions, capabilities, frameworks, model providers,
+  models, tags, and an MCP tool's `metadata.tool_definition_sha256`;
+- `autonomy`: the floor, ceiling, oversight and initiation of
+  `metadata.autonomy`;
+- `governance`: owner, shadow status, registry match,
+  `metadata.registry_reconciliation.status` and the `autonomy-understated`
+  tag;
+- `coverage`: the reasons a comparison is incomplete.
+
+Each entry also says whether the change is adverse, for example an added
+permission, a higher autonomy floor or a lost owner.
+`--fail-on-drift inventory,capability,autonomy,governance` exits 2 on adverse
+drift in a listed class, and an incomplete comparison still exits 3. The JSON
+document adds `drift_summary` and `adverse` per class. No other metadata is
+compared, and a finding without these keys compares as before. A malformed
+value makes the report invalid input rather than unchanged. Risk changes are
+not classified; `--fail-on-new` gates on risk level rises.
+
+`--baseline-sha256 HEX` refuses (exit 1) a baseline file whose raw bytes do
+not have that SHA-256, before anything is printed. `--max-baseline-age-days N`
+makes the comparison incomplete (exit 3) in these cases:
+
+- the baseline scan started more than N days ago;
+- its `started_at` is missing, invalid, without a timezone or in the future;
+- it started after the current scan.
+
+[Scheduled drift detection](operations/drift.md) describes each class's
+adverse changes and the baseline review process.
+
 ## Completion and migration
 
 | CLI exit | Meaning |

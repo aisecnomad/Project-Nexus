@@ -86,6 +86,7 @@ printf '%s\n' "$TOKEN" | shadowscan jwt --jwks-url https://acme.okta.com/oauth2/
 shadowscan inventory stubs report.json -o inventory/pending/
 shadowscan diff last-week.json today.json                 # informational: exit 0 unless the comparison is incomplete (3)
 shadowscan diff last-week.json today.json --fail-on-new   # exit 2 on new findings or a higher risk level
+shadowscan diff last-week.json today.json --fail-on-drift inventory,capability,autonomy,governance   # exit 2 on adverse drift
 ```
 
 `diff` can complete only for local repository scans and offline exports; a
