@@ -342,16 +342,22 @@ options:
       id: 00000000-0000-0000-0000-000000000000
 ```
 
-An approved package then approves its own record and the agent identity
-(`entra:sp:<agentIdentityId>`) and app registration (`entra:app:<appId>`) it
-binds. Blocked, pending, rejected, draft and unknown packages approve nothing.
+An approved package then approves its own record and the objects it binds: the
+agent identity (`entra:sp:<agentIdentityId>`), only when that id is a listed
+agent identity, and the app registration (`entra:app:<appId>`), only for an
+organization's own package. A package never binds any other service principal,
+and a Microsoft or partner package never binds an app registration of the
+tenant, whatever ids it declares. Blocked, pending, rejected, draft and unknown
+packages approve nothing.
 Only an organization's own package whose request a person approved has
 `approval_mode: manual`; an approved Microsoft or partner package has
-`approval_mode: unknown` and, in a trusted tenant, approves too. Trust the
+`approval_mode: unknown` and, in a trusted tenant, approves its record and a
+listed agent identity it names. Trust the
 tenant only when the packages allowed in its catalog are ones your organization
 has decided to sanction. Without `tenant_id` the records have an empty registry
-id and cannot be trusted. A delegated scan's listing is caller-scoped, so it
-never marks findings `observed-not-registered`. The
+id and cannot be trusted; with it, a pre-issued `access_token` must carry that
+tenant in its `tid` claim. A delegated scan's listing is caller-scoped, so it
+never marks findings `observed-not-registered` or `registered-not-observed`. The
 [identity connector guide](connectors/identity.md#microsoft-agent-365-packages-opt-in)
 lists the status rules and binding coverage.
 

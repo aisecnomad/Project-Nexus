@@ -111,16 +111,23 @@ summarizes each release for people who install and operate ShadowScan.
   (`entra:copilot-package:<id>`, resource type `copilot-package`) with registry
   id `tenant_id`, a status mapped from `isBlocked`, `requestStatus` and
   `availableTo`, `approval_mode: manual` only for an organization's own package
-  whose request was approved, and bindings to the agent identity and app
-  registration it names. Unknown enum members become `unknown`; both enum
-  spellings Microsoft's pages use are accepted. Member lists are stored as
+  whose request was approved, and bindings to the objects it may own in the
+  tenant: the agent identity it names only when that id is a listed agent
+  identity, and the app registration only for an organization's own package.
+  A package never binds another service principal, and a Microsoft or partner
+  package never binds an app registration of the tenant, so publisher-declared
+  ids cannot approve tenant objects. Unknown enum members become `unknown`;
+  both enum spellings Microsoft's pages use are accepted. Member lists are stored as
   counts only; the package file and element definitions are not kept.
 - `include_agent_identities` lists Entra Agent ID agent identities from the
   Graph beta API. An agent identity enriches the service principal finding of
   the same id (tag `entra-agent-identity`) or stands alone as `entra:sp:<id>`
   with resource type `service-principal/AgentIdentity`; the finding id is the
   same either way. Agent identities, and service principals and app
-  registrations a package names, are reported even without AI signals.
+  registrations a package binds, are reported even without AI signals. Each
+  listed agent identity's app role assignments are read, within the
+  `max_app_role_lookups` budget, also when the service principal listing does
+  not return it.
 - Records of the deprecated Entra agent registry (`agentInstance`,
   `agentCardManifest`) are accepted from offline exports only, as
   `entra-agent-registry` records with status `deprecated` that never approve.
@@ -138,7 +145,11 @@ summarizes each release for people who install and operate ShadowScan.
   `client_secret`, never falls back to app-only credentials, checks the
   unverified `tid`, `scp`, `idtyp` and `exp` claims before any request, and never
   refreshes the token; a token that expires during the scan makes it
-  incomplete. Delegated package listings are caller-scoped and never complete.
+  incomplete. Delegated package listings are caller-scoped: the reported
+  record has `listing_complete: false` and every binding `unknown` coverage.
+  With `include_agent_registry` and `tenant_id`, a pre-issued app-only
+  `access_token` must be a JWT whose unverified `tid` equals `tenant_id`, so a
+  token of another tenant never produces records attributed to the trusted one.
   `ConnectorContext.secret_env` reads such a variable and registers its value
   for redaction.
 - The fixtures and Graph payloads in the tests are synthetic, modeled on

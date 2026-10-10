@@ -23,7 +23,8 @@ records (``entra-agent-registry``) are ``deprecated`` and never approve.
 Auth (``auth_mode: app-only``, the default): client credentials (``tenant_id`` /
 ``client_id`` / ``client_secret``) with ``Application.Read.All`` +
 ``DelegatedPermissionGrant.Read.All`` + ``Directory.Read.All``, or a pre-issued
-``access_token``. ``auth_mode: delegated`` reads a signed-in user's Graph token from
+``access_token`` (whose ``tid`` must be ``tenant_id`` when Agent 365 records are
+collected). ``auth_mode: delegated`` reads a signed-in user's Graph token from
 the environment variable named by ``delegated_token_env``; it is never refreshed.
 
 Offline export: any mix of Graph objects (servicePrincipal, oauth2PermissionGrant,
@@ -206,6 +207,18 @@ class _GraphExport:
         # Whether any record was rejected: a listing missing a record is not complete.
         self.rejected = False
 
+    def agent_identity_id(self, value: Any) -> str | None:
+        """``value`` when it names a listed agent identity whose records do not conflict."""
+        principal_id = _text(value)
+        if (
+            principal_id is None
+            or principal_id not in self.agent_identities
+            or principal_id in self.conflicting_agent_identities
+            or principal_id in self.conflicting_sps
+        ):
+            return None
+        return principal_id
+
 
 @dataclass(frozen=True, slots=True)
 class _Coverage:
@@ -232,7 +245,10 @@ class EntraConnector(BaseConnector):
         "tenant_id": "env AZURE_TENANT_ID",
         "client_id": "env AZURE_CLIENT_ID",
         "client_secret": "env AZURE_CLIENT_SECRET",
-        "access_token": "pre-issued Graph token (env GRAPH_ACCESS_TOKEN) instead of client credentials",
+        "access_token": (
+            "pre-issued Graph token (env GRAPH_ACCESS_TOKEN) instead of client credentials; with "
+            "include_agent_registry and tenant_id, its tid claim must equal tenant_id"
+        ),
         "auth_mode": (
             "app-only (default: client credentials or access_token) or delegated (a signed-in user's Graph "
             "token read from the environment variable named by delegated_token_env; never refreshed)"
@@ -244,7 +260,9 @@ class EntraConnector(BaseConnector):
         "include_first_party": (
             "include Microsoft first-party service principals (default false, Copilot SPs always kept)"
         ),
-        "max_app_role_lookups": "cap on per-SP appRoleAssignments calls (default 2000)",
+        "max_app_role_lookups": (
+            "cap on per-principal appRoleAssignments calls, agent identities included (default 2000)"
+        ),
         "include_agent_identities": (
             "collect Entra Agent ID agent identities from the Graph beta API (default false)"
         ),
@@ -301,6 +319,9 @@ class EntraConnector(BaseConnector):
         self.http: HttpClient | None = None
         # Paths whose collection failed in this run.
         self._failed: set[str] = set()
+        # Principals whose appRoleAssignments were requested; their number is capped by max_lookups.
+        self._role_lookups: set[str] = set()
+        self._role_lookups_capped = False
 
     # ----------------------------------------------------------------- auth
     def _auth(self) -> None:
@@ -312,6 +333,10 @@ class EntraConnector(BaseConnector):
             )
             return
         token = self.ctx.get("access_token", env="GRAPH_ACCESS_TOKEN")
+        if token and self.include_agent_registry and self._binding_account():
+            # Registry records are attributed to tenant_id, which operators trust; a token
+            # of another tenant must not produce them. A minted token is bound by its request.
+            self._check_token_tenant(token, "the access_token")
         if not token:
             cid = self.ctx.get("client_id", env="AZURE_CLIENT_ID")
             secret = self.ctx.get("client_secret", env="AZURE_CLIENT_SECRET")
@@ -350,15 +375,7 @@ class EntraConnector(BaseConnector):
             raise ConnectorError(
                 f"identity.entra: environment variable {name} does not hold a usable access token"
             )
-        claims = _unverified_claims(token)
-        if claims is None:
-            raise ConnectorError("identity.entra: the delegated token is not a decodable JWT")
-        tenant = claims.get("tid")
-        if not isinstance(tenant, str) or tenant.lower() != str(self.tenant).strip().lower():
-            raise ConnectorError(
-                "identity.entra: the delegated token's tenant (tid) does not match tenant_id "
-                "(use the tenant ID)"
-            )
+        claims = self._check_token_tenant(token, "the delegated token")
         scopes = claims.get("scp")
         if claims.get("idtyp") == "app" or not isinstance(scopes, str) or not scopes.strip():
             raise ConnectorError("identity.entra: the delegated token is not a delegated user token")
@@ -366,6 +383,21 @@ class EntraConnector(BaseConnector):
         if isinstance(expires, (int, float)) and not isinstance(expires, bool) and expires <= time.time():
             raise ConnectorError("identity.entra: the delegated token has expired")
         return token
+
+    def _check_token_tenant(self, token: Any, label: str) -> dict[str, Any]:
+        """The unverified claims of a pre-issued token whose tenant (``tid``) must be ``tenant_id``.
+
+        ``label`` is fixed text naming the token; neither the token nor its claims enter a message.
+        """
+        claims = _unverified_claims(token) if isinstance(token, str) else None
+        if claims is None:
+            raise ConnectorError(f"identity.entra: {label} is not a decodable JWT")
+        tenant = claims.get("tid")
+        if not isinstance(tenant, str) or tenant.lower() != str(self.tenant).strip().lower():
+            raise ConnectorError(
+                f"identity.entra: the tenant (tid) of {label} does not match tenant_id (use the tenant ID)"
+            )
+        return claims
 
     def _pages(self, path: str, **kwargs: Any) -> Iterator[dict[str, Any]]:
         assert self.http
@@ -398,18 +430,11 @@ class EntraConnector(BaseConnector):
         for grant in self._pages("/oauth2PermissionGrants", params={"$top": 999}):
             grant["_kind"] = "oauth2PermissionGrant"
             yield grant
-        lookups = 0
-        for sp in sps:
-            if sp.get("appOwnerOrganizationId") == FIRST_PARTY_OWNER and not self.include_first_party:
-                continue
-            if lookups >= self.max_lookups:
-                self.ctx.warn("identity.entra: max_app_role_lookups reached; app-only permissions partial")
-                break
-            lookups += 1
-            principal = quote(str(sp["id"]), safe="")
-            for a in self._pages(f"/servicePrincipals/{principal}/appRoleAssignments", params={"$top": 999}):
-                a["_kind"] = "appRoleAssignment"
-                yield a
+        yield from self._app_role_assignments(
+            str(sp["id"])
+            for sp in sps
+            if sp.get("appOwnerOrganizationId") != FIRST_PARTY_OWNER or self.include_first_party
+        )
         for app in self._pages(
             "/applications",
             params={
@@ -426,9 +451,17 @@ class EntraConnector(BaseConnector):
             return
         identities = "not-collected"
         if self.include_agent_identities:
-            for identity in self._pages(AGENT_IDENTITIES):
+            agent_identities = list(self._pages(AGENT_IDENTITIES))
+            for identity in agent_identities:
                 yield {**identity, "_kind": "agentIdentity"}
             identities = "incomplete" if AGENT_IDENTITIES in self._failed else "complete"
+            # Agent identities are always reported, so each one's app-only permissions are read,
+            # including those the service principal listing did not return or skipped.
+            yield from self._app_role_assignments(
+                identity_id
+                for identity in agent_identities
+                if isinstance(identity_id := identity.get("id"), str) and identity_id.strip()
+            )
         packages = "not-collected"
         if self.include_agent_registry:
             packages = "complete" if (yield from self._collect_packages()) else "incomplete"
@@ -440,6 +473,24 @@ class EntraConnector(BaseConnector):
             # The Graph returns what the signed-in user may see: never a complete registry listing.
             "listingScope": "caller" if self.auth_mode == "delegated" else "registry",
         }
+
+    def _app_role_assignments(self, principal_ids: Iterable[str]) -> Iterator[dict[str, Any]]:
+        """Each principal's app role assignments, once per principal, within ``max_app_role_lookups``."""
+        for principal_id in principal_ids:
+            if principal_id in self._role_lookups:
+                continue
+            if len(self._role_lookups) >= self.max_lookups:
+                if not self._role_lookups_capped:
+                    self._role_lookups_capped = True
+                    self.ctx.warn(
+                        "identity.entra: max_app_role_lookups reached; app-only permissions partial"
+                    )
+                return
+            self._role_lookups.add(principal_id)
+            principal = quote(principal_id, safe="")
+            for a in self._pages(f"/servicePrincipals/{principal}/appRoleAssignments", params={"$top": 999}):
+                a["_kind"] = "appRoleAssignment"
+                yield a
 
     def _collect_packages(self) -> Generator[dict[str, Any], None, bool]:
         """Agent 365 packages with their details; returns whether the listing finished complete.
@@ -503,10 +554,12 @@ class EntraConnector(BaseConnector):
             for package_id, package in graph.packages.items()
             if package_id not in graph.conflicting_packages
         }
-        # Objects an Agent 365 package names are reported even without AI signals of their own,
+        # Objects an Agent 365 package binds are reported even without AI signals of their own,
         # so its bindings can match them.
-        bound_principals = {_text(package.get("agentIdentityId")) for package in packages.values()} - {None}
-        bound_apps = {_text(package.get("appId")) for package in packages.values()} - {None}
+        bound_principals = {
+            graph.agent_identity_id(package.get("agentIdentityId")) for package in packages.values()
+        } - {None}
+        bound_apps = {_bindable_app_id(package) for package in packages.values()} - {None}
         conflicting = graph.conflicting_sps | graph.conflicting_agent_identities
         sp_by_app_id = {sp.get("appId"): sp for sp_id, sp in graph.sps.items() if sp_id not in conflicting}
         for sp_id, sp in graph.sps.items():
@@ -1290,17 +1343,24 @@ class EntraConnector(BaseConnector):
             record["updated_at"] = updated_at
         return record
 
-    def _principal_binding(self, principal_id: Any, coverage: _Coverage) -> list[dict[str, Any]]:
-        """A binding to the service principal finding of an agent identity."""
-        if not _text(principal_id):
+    def _principal_binding(
+        self, principal_id: Any, graph: _GraphExport, coverage: _Coverage
+    ) -> list[dict[str, Any]]:
+        """A binding to the service principal finding of an agent identity.
+
+        Only a listed agent identity is bound: a record naming any other service principal
+        (a privileged application, say) must not approve it.
+        """
+        principal = graph.agent_identity_id(principal_id)
+        if principal is None:
             return []
         return [
             {
-                "resource": f"entra:sp:{principal_id}",
+                "resource": f"entra:sp:{principal}",
                 "provider": "entra",
                 "account": self._binding_account(),
                 # In scope only when this run (or the replayed one) listed agent identities completely.
-                "coverage": "in-scope" if coverage.agent_identities == "complete" else "unknown",
+                "coverage": _binding_coverage(coverage.agent_identities, coverage),
             }
         ]
 
@@ -1364,22 +1424,23 @@ class EntraConnector(BaseConnector):
             ),
             client_id=package.get("appId"),
         )
-        bindings = self._principal_binding(package.get("agentIdentityId"), coverage)
-        if _text(package.get("appId")):
+        bindings = self._principal_binding(package.get("agentIdentityId"), graph, coverage)
+        app_id = _bindable_app_id(package)
+        if app_id:
             bindings.append(
                 {
-                    "resource": f"entra:app:{package['appId']}",
+                    "resource": f"entra:app:{app_id}",
                     "provider": "entra",
                     "account": self._binding_account(),
-                    # A vendor package's app is registered in the vendor's tenant, so its absence
-                    # here proves nothing; only an organization's own package is in scope.
-                    "coverage": "in-scope"
-                    if org_published and coverage.applications == "complete"
-                    else "unknown",
+                    "coverage": _binding_coverage(coverage.applications, coverage),
                 }
             )
+        # A caller-scoped listing shows what the signed-in user may see: never the whole registry.
         listing_complete = (
-            coverage.packages == "complete" and not graph.conflicting_packages and not graph.rejected
+            coverage.listing_scope == "registry"
+            and coverage.packages == "complete"
+            and not graph.conflicting_packages
+            and not graph.rejected
         )
         access = _access_counts(package)
         f.add_evidence(
@@ -1494,7 +1555,7 @@ class EntraConnector(BaseConnector):
                     location=location,
                 )
             )
-            bindings = self._principal_binding(instance.get("agentIdentityId"), coverage)
+            bindings = self._principal_binding(instance.get("agentIdentityId"), graph, coverage)
             f.metadata.update(
                 {
                     "endpoint": instance.get("url"),
@@ -1688,6 +1749,20 @@ def _package_status(package: dict[str, Any]) -> str:
     if package.get("isBlocked") is False and available in _AVAILABLE and request in (None, "approved"):
         return "approved"
     return "unknown"
+
+
+def _bindable_app_id(package: dict[str, Any]) -> str | None:
+    """The appId of an organization's own package; a vendor package's app is registered elsewhere.
+
+    Microsoft and partner packages are registered in the publisher's tenant, so an app
+    registration of this tenant with that appId is not theirs and is never bound.
+    """
+    return _text(package.get("appId")) if _enum(package.get("type")) in _ORG_PUBLISHED_TYPES else None
+
+
+def _binding_coverage(state: str, coverage: _Coverage) -> str:
+    """``in-scope`` only for a collection that finished complete over the whole tenant."""
+    return "in-scope" if state == "complete" and coverage.listing_scope == "registry" else "unknown"
 
 
 def _agentic_package(package: dict[str, Any]) -> bool:

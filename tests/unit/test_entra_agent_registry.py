@@ -25,6 +25,7 @@ from shadowscan.connectors.identity.entra import (
     AGENT_IDENTITIES,
     COPILOT_PACKAGES,
     COVERAGE_KIND,
+    FIRST_PARTY_OWNER,
     GRAPH,
     GRAPH_BETA,
     EntraConnector,
@@ -143,8 +144,8 @@ def test_agent_registry_fixture(run_connector, fixtures):
     assert {"registry-record", "registry-blocked"} <= set(blocked.tags)
     vendor = by["entra:copilot-package:P_vendor-addin-0006"]
     assert vendor.kind == Kind.AI_APP
-    # A vendor package's app lives in the vendor's tenant: its absence here proves nothing.
-    assert [b["coverage"] for b in _record(vendor)["bindings"]] == ["unknown"]
+    # A vendor package's app is registered in the vendor's tenant: it never binds one of this tenant.
+    assert _record(vendor)["bindings"] == []
     unknown = by["entra:copilot-package:P_unknown-agent-0007"]
     assert unknown.metadata["request_status"] == "unknownFutureValue"
     # Agent identities: one enriches its service principal, one stands alone.
@@ -321,19 +322,50 @@ def test_conflicting_package_records_are_unresolved_and_close_the_listing(tmp_pa
 
 def test_records_without_a_coverage_marker_have_unknown_coverage(tmp_path, run_connector):
     package = _package(appId="app-1", agentIdentityId="ai-1")
-    findings, ctx = _offline(tmp_path, run_connector, [package], tenant_id=TENANT)
+    identity = {
+        "_kind": "agentIdentity",
+        "id": "ai-1",
+        "displayName": "Helper",
+        "agentIdentityBlueprintId": "bp",
+    }
+    findings, ctx = _offline(tmp_path, run_connector, [package, identity], tenant_id=TENANT)
     assert not ctx.stats.incomplete
-    record = _record(findings[0])
+    record = _record(_by_resource(findings)["entra:copilot-package:P_1"])
     assert record["listing_complete"] is False
     assert [b["coverage"] for b in record["bindings"]] == ["unknown", "unknown"]
 
 
 def test_caller_scoped_listing_is_never_complete(tmp_path, run_connector):
     marker = {**COMPLETE_MARKER, "listingScope": "caller"}
-    findings, ctx = _offline(tmp_path, run_connector, [marker, _package()], tenant_id=TENANT)
+    identity = {
+        "_kind": "agentIdentity",
+        "id": "ai-1",
+        "displayName": "Helper",
+        "agentIdentityBlueprintId": "bp",
+    }
+    package = _package(appId="app-1", agentIdentityId="ai-1")
+    findings, ctx = _offline(tmp_path, run_connector, [marker, package, identity], tenant_id=TENANT)
     assert not ctx.stats.incomplete
-    record = registry_record(findings[0])
+    finding = _by_resource(findings)["entra:copilot-package:P_1"]
+    record = registry_record(finding)
     assert record is not None and record.listing_scope == "caller" and not record.listing_complete
+    # The reported metadata, not only the parsed record, says so; and what the signed-in user
+    # could not see is not known to be absent, so no binding is in scope.
+    raw = _record(finding)
+    assert raw["listing_complete"] is False
+    assert [b["coverage"] for b in raw["bindings"]] == ["unknown", "unknown"]
+
+
+@pytest.mark.parametrize(
+    "scope,status", [("registry", "registered-not-observed"), ("caller", "not-comparable")]
+)
+def test_caller_scoped_bindings_never_report_an_object_missing(index, tmp_path, scope, status):
+    source = tmp_path / "entra.json"
+    marker = {**COMPLETE_MARKER, "listingScope": scope}
+    source.write_text(json.dumps([marker, _package(appId="app-unseen")]), encoding="utf-8")
+    result = _scan(index, source, trusted=False)
+    package = _by_resource(result.findings)["entra:copilot-package:P_1"]
+    assert package.metadata["registry_reconciliation"]["status"] == status
 
 
 def test_records_without_a_tenant_name_no_registry(monkeypatch, tmp_path, run_connector):
@@ -530,6 +562,92 @@ def test_conflicting_packages_never_approve_their_bindings(index, tmp_path):
     assert by["entra:sp:ai-1"].shadow is True and by["entra:copilot-package:P_1"].shadow is True
 
 
+# A tenant app registration and its ordinary service principal, which a package may name.
+_TENANT_APP = [
+    {"_kind": "application", "id": "reg-1", "appId": "app-tenant", "displayName": "OpenAI mail summarizer"},
+    {
+        "_kind": "servicePrincipal",
+        "id": "sp-priv",
+        "appId": "app-tenant",
+        "displayName": "OpenAI mail summarizer",
+        "servicePrincipalType": "Application",
+    },
+]
+
+
+@pytest.mark.parametrize("package_type", ["external", "microsoft", "unknownFutureValue"])
+def test_vendor_packages_never_approve_tenant_objects(index, tmp_path, package_type):
+    # Vendor-declared ids name a tenant app registration and a service principal that is not an
+    # agent identity; an approved vendor package in a trusted tenant approves only its own record.
+    package = _package(
+        "P_vendor", type=package_type, requestStatus=None, appId="app-tenant", agentIdentityId="sp-priv"
+    )
+    source = tmp_path / "entra.json"
+    source.write_text(json.dumps([COMPLETE_MARKER, *_TENANT_APP, package]), encoding="utf-8")
+    result = _scan(index, source)
+    assert result.complete
+    by = _by_resource(result.findings)
+    record = registry_record(by["entra:copilot-package:P_vendor"])
+    assert record is not None and record.status == "approved" and record.bindings == ()
+    assert by["entra:copilot-package:P_vendor"].registry_match == "microsoft-agent-365:P_vendor"
+    for resource in ("entra:app:app-tenant", "entra:sp:sp-priv"):
+        assert by[resource].shadow is True and by[resource].registry_match is None
+        assert "registry_bound" not in by[resource].metadata
+
+
+def test_vendor_package_binds_a_listed_agent_identity(tmp_path, run_connector):
+    identity = {
+        "_kind": "agentIdentity",
+        "id": "ai-1",
+        "displayName": "Helper",
+        "agentIdentityBlueprintId": "bp",
+    }
+    package = _package(type="external", requestStatus=None, appId="app-vendor", agentIdentityId="ai-1")
+    findings, ctx = _offline(tmp_path, run_connector, [COMPLETE_MARKER, identity, package], tenant_id=TENANT)
+    assert not ctx.stats.incomplete
+    record = _record(_by_resource(findings)["entra:copilot-package:P_1"])
+    assert record["approval_mode"] == "unknown"
+    assert record["bindings"] == [
+        {"resource": "entra:sp:ai-1", "provider": "entra", "account": TENANT, "coverage": "in-scope"}
+    ]
+
+
+def test_packages_bind_only_listed_agent_identities(index, tmp_path):
+    # An organization's own, manually approved package that names an ordinary service principal
+    # as its agent identity approves its app registration, never that principal.
+    package = _package(appId="app-tenant", agentIdentityId="sp-priv")
+    source = tmp_path / "entra.json"
+    source.write_text(json.dumps([COMPLETE_MARKER, *_TENANT_APP, package]), encoding="utf-8")
+    result = _scan(index, source)
+    by = _by_resource(result.findings)
+    record = registry_record(by["entra:copilot-package:P_1"])
+    assert record is not None and record.approval_mode == "manual"
+    assert [binding.resource for binding in record.bindings] == ["entra:app:app-tenant"]
+    assert by["entra:app:app-tenant"].registry_match == "microsoft-agent-365:P_1"
+    assert by["entra:sp:sp-priv"].shadow is True and by["entra:sp:sp-priv"].registry_match is None
+
+
+def test_conflicting_agent_identities_are_never_bound(tmp_path, run_connector):
+    identity = {
+        "_kind": "agentIdentity",
+        "id": "ai-1",
+        "displayName": "Helper",
+        "agentIdentityBlueprintId": "a",
+    }
+    findings, _ = _offline(
+        tmp_path,
+        run_connector,
+        [
+            COMPLETE_MARKER,
+            identity,
+            {**identity, "agentIdentityBlueprintId": "b"},
+            _package(agentIdentityId="ai-1"),
+        ],
+        tenant_id=TENANT,
+    )
+    assert _record(_by_resource(findings)["entra:copilot-package:P_1"])["bindings"] == []
+
+
 # ------------------------------------------------------------------ live collection
 class _Graph:
     """A fake Graph client: listings by path, details by URL, and the calls made."""
@@ -616,12 +734,14 @@ def test_opted_in_collection_requests_exact_paths_and_strips_member_ids(index):
         "/oauth2PermissionGrants",
         "/applications",
         AGENT_IDENTITIES,
+        # The agent identity is not a listed service principal: its app role assignments are read too.
+        "/servicePrincipals/ai-1/appRoleAssignments",
         LISTING,
     ]
     assert (
         AGENT_IDENTITIES == "https://graph.microsoft.com/beta/servicePrincipals/microsoft.graph.agentIdentity"
     )
-    assert graph.listed[-1][1] is None and graph.listed[-2][1] is None
+    assert dict(graph.listed)[AGENT_IDENTITIES] is None and dict(graph.listed)[LISTING] is None
     assert graph.fetched == [f"{LISTING}/P_1"]
     identity, package, marker = records
     assert identity["_kind"] == "agentIdentity"
@@ -647,6 +767,59 @@ def test_opted_in_collection_requests_exact_paths_and_strips_member_ids(index):
     record = registry_record(_by_resource(findings)["entra:copilot-package:P_1"])
     assert record is not None and record.status == "approved" and record.approval_mode == "manual"
     assert record.listing_complete and {b.coverage for b in record.bindings} == {"in-scope"}
+
+
+def test_agent_identity_app_role_assignments_are_read(index):
+    resource = {
+        "id": "graph-sp",
+        "appId": "graph-app",
+        "displayName": "Resource API",
+        "appRoles": [{"id": "role-1", "value": "Mail.ReadWrite"}],
+    }
+    # Listed as a first-party service principal, so the principal listing skips its lookup.
+    first_party = {**_IDENTITY, "id": "ai-2", "appOwnerOrganizationId": FIRST_PARTY_OWNER}
+    assignment = {"principalId": "ai-1", "appRoleId": "role-1", "resourceId": "graph-sp"}
+    graph = _Graph(
+        pages={
+            "/servicePrincipals": [
+                resource,
+                {"id": "ai-2", "displayName": "Helper 2", "appOwnerOrganizationId": FIRST_PARTY_OWNER},
+            ],
+            AGENT_IDENTITIES: [_IDENTITY, first_party],
+            "/servicePrincipals/ai-1/appRoleAssignments": [assignment],
+            "/servicePrincipals/ai-2/appRoleAssignments": [{**assignment, "principalId": "ai-2"}],
+        }
+    )
+    connector, ctx = _live(index, graph, include_agent_identities=True)
+    findings = connector.run()
+    assert not ctx.stats.incomplete, ctx.stats.warnings
+    lookups = [path for path, _ in graph.listed if path.endswith("/appRoleAssignments")]
+    # Each principal is read once: the resource from the principal listing, both agent identities after.
+    assert lookups == [
+        "/servicePrincipals/graph-sp/appRoleAssignments",
+        "/servicePrincipals/ai-1/appRoleAssignments",
+        "/servicePrincipals/ai-2/appRoleAssignments",
+    ]
+    by = _by_resource(findings)
+    assert by["entra:sp:ai-1"].resource_type == "service-principal/AgentIdentity"
+    assert by["entra:sp:ai-1"].metadata["application_permissions"] == ["Mail.ReadWrite"]
+    assert by["entra:sp:ai-2"].metadata["application_permissions"] == ["Mail.ReadWrite"]
+
+
+def test_agent_identity_lookups_share_the_app_role_lookup_cap(index):
+    graph = _Graph(
+        pages={
+            "/servicePrincipals": [{"id": "sp-1", "displayName": "Fireflies.ai Notetaker"}],
+            AGENT_IDENTITIES: [_IDENTITY],
+        }
+    )
+    connector, ctx = _live(index, graph, include_agent_identities=True, max_app_role_lookups=1)
+    findings = connector.run()
+    _assert_incomplete(ctx, findings)
+    assert [path for path, _ in graph.listed if path.endswith("/appRoleAssignments")] == [
+        "/servicePrincipals/sp-1/appRoleAssignments"
+    ]
+    assert sum("max_app_role_lookups reached" in w for w in ctx.stats.warnings) == 1
 
 
 def test_beta_catalog_api_uses_the_beta_listing(index):
@@ -687,6 +860,7 @@ def test_denied_agent_collection_is_incomplete_and_keeps_neighbors(index, path):
         assert record["listing_complete"] is False
     else:
         assert record["listing_complete"] is True
+        # The agent identity listed before the failure is bound, but the listing is not complete.
         assert record["bindings"][0] == {
             "resource": "entra:sp:ai-1",
             "provider": "entra",
@@ -777,7 +951,12 @@ def _token(**claims):
 
 
 def _mock_graph(*, detail_status=200, detail_body=None, second_page_status=200):
-    for path in ("/servicePrincipals", "/oauth2PermissionGrants", "/applications"):
+    for path in (
+        "/servicePrincipals",
+        "/oauth2PermissionGrants",
+        "/applications",
+        "/servicePrincipals/ai-1/appRoleAssignments",
+    ):
         responses.get(GRAPH + path, json={"value": []})
     responses.get(AGENT_IDENTITIES, json={"value": [_IDENTITY]})
     responses.get(LISTING, json={"value": [_LISTED], "@odata.nextLink": LISTING + "?$skiptoken=page-2"})
@@ -866,6 +1045,60 @@ def test_unusable_delegated_tokens_fail_closed_without_echoing(monkeypatch, inde
         assert value not in diagnostics
         assert all(part not in diagnostics for part in value.split(".") if len(part) > 8)
     assert len(responses.calls) == 0
+
+
+@responses.activate
+@pytest.mark.parametrize(
+    "token,message",
+    [
+        ("opaque-app-only-value", "the access_token is not a decodable JWT"),
+        (lambda: _token(tid="other-tenant", scp=None, idtyp="app"), "does not match tenant_id"),
+        (lambda: _token(tid=None, scp=None, idtyp="app"), "does not match tenant_id"),
+    ],
+)
+def test_pre_issued_token_of_another_tenant_never_produces_registry_records(
+    monkeypatch, index, token, message
+):
+    value = token() if callable(token) else token
+    monkeypatch.setenv("GRAPH_ACCESS_TOKEN", value)
+    ctx = _context(index, tenant_id=TENANT, include_agent_registry=True)
+    findings = EntraConnector(ctx).run()
+    assert findings == [] and ctx.stats.skipped
+    _assert_incomplete(ctx, findings)
+    assert message in ctx.stats.skip_reason
+    diagnostics = " ".join([ctx.stats.skip_reason, *ctx.stats.errors, *ctx.stats.warnings])
+    assert value not in diagnostics
+    assert all(part not in diagnostics for part in value.split(".") if len(part) > 8)
+    assert len(responses.calls) == 0
+
+
+@responses.activate
+def test_pre_issued_token_of_the_tenant_collects_registry_records(monkeypatch, index):
+    token = _token(scp=None, idtyp="app", roles=["CopilotPackages.Read.All"])
+    monkeypatch.setenv("GRAPH_ACCESS_TOKEN", token)
+    _mock_graph()
+    ctx = _context(index, tenant_id=TENANT, include_agent_registry=True)
+    findings = EntraConnector(ctx).run()
+    assert not ctx.stats.incomplete, ctx.stats.warnings
+    assert {call.request.headers["Authorization"] for call in responses.calls} == {f"Bearer {token}"}
+    record = registry_record(_by_resource(findings)["entra:copilot-package:P_1"])
+    assert record is not None and record.registry_id == TENANT and record.listing_complete
+
+
+@responses.activate
+@pytest.mark.parametrize("config", [{"tenant_id": TENANT}, {"include_agent_registry": True}])
+def test_pre_issued_token_tenant_is_checked_only_for_attributed_registry_records(monkeypatch, index, config):
+    # Without the registry collection nothing is attributed to a trusted registry; without
+    # tenant_id the records have an empty registry id and can never be trusted.
+    monkeypatch.delenv("AZURE_TENANT_ID", raising=False)
+    monkeypatch.setenv("GRAPH_ACCESS_TOKEN", "opaque-app-only-value")
+    _mock_graph()
+    ctx = _context(index, **config)
+    findings = EntraConnector(ctx).run()
+    assert not ctx.stats.skipped and not ctx.stats.incomplete, ctx.stats.warnings
+    records = [registry_record(f) for f in findings if "registry_record" in f.metadata]
+    assert all(record is not None and record.registry_id == "" for record in records)
+    assert bool(records) == bool(config.get("include_agent_registry"))
 
 
 @pytest.mark.parametrize(

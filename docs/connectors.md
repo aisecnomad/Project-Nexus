@@ -527,16 +527,19 @@ Client credentials: `tenant_id`, `client_id` and `client_secret` (env
 `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`).
 `include_first_party: true` also reports Microsoft first-party service
 principals that match no AI signature; Copilot ones are always kept.
-`max_app_role_lookups` caps the per-service-principal `appRoleAssignments`
-calls (default 2000). Reaching the cap leaves app-only permissions partial and
-the scan incomplete.
+`max_app_role_lookups` caps the per-principal `appRoleAssignments` calls,
+listed agent identities included (default 2000). Reaching the cap leaves
+app-only permissions partial and the scan incomplete.
 
 Two collections are off by default. `include_agent_registry: true` lists the
 Microsoft Agent 365 package catalog (`agent_registry_api: v1.0`, the default,
 or `beta`) and reads each package's details, at most `max_package_lookups`
 (default 2000); each package becomes a vendor registry record finding
 (`microsoft-agent-365`, registry id `tenant_id`). It needs
-`CopilotPackages.Read.All`. `include_agent_identities: true` lists Entra Agent ID
+`CopilotPackages.Read.All`, and a pre-issued `access_token` must be a JWT whose
+`tid` claim is `tenant_id`. A package binds only a listed agent identity and,
+for an organization's own package, its app registration.
+`include_agent_identities: true` lists Entra Agent ID
 agent identities from the Graph beta API; they enrich the service principal
 finding of the same id or stand alone, and are always reported. Records of the
 deprecated Entra agent registry are read from offline exports only, as

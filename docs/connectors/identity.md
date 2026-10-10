@@ -69,22 +69,39 @@ The rules apply in that order. Enum members are compared case-insensitively,
 and both spellings Microsoft's pages use (`allowedForAll` and `all`,
 `allowedForSome` and `some`) are accepted; unknown members are recorded as they
 are and never approve. `approval_mode` is `manual` only for an organization's
-own package (`type` `custom` or `shared`) whose request was approved. Microsoft
+own package (`type` `custom`, `shared` or `lob`) whose request was approved. Microsoft
 and partner packages are vendor-published and get `unknown`, which a trusted
 registry still accepts when the package is `approved`.
 
-Bindings name `entra:sp:{agentIdentityId}` and `entra:app:{appId}` (provider
-`entra`, account `tenant_id`). A binding's coverage is `in-scope` only when the
-same run, or the run that wrote the replayed export, collected that object type
-completely: agent identities need `include_agent_identities`, and app
-registrations count only for an organization's own package, because a vendor
-package's app is registered in the vendor's tenant. Otherwise it is `unknown`.
-Service principals and app registrations a package names are reported even
-without AI signals of their own (`metadata.registry_bound`), so the bindings
-can match them. `listing_complete` is true only when the listing and every
-detail call finished without a warning, cap, conflicting or malformed record.
+Bindings (provider `entra`, account `tenant_id`) name only objects the package
+can own in this tenant, because the ids come from the package and an approved
+package in a trusted tenant approves every object it binds:
+
+- `entra:sp:{agentIdentityId}` only when that id is an agent identity the same
+  export lists without conflicting records. A package that names any other
+  service principal, or an agent identity that was not listed (for example
+  without `include_agent_identities`), binds no service principal.
+- `entra:app:{appId}` only for an organization's own package (`type` `custom`,
+  `shared` or `lob`). Microsoft and partner packages, and unknown package types,
+  never bind an app registration: their app is registered in the publisher's
+  tenant, so an app registration of this tenant with that appId is not theirs.
+
+A binding's coverage is `in-scope` only when the same run, or the run that
+wrote the replayed export, collected that object type completely across the
+tenant (an app-only listing); otherwise it is `unknown`. Service principals and
+app registrations a package binds are reported even without AI signals of
+their own (`metadata.registry_bound`), so the bindings can match them.
+`listing_complete` is true only when an app-only listing and every detail call
+finished without a warning, cap, conflicting or malformed record.
 Without `tenant_id` the registry id is empty and the records can never be
-trusted. To let approved packages approve the objects they bind, list the
+trusted. With `tenant_id` set, a pre-issued app-only `access_token` (or
+`GRAPH_ACCESS_TOKEN`) must be a JWT whose unverified `tid` claim equals
+`tenant_id` (use the tenant ID, not a domain) before `include_agent_registry`
+sends any request, so a token of another tenant never produces records
+attributed to the configured one; a mismatch or an undecodable token skips the
+connector (exit 3) with fixed text that names neither the token nor its claims.
+Client credentials need no such check: their token is requested for
+`tenant_id`. To let approved packages approve the objects they bind, list the
 tenant in
 [`trusted_registries`](../inventory.md#microsoft-agent-365).
 
@@ -109,9 +126,13 @@ the identity discriminator `service-principal`, so the finding id does not
 change when the service principal listing starts returning the agent identity.
 Agent identities are always reported, as `service-identity` findings with tag
 `entra-agent-identity` and `metadata.agent_identity`,
-`agent_identity_blueprint_id` and `created_by_app_id`. Agent identity records
-with the same id and different content give an unresolved finding and make the
-scan incomplete. The Microsoft Graph pages these notes were checked against do
+`agent_identity_blueprint_id` and `created_by_app_id`. Their app-only
+permissions come from `GET /servicePrincipals/{id}/appRoleAssignments`, read
+for every listed agent identity that the service principal listing did not
+return or skipped as first-party, within the same `max_app_role_lookups`
+budget; reaching it leaves the permissions partial and the scan incomplete.
+Agent identity records with the same id and different content give an
+unresolved finding and make the scan incomplete. The Microsoft Graph pages these notes were checked against do
 not name a dedicated read permission for the listing; confirm the
 least-privileged permission on Microsoft's current beta reference before
 granting one.
@@ -169,8 +190,10 @@ The scan sees what the signed-in user may see. Grant the delegated
 `CopilotPackages.Read.All` permission for packages, and have the operator who
 signs in hold a Microsoft Entra role that can read the agent catalog, such as
 AI Administrator; check Microsoft's current role guidance. Delegated package
-listings are caller-scoped (`listing_scope: caller`): they are never complete,
-so they never mark findings `observed-not-registered`. Delegated and app-only
+listings are caller-scoped (`listing_scope: caller`): `listing_complete` is
+always false, so they never mark findings `observed-not-registered`, and every
+binding's coverage is `unknown`, so an object the user cannot see is never
+reported `registered-not-observed`. Delegated and app-only
 scans cover different scopes and are not comparable for drift; `auth_mode` is
 recorded in the connector configuration. Every process the scanner starts,
 including approved plugins in process mode, inherits the environment variable:
