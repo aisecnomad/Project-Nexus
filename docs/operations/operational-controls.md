@@ -60,7 +60,12 @@ not inherit these controls, so enforce egress outside the process as well.
   egress rather than unrestricted egress. It also blocks NodeLocal DNSCache
   and the metadata endpoints that GKE Workload Identity and EKS Pod Identity
   use; allow only the one address and port a live scan needs. IPv6 egress
-  stays denied until you add the IPv6 rule the example describes. It works
+  stays denied until you add the IPv6 rule the example describes. That rule
+  excepts unique-local, link-local, IPv4-mapped and both NAT64 prefixes
+  (`64:ff9b::/96` and the local-use `64:ff9b:1::/48`), but not the cluster
+  itself: when pod, service, node or VPC addresses are global-unicast IPv6,
+  add those prefixes, and any network-specific NAT64 prefix in use, to its
+  `except` list as well. It works
   only with a CNI that enforces NetworkPolicy.
 
 ## Plugin trust
