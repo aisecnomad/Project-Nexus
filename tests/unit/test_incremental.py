@@ -319,6 +319,27 @@ def test_cache_entry_with_an_invalid_evidence_weight_is_a_miss(tmp_path, index, 
     assert all(0 <= item.weight <= 1 for finding in result.findings for item in finding.evidence)
 
 
+def test_keyed_cache_rejects_an_entry_rewritten_without_the_key(tmp_path, index):
+    # An unkeyed checksum can be recomputed by anyone who can write the state
+    # directory; with an identity key the entry must carry a keyed MAC.
+    from shadowscan.incremental import _json
+
+    cfg = config(tmp_path)
+    cache = IncrementalCache(cfg, index, identity_key=b"k" * 32)
+    snapshot = cache.snapshot(cfg.connectors[0])
+    assert snapshot is not None
+    cache.save(snapshot, [], ScanStats(connector=cfg.connectors[0].id, started_at="", finished_at=""))
+    entry = next((tmp_path / "state").glob("*.json"))
+    data = json.loads(entry.read_text())
+    assert "payload_hmac_sha256" in data and "payload_sha256" not in data
+    assert cache.load(cfg.connectors[0], snapshot) is not None
+    data["payload"]["warnings"] = ["forged"]
+    data["payload_hmac_sha256"] = hashlib.sha256(_json(data["payload"])).hexdigest()
+    entry.write_text(json.dumps(data))
+    assert cache.load(cfg.connectors[0], snapshot) is None
+    assert IncrementalCache(cfg, index, identity_key=b"j" * 32).load(cfg.connectors[0], snapshot) is None
+
+
 def test_concurrent_cache_writers_publish_only_complete_matching_entries(tmp_path, index):
     cfg = config(tmp_path)
     cache = IncrementalCache(cfg, index)
