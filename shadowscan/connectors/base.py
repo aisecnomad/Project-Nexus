@@ -555,7 +555,7 @@ class BaseConnector(ABC):
             stats.skip_reason = self.ctx.sanitize_message(str(exc))
             self.ctx.error(str(exc))
         except Exception as exc:  # noqa: BLE001 - connectors must never abort the whole scan
-            self.ctx.error(f"{self.name}: {type(exc).__name__}: {exc}")
+            self.ctx.error(f"{self.name}: {type(exc).__name__}")
             self.log.debug("connector failure (%s)", type(exc).__name__)
         stats.finished_at = now_iso()
         stats.findings = len(findings)
