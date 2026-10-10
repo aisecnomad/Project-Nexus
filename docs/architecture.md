@@ -1,20 +1,23 @@
 # Architecture
 
 ```
-                 ┌────────────────────────── signatures/data/*.yaml ──────────────────────────┐
+                 ┌───────────────────────── signatures/data/*.yaml ────────────────────────┐
                  │ frameworks · providers · protocols · coding agents · platforms · cloud     │
                  │ services · observability · identity apps · policies · heuristics            │
-                 └───────────────────────────────┬─────────────────────────────────────────────┘
+                 └──────────────────────────────┬─────────────────────────────────────┘
                                                  │ SignatureIndex (dependency, import, code, file,
                                                  │ env, domain, user_agent, image, iac, name,
                                                  │ scope, model, secret, client_id matchers)
-   ┌───────────┐  ┌───────────┐  ┌───────────┐  ┌───────────┐  ┌───────────┐  ┌───────────┐
-   │  code.*   │  │identity.* │  │gateway.*  │  │lowcode.*  │  │  saas.*   │  │  cloud.*  │   connectors
-   │ fs/gh/gl  │  │okta/entra │  │  logs     │  │pp/sf/snow │  │slack/teams│  │aws/gcp/az │   collect() live → records
-   └─────┬─────┘  └─────┬─────┘  └─────┬─────┘  └─────┬─────┘  └─────┬─────┘  └─────┬─────┘   load_offline() → records
-         └──────────────┴──────────────┴──────┬───────┴──────────────┴──────────────┘         analyze(records) → Findings
+   ┌───────────┐  ┌───────────┐  ┌───────────┐  ┌───────────┐  ┌───────────┐  ┌───────────┐  ┌───────────┐  ┌───────────┐  ┌───────────┐
+   │  code.*   │  │identity.* │  │gateway.*  │  │lowcode.*  │  │  saas.*   │  │  cloud.*  │  │endpoint.* │  │network.*  │  │runtime.*  │   connectors
+   │ fs/gh/gl  │  │okta/entra │  │logs/otel  │  │pp/sf/snow │  │slack/teams│  │aws/gcp/az │  │inv/host/  │  │  logs     │  │processes  │   collect() live → records
+   │           │  │gws/auth0  │  │           │  │n8n/make   │  │gh-apps/…  │  │oci/k8s/os │  │mcp/ollama │  │           │  │           │   load_offline() → records
+   │           │  │jwt        │  │           │  │zap/work   │  │atlassian/ │  │           │  │models/    │  │           │  │           │   analyze(records) → Findings
+   │           │  │           │  │           │  │           │  │notion/zoom│  │           │  │ebpf       │  │           │  │           │
+   └─────┬──────┘  └─────┬──────┘  └─────┬──────┘  └─────┬──────┘  └─────┬──────┘  └─────┬──────┘  └─────┬──────┘  └─────┬──────┘  └─────┬──────┘
+         └─────────────└─────────────└──────┬───────└────────────└────────────└────────────└────────────└────────────└────────────┘
                                               ▼
-                                   ┌────────────────────┐
+                                   ┌───────────────────┐
                                    │       Engine       │  merge duplicates → correlate across surfaces →
                                    │                    │  reconcile with Inventory (shadow?) → Risk → sort
                                    └─────────┬──────────┘
