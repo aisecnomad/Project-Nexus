@@ -948,6 +948,24 @@ establish live tenant acceptance; the tests use synthetic records.
 | Approval rules | A card and a trusted record approving the same finding are ambiguous and leave it shadow; bindings of one record that cover the same finding are one approval. A revoked, rejected or deleted record stops approving on the next scan. | Approve each object in one place: remove card bindings that duplicate trusted registry bindings. |
 | Approval policy | Auto-approved records (`approval_mode: auto`) and registered-only records approve only with `allow_auto_approved` or `allow_registered_only` on the trusted entry; caller-scoped listings are never complete; `entra-agent-registry` cannot be trusted; a connector keeps only records of the registry types it declares. | Leave both switches off unless a person reviews records in that registry by other means: auto-approval and registration are not human review. |
 
+### October 10 Google Agent Registry and Gemini Enterprise catalogs (unreleased)
+
+This candidate lets `cloud.gcp` read Google Agent Registry and Gemini
+Enterprise agents as [registry records](connectors/cloud.md#agent-registry-and-gemini-enterprise-catalogs).
+Both catalogs are opt-in. It does not change the published 0.1.2 artifact,
+create a release, or establish live tenant acceptance: the fixtures are
+synthetic, written from Google's API discovery documents, and were not
+validated against a live project.
+
+| Area | Changed behavior | Migration check |
+| --- | --- | --- |
+| Rollout | `agent_registry` and `gemini_enterprise` default to false; with both off, `cloud.gcp` makes the same calls and emits the same findings as before. Either option adds one `projects.get` call per configured project. `agent_registry_version: v1alpha` and the Gemini Enterprise assistants API are Google pre-GA (`v1alpha`) surfaces and may change without notice. | Enable one catalog in one project first and read the `cloud.gcp` warnings. Grant read access to Agent Registry and Discovery Engine assistants and agents; verify the role names in your organization. |
+| Completeness | Every catalog listing records whether it completed; a denied, truncated or malformed listing makes the scan incomplete (exit 3) and its records `not-comparable`. `agent_registry_locations` skips location enumeration, so that project's Agent Registry never yields `observed-not-registered`. Any unreadable record disables every registry claim of the scan. | Treat exit 3 as unknown coverage. Leave `agent_registry_locations` unset where you need `observed-not-registered`. |
+| Caller-scoped listing | Google documents the Gemini Enterprise agents list as the agents created by the caller. Its records are `listing_scope: caller` and never complete: absence from Gemini Enterprise is never reported, and no observed agent becomes `observed-not-registered` because of it. | Do not read a missing Gemini Enterprise agent as proof that none exists; scan with an identity that sees the app's agents. |
+| Approval policy | Agent Registry has no approval workflow: its records are `registered` (`approval_mode: none`) and approve only with `allow_registered_only` on a trusted entry. Gemini Enterprise `ENABLED` agents are `approved` (`approval_mode: manual`) and, when the engine is trusted, approve exactly the reasoning engine or Dialogflow CX agent they bind. | Trust a registry by its exact id (`projects/<project-id>/locations/<location>` or the engine name). Trust one catalog per agent: two trusted records approving one engine are ambiguous and leave it shadow. |
+| Finding identity and kinds | New record findings have their own identities. Gemini Enterprise app engines (`appType: APP_TYPE_INTRANET`) are now `agent` instead of `cloud-resource`; their identity is unchanged. Engines and reasoning engines gain optional metadata. With a complete Agent Registry listing, observed agents in its projects, including Gemini Enterprise apps, which Agent Registry does not list, become `observed-not-registered`. | Rebaseline kind-based filters and dashboards for Discovery Engine findings. Expect `observed-not-registered` on app engines. |
+| Credential policy | Items are reduced when collected: no raw agent card, no interface URL userinfo or query, no icon, prompt, assistant instruction or authorization value reaches findings, warnings or record dumps. URLs from responses are never fetched with the scan credential. | Regenerate GCP record dumps with this build before replaying them; older dumps carry no catalog records. |
+
 ### October 10 autonomy tiers and card schema version 2 (unreleased)
 
 This candidate adds the [autonomy tiers](concepts/autonomy.md). It does not
