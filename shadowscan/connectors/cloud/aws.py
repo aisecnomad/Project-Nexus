@@ -13,6 +13,9 @@ Enumerates, per region:
 * CloudTrail management-event callers for the last N days (``gateway-caller``).
   LookupEvents does not expose data events; import exported invocation records
   for model and agent data-plane activity.
+* Opt-in (``services: [registry]``): AWS Agent Registry and AgentCore registry
+  records of every status, as vendor registry records (``shadowscan.registries``),
+  plus the approved records of other accounts' registries named in ``registry_arns``.
 
 Auth: boto3 credential chain (``profile``, ``role_arn`` optional). Instance and
 container role credentials require ``options.allow_instance_credentials``.
@@ -22,9 +25,10 @@ with ``shadowscan run cloud.aws --dump-records aws.jsonl``.
 
 from __future__ import annotations
 
+import copy
 import json
 import re
-from collections.abc import Iterable, Iterator
+from collections.abc import Generator, Iterable, Iterator
 from datetime import UTC, datetime, timedelta
 from fnmatch import fnmatchcase
 from functools import partial
@@ -38,6 +42,29 @@ from shadowscan.connectors.base import (
     ConnectorError,
     _non_negative_limit,
     _positive_limit,
+)
+from shadowscan.connectors.cloud.aws_registry import (
+    AGENT_REGISTRY,
+    AGENTCORE_REGISTRY,
+    COVERAGE_KIND,
+    DESCRIPTOR_TYPES,
+    DISCOVERABLE_RECORD_KIND,
+    KINDS,
+    MAX_PROVENANCE,
+    REGISTRY_ARN_PATTERN,
+    STATUSES,
+    RegistryApi,
+    approval_mode,
+    approval_unrecognized,
+    binding,
+    descriptor_summary,
+    mapping,
+    provenance,
+    provenance_binds,
+    sequence,
+    source_coverage,
+    text,
+    unrecognized_relation,
 )
 from shadowscan.connectors.cloud.common import (
     RECORD_ERRORS,
@@ -63,8 +90,11 @@ from shadowscan.connectors.cloud.credentials import (
     reject_instance_profile_sources,
 )
 from shadowscan.connectors.common import apply_matches, model_matches
+from shadowscan.connectors.mcp_risk import record_server_risks
 from shadowscan.models import Evidence, Finding, Kind, Surface
+from shadowscan.registries import RECORD_KEY, RECORD_SCHEMA, registry_evidence
 from shadowscan.utils.identity import has_aws_account_scope
+from shadowscan.utils.redaction import SanitizationLimitError
 from shadowscan.utils.safe_json import strict_json_loads
 from shadowscan.utils.text import truncate
 
@@ -82,8 +112,14 @@ KNOWN_SERVICES = frozenset(
         "iam",
         "secrets",
         "cloudtrail",
+        "registry",
     }
 )
+# Registry listing is opt-in: it needs agent-registry permissions that existing roles lack, and
+# an upgrade must not add API calls, findings or denials (exit 3) to a configured scan.
+DEFAULT_SERVICES = KNOWN_SERVICES - {"registry"}
+# BatchGetDiscoverableRegistryRecord error codes; any other value is reported as unrecognized.
+_BATCH_ERROR_CODES = frozenset({"RESOURCE_NOT_FOUND", "ACCESS_DENIED", "INTERNAL_ERROR"})
 LLM_ACTION_PREFIXES = (
     "bedrock:",
     "bedrock-agentcore:",
@@ -190,8 +226,73 @@ _WORKLOAD_TRUST_SERVICES = (
 )
 # Resources whose ARN this connector generates from the account envelope.
 _ENVELOPE_ARN_TYPES = frozenset({"bedrock-logging", "qbusiness-application", "lex-bot", "ssm-parameter"})
+# Findings a registry record's provenance can bind (see aws_registry.binding).
+_BOUND_TYPES = frozenset({"agentcore-runtime", "agentcore-gateway"})
 _DENIED_CODES = frozenset({"AccessDenied", "AccessDeniedException", "UnauthorizedOperation"})
+# Error codes botocore's standard retry mode treats as throttling, raised once its attempts ran out.
+_THROTTLING_CODES = frozenset(
+    {
+        "Throttling",
+        "ThrottlingException",
+        "ThrottledException",
+        "RequestThrottledException",
+        "TooManyRequestsException",
+        "ProvisionedThroughputExceededException",
+        "TransactionInProgressException",
+        "RequestLimitExceeded",
+        "BandwidthLimitExceeded",
+        "LimitExceededException",
+        "RequestThrottled",
+        "SlowDown",
+        "PriorRequestNotComplete",
+        "EC2ThrottledException",
+    }
+)
 _UNAVAILABLE_MARKERS = ("Could not connect to the endpoint", "UnknownServiceError", "EndpointConnectionError")
+# Live scope attestation: per `services` value, the listings whose requests do not depend
+# on earlier responses. They enter the scope fingerprint with their region. Every other
+# call (one per agent, gateway, function, registry...) is a detail: recorded without
+# region and never fingerprinted, so a new resource does not change the scope.
+_SCOPE_ENUMERATIONS: dict[str, frozenset[str]] = {
+    "regions": frozenset({"describe_regions"}),
+    "bedrock": frozenset(
+        {
+            "list_agents",
+            "list_knowledge_bases",
+            "list_flows",
+            "get_model_invocation_logging_configuration",
+            "list_guardrails",
+            "list_custom_models",
+        }
+    ),
+    "agentcore": frozenset(
+        {"list_agent_runtimes", "list_gateways", "list_memories", *(op for _, op, _ in _AGENTCORE_LISTS)}
+    ),
+    "lambda": frozenset({"list_functions"}),
+    "ecs": frozenset({"list_clusters", "list_task_definition_families"}),
+    "sagemaker": frozenset({"list_endpoints"}),
+    "stepfunctions": frozenset({"list_state_machines"}),
+    "qbusiness": frozenset({"list_applications"}),
+    "lex": frozenset({"list_bots"}),
+    "secrets": frozenset({"list_secrets", "describe_parameters"}),
+    "iam": frozenset({"get_account_authorization_details"}),
+    "cloudtrail": frozenset({"lookup_events"}),
+    "registry": frozenset({"list_registries", "list_discoverable_registry_records"}),
+}
+# Options a live scope attestation repeats: never credentials or the credential source.
+_SCOPE_OPTIONS = frozenset(
+    {
+        "account_id",
+        "role_arn",
+        "regions",
+        "services",
+        "cloudtrail_days",
+        "max_lambda",
+        "max_ecs_api_calls",
+        "max_registry_records",
+        "registry_arns",
+    }
+)
 # A provider error code is a fixed identifier (``AccessDeniedException``,
 # ``ThrottlingException``); anything else is not reported as one.
 _ERROR_CODE_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,99}\Z")
@@ -203,6 +304,21 @@ def _error_code(exc: BaseException) -> str | None:
     error = response.get("Error") if isinstance(response, dict) else None
     code = error.get("Code") if isinstance(error, dict) else None
     return code if isinstance(code, str) and _ERROR_CODE_RE.fullmatch(code) else None
+
+
+def _failure_outcome(exc: BaseException) -> str:
+    """The live scope outcome of a failed SDK call; the message is classified, never reported."""
+    code = _error_code(exc)
+    message = str(exc)
+    if code in _DENIED_CODES or "UnauthorizedOperation" in message or "not authorized" in message:
+        return "denied"
+    if code in _THROTTLING_CODES:
+        return "throttled"
+    if type(exc).__name__ in _UNAVAILABLE_MARKERS or any(
+        marker in message for marker in _UNAVAILABLE_MARKERS
+    ):
+        return "unavailable"
+    return "failed"
 
 
 # CloudTrail event fields that must be text (or absent) before aggregation.
@@ -260,8 +376,14 @@ class AwsConnector(BaseConnector):
     requires: ClassVar[list[str]] = ["boto3"]
     description: ClassVar[str] = (
         "Bedrock Agents / AgentCore, Lambda, ECS, SageMaker, Step Functions, Q Business, Lex, IAM grants, "
-        "secret names and CloudTrail LLM callers."
+        "secret names and CloudTrail LLM callers; opt-in AWS Agent Registry and AgentCore registry records."
     )
+    emits_registry_records: ClassVar[bool] = True
+    registry_record_types: ClassVar[frozenset[str]] = frozenset(
+        {AGENT_REGISTRY.registry_type, AGENTCORE_REGISTRY.registry_type}
+    )
+    attests_live_scope: ClassVar[bool] = True
+    scope_options: ClassVar[frozenset[str]] = _SCOPE_OPTIONS
     config_keys: ClassVar[dict[str, str]] = {
         "profile": "AWS profile (env AWS_PROFILE)",
         "role_arn": "role to assume before scanning",
@@ -274,7 +396,7 @@ class AwsConnector(BaseConnector):
         "regions": f"regions to scan (default {DEFAULT_REGIONS}; 'all' = every enabled region)",
         "services": (
             "subset of: bedrock, agentcore, lambda, ecs, sagemaker, stepfunctions, qbusiness, lex, iam, "
-            "secrets, cloudtrail (default all)"
+            "secrets, cloudtrail, registry (default: all except registry)"
         ),
         "cloudtrail_days": (
             "look-back window in days for LLM invocation events, a non-negative integer "
@@ -284,6 +406,14 @@ class AwsConnector(BaseConnector):
         "max_ecs_api_calls": (
             "cap on ECS list/detail API calls per region, a positive integer "
             "(default 2000; reaching it marks coverage incomplete)"
+        ),
+        "max_registry_records": (
+            "cap on registry records per region and registry namespace, a positive integer "
+            "(default 1000; reaching it marks coverage incomplete)"
+        ),
+        "registry_arns": (
+            "exact agent-registry registry ARNs of other accounts to read through the discovery API, "
+            "which lists approved records only (needs services: registry)"
         ),
         "input": "offline: JSONL of dumped records",
     }
@@ -295,7 +425,10 @@ class AwsConnector(BaseConnector):
             regions = string_list(ctx.get("regions"), "regions", pattern=r"[a-z0-9-]+")
             self.regions = regions or DEFAULT_REGIONS
             self._default_regions = not regions
-            services = string_list(ctx.get("services"), "services") or sorted(KNOWN_SERVICES)
+            services = string_list(ctx.get("services"), "services") or sorted(DEFAULT_SERVICES)
+            registry_arns = string_list(
+                ctx.get("registry_arns"), "registry_arns", pattern=REGISTRY_ARN_PATTERN
+            )
         except ValueError as exc:
             raise ConnectorError(f"cloud.aws: {exc}") from None
         unknown = sorted(set(services) - KNOWN_SERVICES)
@@ -306,10 +439,23 @@ class AwsConnector(BaseConnector):
             )
         if "all" in self.regions and self.regions != ["all"]:
             raise ConnectorError("cloud.aws: regions 'all' cannot be combined with explicit regions")
+        if registry_arns and "registry" not in services:
+            # Never accept a registry scope that collection would silently skip.
+            raise ConnectorError("cloud.aws: registry_arns needs 'registry' in services")
         self.services = set(services)
+        self.registry_arns: list[str] = registry_arns or []
         self.cloudtrail_days = _non_negative_limit(ctx.get("cloudtrail_days", 7), "cloudtrail_days")
         self.max_lambda = _positive_limit(ctx.get("max_lambda", 2000), "max_lambda")
         self.max_ecs_api_calls = _positive_limit(ctx.get("max_ecs_api_calls", 2000), "max_ecs_api_calls")
+        self.max_registry_records = _positive_limit(
+            ctx.get("max_registry_records", 1000), "max_registry_records"
+        )
+        # Registry collection state, reset by every collection run.
+        self._agentcore_regions: set[str] = set()
+        self._listed_registries: set[str] = set()
+        self._registry_counts: dict[tuple[str, str], int] = {}
+        # Registry coverage gaps already reported by this analysis run.
+        self._registry_gaps: set[str] = set()
         account = ctx.get("account_id")
         # YAML numeric account IDs are common; never pad an already-truncated
         # identifier or accept booleans/floats as a cloud account identity.
@@ -324,6 +470,9 @@ class AwsConnector(BaseConnector):
         self.account: str | None = account
         self._configured_account = account
         self._session: Any = None
+        # The `services` value and region (or "global") of the listing in progress, for the
+        # live scope record; empty outside collection.
+        self._scope: tuple[str, str] = ("", "")
 
     # ------------------------------------------------------------- session
     @staticmethod
@@ -389,6 +538,9 @@ class AwsConnector(BaseConnector):
             )
         self.account = account
         self._session = session
+        # The account STS reported, never the caller ARN: SSO and session names vary between
+        # runs and can carry personal data. A configured role_arn is a requested option.
+        self.ctx.attest_principal("aws", "account", account, "sts:GetCallerIdentity")
         return session
 
     def _client(self, service: str, region: str | None = None) -> Any:
@@ -397,11 +549,48 @@ class AwsConnector(BaseConnector):
     def _regions(self) -> list[str]:
         if self.regions == "all" or self.regions == ["all"]:
             ec2 = self._client("ec2", "us-east-1")
-            return [r["RegionName"] for r in ec2.describe_regions(AllRegions=False)["Regions"]]
+            try:
+                regions = [r["RegionName"] for r in ec2.describe_regions(AllRegions=False)["Regions"]]
+            except Exception as exc:
+                self.ctx.attest_operation("regions", "describe_regions", "global", _failure_outcome(exc))
+                raise
+            self.ctx.attest_operation("regions", "describe_regions", "global", "ok")
+            return regions
         return list(self.regions)
+
+    def _scoped(
+        self, service: str, partition: str, records: Iterable[dict[str, Any]]
+    ) -> Iterator[dict[str, Any]]:
+        """Re-yield one service's records, attributing its listings to ``service`` and ``partition``."""
+        outer = self._scope
+        self._scope = (service, partition)
+        try:
+            yield from records
+        finally:
+            self._scope = outer
+
+    def _attest_call(
+        self,
+        operation: str,
+        outcome: str,
+        *,
+        enumeration: bool | None = None,
+        scope: tuple[str, str] | None = None,
+    ) -> None:
+        """Record one call's outcome under the listing scope in progress (nothing outside collection)."""
+        service, partition = scope or self._scope
+        if not service:
+            return
+        if enumeration is None:
+            enumeration = operation in _SCOPE_ENUMERATIONS.get(service, ())
+        self.ctx.attest_operation(
+            service, operation, partition if enumeration else None, outcome, enumeration=enumeration
+        )
 
     def _pages(self, client: Any, op: str, **kwargs: Any) -> Iterator[dict[str, Any]]:
         """Keep successful pages when a later provider request fails."""
+        outcome = "ok"
+        scope = self._scope  # the listing's own scope, even if the generator is closed later
         try:
             try:
                 paginator = client.get_paginator(op)
@@ -411,7 +600,9 @@ class AwsConnector(BaseConnector):
                 # Only failure to create a paginator permits the manual path.
                 paginator = None
             if paginator is None:
-                yield from self._manual_pages(client, op, kwargs)
+                complete = yield from self._manual_pages(client, op, kwargs)
+                if not complete:
+                    outcome = "truncated"
                 return
             for number, page in enumerate(islice(paginator.paginate(**kwargs), MAX_LIST_PAGES), start=1):
                 if not isinstance(page, dict):
@@ -421,16 +612,27 @@ class AwsConnector(BaseConnector):
                     # Inspect the last response without fetching another page.
                     tokens = ("nextToken", "NextToken", "NextMarker", "Marker")
                     if page.get("IsTruncated") or any(page.get(key) for key in tokens):
+                        outcome = "truncated"
                         self.ctx.warn(f"cloud.aws: {op} pagination limit reached")
                     return
         except Exception as exc:  # noqa: BLE001 - preserve pages already yielded
+            outcome = _failure_outcome(exc)
             code = _error_code(exc)
             denied = code in _DENIED_CODES
             detail = f"access denied ({code})" if denied else type(exc).__name__
             self.ctx.warn(f"cloud.aws: {op} collection failed ({detail})")
+        finally:
+            # Also when the consumer stops early; a consumer that caps a listing records the
+            # truncation itself, and the most severe outcome is kept.
+            self._attest_call(op, outcome, scope=scope)
 
-    def _manual_pages(self, client: Any, op: str, kwargs: dict[str, Any]) -> Iterator[dict[str, Any]]:
-        """Follow ``nextToken``/``NextToken`` by hand for operations without a paginator."""
+    def _manual_pages(
+        self, client: Any, op: str, kwargs: dict[str, Any]
+    ) -> Generator[dict[str, Any], None, bool]:
+        """Follow ``nextToken``/``NextToken`` by hand for operations without a paginator.
+
+        Returns False when the page limit stopped the listing.
+        """
         seen: set[str] = set()
         request = dict(kwargs)
         for _ in range(MAX_LIST_PAGES):
@@ -444,21 +646,25 @@ class AwsConnector(BaseConnector):
             except InvalidPageTokenError:
                 raise ValueError("invalid or repeated AWS pagination token") from None
             if token is None:
-                return
+                return True
             request[token_key] = token
         self.ctx.warn(f"cloud.aws: {op} pagination limit reached")
+        return False
 
     def _paginate(self, client: Any, op: str, key: str, **kwargs: Any) -> Iterator[dict[str, Any]]:
         for page in self._pages(client, op, **kwargs):
             if key not in page or "error" in page or "Error" in page:
+                self._attest_call(op, "failed")
                 self.ctx.warn(f"cloud.aws: missing or failed {key} page for {op}")
                 continue
             items = page[key]
             if not isinstance(items, list):
+                self._attest_call(op, "failed")
                 self.ctx.warn(f"cloud.aws: invalid {key} page for {op}")
                 continue
             for item in items:
                 if not isinstance(item, dict):
+                    self._attest_call(op, "failed")
                     self.ctx.warn(f"cloud.aws: invalid {key} record for {op}")
                     continue
                 yield item
@@ -478,9 +684,18 @@ class AwsConnector(BaseConnector):
         the exception type, never the message: SDK errors echo request
         arguments, which are built from untrusted response fields, and
         denied-authorization messages can carry encoded policy context.
+        A named SDK operation's outcome is recorded for the live scope.
         """
+        result, outcome = self._call(fn, *args, **kwargs)
+        operation = getattr(fn, "__name__", None)
+        if isinstance(operation, str) and operation.isidentifier() and not isinstance(fn, type):
+            self._attest_call(operation, outcome)
+        return result
+
+    def _call(self, fn: Any, *args: Any, **kwargs: Any) -> tuple[Any, str]:
+        """``_safe`` without recording: the result (None on failure) and the live scope outcome."""
         try:
-            return fn(*args, **kwargs)
+            return fn(*args, **kwargs), "ok"
         except Exception as exc:  # noqa: BLE001 - every failure below is reported as incomplete coverage
             code = _error_code(exc)
             msg = str(exc)
@@ -493,7 +708,7 @@ class AwsConnector(BaseConnector):
                 self.ctx.warn(f"cloud.aws:{where} service coverage unavailable ({detail})", incomplete=True)
             else:
                 self.ctx.warn(f"cloud.aws:{where} request failed ({detail})", incomplete=True)
-            return None
+            return None, _failure_outcome(exc)
 
     # -------------------------------------------------------------- collect
     def collect(self) -> Iterable[dict[str, Any]]:
@@ -501,6 +716,7 @@ class AwsConnector(BaseConnector):
         # emitting account metadata rather than relying on region discovery.
         self._session_()
         regions = self._regions()
+        self.ctx.attest_partition("regions", regions)
         acct = self.account
         if self._default_regions and self.services - {"iam"}:
             # Informational: the operator chose no scope, so name what was and was not covered.
@@ -512,29 +728,39 @@ class AwsConnector(BaseConnector):
                 incomplete=False,
             )
         yield {"_kind": "account", "account": acct, "regions": regions}
+        self._agentcore_regions = set()
+        self._listed_registries = set()
+        self._registry_counts = {}
         if "iam" in self.services:
-            yield from self._collect_iam()
+            yield from self._scoped("iam", "global", self._collect_iam())
+        regional = (
+            ("bedrock", self._collect_bedrock),
+            ("agentcore", self._collect_agentcore),
+            ("lambda", self._collect_lambda),
+            ("ecs", self._collect_ecs),
+            ("sagemaker", self._collect_sagemaker),
+            ("stepfunctions", self._collect_stepfunctions),
+            ("qbusiness", self._collect_q),
+            ("lex", self._collect_lex),
+            ("secrets", self._collect_secret_names),
+            ("cloudtrail", self._collect_cloudtrail),
+        )
         for region in regions:
-            if "bedrock" in self.services:
-                yield from self._collect_bedrock(region)
-            if "agentcore" in self.services:
-                yield from self._collect_agentcore(region)
-            if "lambda" in self.services:
-                yield from self._collect_lambda(region)
-            if "ecs" in self.services:
-                yield from self._collect_ecs(region)
-            if "sagemaker" in self.services:
-                yield from self._collect_sagemaker(region)
-            if "stepfunctions" in self.services:
-                yield from self._collect_stepfunctions(region)
-            if "qbusiness" in self.services:
-                yield from self._collect_q(region)
-            if "lex" in self.services:
-                yield from self._collect_lex(region)
-            if "secrets" in self.services:
-                yield from self._collect_secret_names(region)
-            if "cloudtrail" in self.services and self.cloudtrail_days > 0:
-                yield from self._collect_cloudtrail(region)
+            for service, collector in regional:
+                if service not in self.services or (service == "cloudtrail" and self.cloudtrail_days <= 0):
+                    continue
+                before = self.ctx.diagnostics_recorded()
+                yield from self._scoped(service, region, collector(region))
+                # Registry bindings to this region's runtimes and gateways are in scope only when
+                # nothing was denied, truncated or malformed here, including while exporting and
+                # analysing them (an export rejects a record it cannot sanitize with an error).
+                if service == "agentcore" and self.ctx.diagnostics_recorded() == before:
+                    self._agentcore_regions.add(region)
+        if "registry" in self.services:
+            # After every region: a record can bind a runtime or gateway of any scanned region.
+            for region in regions:
+                yield from self._scoped("registry", region, self._collect_registries(region))
+            yield from self._collect_registry_arns()
 
     def _collect_bedrock(self, region: str) -> Iterator[dict[str, Any]]:
         ba = self._client("bedrock-agent", region)
@@ -626,6 +852,7 @@ class AwsConnector(BaseConnector):
         try:
             ac = self._client("bedrock-agentcore-control", region)
         except Exception:  # noqa: BLE001 - old boto3
+            self._attest_call("bedrock-agentcore-control", "unavailable", enumeration=True)
             self.ctx.warn(
                 "cloud.aws: AgentCore unavailable in installed SDK; collection incomplete",
                 incomplete=True,
@@ -668,10 +895,309 @@ class AwsConnector(BaseConnector):
         gw["_region"] = region
         return gw
 
+    # ------------------------------------------------------------ registries
+    @staticmethod
+    def _registry_coverage(api: RegistryApi, region: str, *, complete: bool, **extra: Any) -> dict[str, Any]:
+        """An ``aws-registry-coverage`` record: whether one listing finished without a gap.
+
+        A denied listing or an SDK without the service leaves no registry or record to carry
+        the gap, so the export keeps it here and its replay is incomplete too.
+        """
+        return {
+            "_kind": COVERAGE_KIND,
+            "_region": region,
+            "namespace": api.registry_type,
+            "complete": complete,
+            **extra,
+        }
+
+    def _collect_registries(self, region: str) -> Iterator[dict[str, Any]]:
+        """Both registry namespaces through the control plane: records of every status.
+
+        Each namespace ends with a coverage record that is complete only when the SDK has the
+        service, ``ListRegistries`` finished without a gap, no registry was skipped and every
+        registry's record listing is complete.
+        """
+        for api in (AGENT_REGISTRY, AGENTCORE_REGISTRY):
+            try:
+                client = self._client(api.service, region)
+            except Exception:  # noqa: BLE001 - an installed SDK without this service
+                self._attest_call(api.service, "unavailable", enumeration=True)
+                self.ctx.warn(f"cloud.aws: {api.label} unavailable in installed SDK; collection incomplete")
+                yield self._registry_coverage(api, region, complete=False)
+                continue
+            before = self.ctx.diagnostics_recorded()
+            summaries = self._list_items(client, "list_registries", "registries")
+            complete = self.ctx.diagnostics_recorded() == before
+            for summary in summaries:
+                registry = guarded_record(
+                    self, api.product, partial(self._registry, api, client, summary, region), noun="registry"
+                )
+                if registry is None:
+                    complete = False  # a skipped registry is missing from the listing
+                    continue
+                self._listed_registries.add(registry["registryArn"])
+                records = self._registry_entries(api, client, registry, region)
+                complete = complete and registry["_listing_complete"]
+                yield registry
+                yield from records
+            yield self._registry_coverage(api, region, complete=complete)
+
+    def _registry(
+        self, api: RegistryApi, client: Any, summary: dict[str, Any], region: str
+    ) -> dict[str, Any]:
+        registry_id = summary["registryId"]
+        if not isinstance(registry_id, str) or not registry_id:
+            raise ValueError("invalid registry id")
+        detail = self._safe(client.get_registry, registryId=registry_id)
+        if detail is not None and not isinstance(detail, dict):
+            self.ctx.warn(f"cloud.aws: invalid {api.product} registry details; approval mode unknown")
+            detail = None
+        merged = {**summary, **_without_metadata(detail or {})}
+        arn = merged.get("registryArn")
+        if not isinstance(arn, str) or not arn:
+            raise ValueError("invalid registry ARN")
+        discovery = merged.get("discoveryConfiguration")
+        detection = merged.get("autoDetection")
+        detection_settings = detection.get("configuration") if isinstance(detection, dict) else None
+        return {
+            "_kind": api.registry_kind,
+            "_region": region,
+            "registryId": registry_id,
+            "registryArn": arn,
+            "name": text(merged.get("name")),
+            "description": text(merged.get("description")),
+            "status": merged.get("status"),
+            "authorizerType": merged.get("authorizerType")
+            or (discovery.get("authorizerType") if isinstance(discovery, dict) else None),
+            "autoDetectionEnabled": (
+                detection_settings.get("enabled") if isinstance(detection_settings, dict) else None
+            ),
+            "createdAt": merged.get("createdAt"),
+            "updatedAt": merged.get("updatedAt"),
+            # Only GetRegistry returns it: without the details the approval mode stays unknown.
+            "approvalConfiguration": merged.get("approvalConfiguration") if detail is not None else None,
+            "_detail": "observed" if detail is not None else "unknown",
+        }
+
+    def _bounded_listing(
+        self, api: RegistryApi, region: str, operation: str, listing: Any
+    ) -> tuple[list[dict[str, Any]], bool]:
+        """Read one record listing in full, within ``max_registry_records`` for the namespace and region.
+
+        Returns the items and whether the listing finished without denial, truncation, a
+        malformed page or the cap.
+        """
+        key = (api.registry_type, region)
+        used = self._registry_counts.get(key, 0)
+        remaining = max(self.max_registry_records - used, 0)
+        before = self.ctx.diagnostics_recorded()
+        items: list[dict[str, Any]] = self._safe(lambda: list(islice(listing(), remaining + 1))) or []
+        complete = self.ctx.diagnostics_recorded() == before
+        if len(items) > remaining:
+            self._attest_call(operation, "truncated")
+            self.ctx.warn(f"cloud.aws: max_registry_records reached for {api.label} in {region}")
+            items = items[:remaining]
+            complete = False
+        self._registry_counts[key] = used + len(items)
+        return items, complete
+
+    def _registry_entries(
+        self, api: RegistryApi, client: Any, registry: dict[str, Any], region: str
+    ) -> list[dict[str, Any]]:
+        """Every record of one registry; ``_listing_complete`` goes on the registry and its records.
+
+        The registry carries it too: a listing that failed or reached the cap before its first
+        record leaves no record to carry the gap into an export.
+        """
+        listing = partial(
+            self._paginate,
+            client,
+            "list_registry_records",
+            "registryRecords",
+            registryId=registry["registryId"],
+        )
+        summaries, complete = self._bounded_listing(api, region, "list_registry_records", listing)
+        records = []
+        for summary in summaries:
+            record = guarded_record(
+                self, api.label, partial(self._registry_entry, api, client, registry, summary, region)
+            )
+            if record is None:
+                complete = False  # a skipped record is missing from the listing
+            else:
+                records.append(record)
+        # Known only after every summary was read, so it is set before anything is emitted.
+        for item in (registry, *records):
+            item["_listing_complete"] = complete
+        return records
+
+    def _registry_entry(
+        self,
+        api: RegistryApi,
+        client: Any,
+        registry: dict[str, Any],
+        summary: dict[str, Any],
+        region: str,
+    ) -> dict[str, Any]:
+        record_id = summary["recordId"]
+        if not isinstance(record_id, str) or not record_id:
+            raise ValueError("invalid registry record id")
+        detail = self._safe(client.get_registry_record, registryId=registry["registryId"], recordId=record_id)
+        if detail is not None and not isinstance(detail, dict):
+            self.ctx.warn(f"cloud.aws: invalid {api.label} record details; descriptor coverage unknown")
+            detail = None
+        merged = {**summary, **_without_metadata(detail or {})}
+        if merged.get("registryArn") != registry["registryArn"]:
+            # A listing never speaks for another registry, whose trust may differ.
+            raise ValueError("registry record of another registry")
+        record = self._registry_entry_record(
+            api, api.record_kind, merged, region, detailed=detail is not None
+        )
+        record["_registry"] = {
+            "name": registry.get("name"),
+            "authorizerType": registry.get("authorizerType"),
+            "approvalConfiguration": registry.get("approvalConfiguration"),
+        }
+        coverage = partial(source_coverage, account=self.account, collected_regions=self._agentcore_regions)
+        # GetRegistryRecord returns the full provenance; the listing only its summary.
+        sources = merged["provenance"] if "provenance" in merged else merged.get("provenanceSummaryList")
+        record["provenance"] = provenance(sources, coverage)
+        return record
+
+    def _registry_entry_record(
+        self, api: RegistryApi, kind: str, merged: dict[str, Any], region: str, *, detailed: bool
+    ) -> dict[str, Any]:
+        """The exported form of one record: bounded, sanitized fields and a descriptor summary.
+
+        Raw descriptor documents (``data``, ``inlineContent``) and OAuth ``customParameters``
+        are dropped here, before the record reaches analysis or an export.
+        """
+        summary, parse = descriptor_summary(
+            api, merged.get("descriptors"), merged.get("synchronizationConfiguration")
+        )
+        if parse == "invalid":
+            self.ctx.warn(
+                f"cloud.aws: {api.label} record descriptor is not a bounded JSON document; "
+                "descriptor coverage incomplete"
+            )
+        return {
+            "_kind": kind,
+            "_region": region,
+            "registryArn": merged.get("registryArn"),
+            "recordArn": merged.get("recordArn"),
+            "recordId": merged["recordId"],
+            "name": text(merged.get("name")),
+            "displayName": text(merged.get("displayName")),
+            "description": text(merged.get("description")),
+            api.type_field: merged.get(api.type_field),
+            "recordVersion": merged.get("recordVersion"),
+            "status": merged.get("status"),
+            "statusReason": text(merged.get("statusReason")),
+            "createdAt": merged.get("createdAt"),
+            "updatedAt": merged.get("updatedAt"),
+            "createdByAutoDetection": merged.get("createdByAutoDetection"),
+            "createdBy": merged.get("createdBy"),
+            "_detail": "observed" if detailed else "unknown",
+            "_descriptor_parse": parse,
+            "_descriptor_summary": summary,
+        }
+
+    def _collect_registry_arns(self) -> Iterator[dict[str, Any]]:
+        """Approved records of the configured registries, through the agent-registry data plane.
+
+        A registry the control plane listed in this run is skipped: that listing already holds
+        every record of every status (and the data plane cannot read a registry that uses a
+        JWT authorizer with AWS credentials). Each registry read ends with a coverage record
+        naming it; its ``complete`` says only that the listing finished, never that an
+        approved-only listing is complete for reconciliation.
+        """
+        for arn in self.registry_arns:
+            if arn in self._listed_registries:
+                continue
+            region = arn.split(":")[3]
+            # A configured registry is a partition of its own: the ARN is a requested option.
+            scope = ("registry", arn)
+            try:
+                client = self._client("agent-registry", region)
+            except Exception:  # noqa: BLE001 - an installed SDK without this service
+                self._attest_call("agent-registry", "unavailable", enumeration=True, scope=scope)
+                self.ctx.warn(
+                    "cloud.aws: Agent Registry discovery unavailable in installed SDK; collection incomplete"
+                )
+                yield self._registry_coverage(AGENT_REGISTRY, region, complete=False, registryArn=arn)
+                return
+            yield from self._scoped(*scope, self._discoverable_records(client, arn, region))
+
+    def _discoverable_records(self, client: Any, arn: str, region: str) -> Iterator[dict[str, Any]]:
+        listing = partial(
+            self._paginate, client, "list_discoverable_registry_records", "registryRecords", registryId=arn
+        )
+        summaries, complete = self._bounded_listing(
+            AGENT_REGISTRY, region, "list_discoverable_registry_records", listing
+        )
+        ids = [s["recordId"] for s in summaries if isinstance(s.get("recordId"), str) and s["recordId"]]
+        details: dict[str, dict[str, Any]] = {}
+        for batch in _batches(iter(ids), 100):
+            response = self._safe(
+                client.batch_get_discoverable_registry_record,
+                entries=[{"registryId": arn, "recordIds": batch}],
+            )
+            if response is None:
+                continue
+            items = response.get("registryRecords") if isinstance(response, dict) else None
+            errors = response.get("errors") if isinstance(response, dict) else None
+            if not isinstance(items, list) or not isinstance(errors, list):
+                self.ctx.warn("cloud.aws: invalid batch_get_discoverable_registry_record response")
+                continue
+            details.update(
+                (item["recordId"], item)
+                for item in items
+                if isinstance(item, dict) and isinstance(item.get("recordId"), str)
+            )
+            if errors:
+                self._attest_call("batch_get_discoverable_registry_record", "failed")
+                # The error code only: the message can echo record identifiers or policy context.
+                codes = sorted({_batch_error_code(error) for error in errors})
+                self.ctx.warn(
+                    f"cloud.aws: batch_get_discoverable_registry_record failed for {len(errors)} record(s) "
+                    f"({', '.join(codes)})"
+                )
+        records = []
+        for summary in summaries:
+            record = guarded_record(
+                self,
+                "Agent Registry discoverable",
+                partial(self._discoverable_record, arn, summary, details, region),
+            )
+            if record is None:
+                complete = False
+            else:
+                records.append(record)
+        for record in records:
+            record["_listing_complete"] = complete
+            yield record
+        yield self._registry_coverage(AGENT_REGISTRY, region, complete=complete, registryArn=arn)
+
+    def _discoverable_record(
+        self, arn: str, summary: dict[str, Any], details: dict[str, dict[str, Any]], region: str
+    ) -> dict[str, Any]:
+        record_id = summary["recordId"]
+        if not isinstance(record_id, str) or not record_id:
+            raise ValueError("invalid registry record id")
+        detail = details.get(record_id)
+        merged = {**summary, **(detail or {})}
+        if merged.get("registryArn") != arn:
+            raise ValueError("registry record of another registry")
+        return self._registry_entry_record(
+            AGENT_REGISTRY, DISCOVERABLE_RECORD_KIND, merged, region, detailed=detail is not None
+        )
+
     def _collect_lambda(self, region: str) -> Iterator[dict[str, Any]]:
         lam = self._client("lambda", region)
         for n, fn in enumerate(self._paginate(lam, "list_functions", "Functions"), start=1):
             if n > self.max_lambda:
+                self._attest_call("list_functions", "truncated")
                 self.ctx.warn(f"cloud.aws: max_lambda reached in {region}", incomplete=True)
                 break
             rec = guarded_record(self, "Lambda function", partial(self._lambda_record, lam, fn, region))
@@ -936,6 +1462,7 @@ class AwsConnector(BaseConnector):
         pending: list[Finding] = []
         if self.offline:
             self.account = self._configured_account
+        self._registry_gaps = set()
         accounts: set[str] = set()
         invalid_account = False
         failure: Exception | None = None
@@ -988,9 +1515,39 @@ class AwsConnector(BaseConnector):
         for f in pending:
             self.ctx.check_deadline()
             self._resolve_finding_account(f, expected_account)
+        self._unbind_unreported_regions(pending)
+        for f in pending:
+            self.ctx.check_deadline()
             yield f
         if failure is not None:
             raise failure
+
+    def _unbind_unreported_regions(self, findings: list[Finding]) -> None:
+        """Take registry bindings out of scope in a region whose runtime or gateway cannot be reported.
+
+        ``run`` omits a finding that fails sanitization (with an error), so an in-scope binding
+        to that region could match nothing and read as registered but not observed.
+        """
+        bindings = [
+            item
+            for finding in findings
+            for item in sequence(mapping(finding.metadata.get(RECORD_KEY)).get("bindings"))
+            if mapping(item).get("coverage") == "in-scope"
+        ]
+        if not bindings:
+            return
+        unreported: set[tuple[str | None, str | None]] = set()
+        for finding in findings:
+            if finding.resource_type in _BOUND_TYPES:
+                try:
+                    # A copy: a failed pass leaves fields half redacted, and run() must still see
+                    # the original finding to omit and report it.
+                    copy.deepcopy(finding).sanitize()
+                except SanitizationLimitError:
+                    unreported.add((finding.account, finding.region))
+        for item in bindings:
+            if (item.get("account"), item.get("region")) in unreported:
+                item["coverage"] = "out-of-scope"
 
     def _resolve_finding_account(self, finding: Finding, expected_account: str | None) -> None:
         # These resources have connector-generated ARNs, so their account is an
@@ -1009,11 +1566,13 @@ class AwsConnector(BaseConnector):
             explicit_account = arn.split(":", 5)[4] if has_aws_account_scope("aws", None, arn) else None
             finding.account = explicit_account or self.account
             scope = expected_account or self.account
-            # A CloudTrail caller can legitimately belong to another account;
-            # inventory resources returned by account-scoped list APIs cannot.
+            # A CloudTrail caller can legitimately belong to another account, and so can
+            # a record of another account's registry named in registry_arns; inventory
+            # resources returned by account-scoped list APIs cannot.
             if (
                 explicit_account
                 and not finding.resource_type.startswith("caller/")
+                and not _foreign_registry_record(finding)
                 and has_aws_account_scope("aws", scope, None)
                 and scope != explicit_account
             ):
@@ -1100,6 +1659,8 @@ class AwsConnector(BaseConnector):
                     )
                 )
             if ag.get("parentActionSignature") == "AMAZON.UserInput":
+                # Autonomy: a person in the loop at some steps (oversight "gated"); it does not
+                # make a person approve each action, so the ceiling stays open.
                 f.add_tag("asks-user")
         if any(k.get("knowledgeBaseState") != "DISABLED" for k in kbs):
             f.add_capability("rag")
@@ -1116,6 +1677,11 @@ class AwsConnector(BaseConnector):
         f.owner = first_tag(rec.get("tags"), "owner", "Owner")
         name_hint(self.index, f, rec.get("agentName"), rec.get("description"))
         f.metadata.update(_bedrock_agent_metadata(rec, details, ags, kbs))
+        if _bedrock_malformed_functions(ags):
+            self.ctx.warn("cloud.aws: Bedrock action group has malformed function entries")
+        gate = _bedrock_approval_gate(ags)
+        if gate is not None:
+            f.metadata["approval_gate"] = gate
         return done(f, self.index, Kind.AGENT)
 
     def _agent_version_details(self, rec: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -1444,6 +2010,221 @@ class AwsConnector(BaseConnector):
         )
         return done(f, self.index, Kind.SERVICE_IDENTITY)
 
+    def _h_agent_registry(self, rec: dict[str, Any]) -> None:
+        self._registry_container(AGENT_REGISTRY, rec)
+
+    def _h_agentcore_registry(self, rec: dict[str, Any]) -> None:
+        self._registry_container(AGENTCORE_REGISTRY, rec)
+
+    def _registry_container(self, api: RegistryApi, rec: dict[str, Any]) -> None:
+        """A registry is reported through its records; its own record carries its coverage gaps.
+
+        A record listing that failed, or a ``GetRegistry`` that failed, may leave no record to
+        carry the gap, so the registry's record does. A registry record without these markers
+        (an export written before they existed) has unknown coverage and is incomplete too.
+        """
+        if not api.is_registry_arn(rec.get("registryArn")):
+            raise ValueError("invalid registry ARN")
+        if rec.get("_listing_complete") is not True:
+            self._registry_gap("cloud.aws: registry record listing incomplete; records may be missing")
+        if rec.get("_detail") != "observed":
+            self._registry_gap("cloud.aws: registry details unavailable; approval mode unknown")
+
+    def _h_aws_registry_coverage(self, rec: dict[str, Any]) -> None:
+        """Whether one registry listing finished: a gap that may have left no record to carry it."""
+        namespace, region, arn = rec.get("namespace"), rec.get("_region"), rec.get("registryArn")
+        if (
+            namespace not in self.registry_record_types
+            or not isinstance(region, str)
+            or re.fullmatch(r"[a-z0-9-]+", region) is None
+            or type(rec.get("complete")) is not bool
+            or (
+                arn is not None
+                and not (
+                    namespace == AGENT_REGISTRY.registry_type
+                    and AGENT_REGISTRY.is_registry_arn(arn)
+                    and arn.split(":")[3] == region
+                )
+            )
+        ):
+            raise ValueError("invalid registry coverage record")
+        if not rec["complete"]:
+            self._registry_gap("cloud.aws: registry listing incomplete; registries or records may be missing")
+
+    def _h_agent_registry_record(self, rec: dict[str, Any]) -> Finding:
+        return self._registry_record_finding(AGENT_REGISTRY, rec, discoverable=False)
+
+    def _h_agentcore_registry_record(self, rec: dict[str, Any]) -> Finding:
+        return self._registry_record_finding(AGENTCORE_REGISTRY, rec, discoverable=False)
+
+    def _h_agent_registry_discoverable_record(self, rec: dict[str, Any]) -> Finding:
+        return self._registry_record_finding(AGENT_REGISTRY, rec, discoverable=True)
+
+    def _registry_gap(self, message: str) -> None:
+        """Report one kind of registry coverage gap once per analysis, live or replayed."""
+        if message not in self._registry_gaps:
+            self._registry_gaps.add(message)
+            self.ctx.warn(message)
+
+    def _registry_record_finding(
+        self, api: RegistryApi, rec: dict[str, Any], *, discoverable: bool
+    ) -> Finding:
+        """One registry record as a finding with ``metadata.registry_record``.
+
+        The resource is the record ARN and the resource type is fixed per namespace, so the
+        finding keeps its identity when the record's status or type changes. Bindings come only
+        from the ``DETECTED_FROM`` provenance of a record the registry created by auto-detection
+        (the runtime or gateway it detected the record from); provenance on a record created
+        through the API is the publisher's assertion and binds nothing. A record read through the
+        discovery API is approved-only by construction: its listing is never complete for
+        reconciliation.
+        """
+        registry_arn, arn, record_id = rec.get("registryArn"), rec.get("recordArn"), rec.get("recordId")
+        if (
+            not isinstance(arn, str)
+            or not isinstance(record_id, str)
+            or not api.owns(registry_arn, arn)
+            or not arn.endswith(f"/{record_id}")
+        ):
+            raise ValueError("invalid registry record identity")
+        vendor_type, vendor_status = rec.get(api.type_field), rec.get("status")
+        names = (rec.get("name"), rec.get("displayName"))
+        if not isinstance(vendor_type, str) or not isinstance(vendor_status, str):
+            raise ValueError("invalid registry record type or status")
+        if any(value is not None and not isinstance(value, str) for value in names):
+            raise ValueError("invalid registry record name")
+        entries = [] if discoverable else rec.get("provenance") or []
+        if not isinstance(entries, list) or len(entries) > MAX_PROVENANCE:
+            raise ValueError("invalid registry record provenance")
+        descriptor_type = DESCRIPTOR_TYPES.get(vendor_type)
+        if descriptor_type is None:
+            self._registry_gap("cloud.aws: registry record type not recognized; classified as custom")
+            descriptor_type = "custom"
+        status = STATUSES.get(vendor_status, "unknown")
+        registry = mapping(rec.get("_registry"))
+        # The discovery API cannot read another account's approval configuration.
+        configuration = None if discoverable else registry.get("approvalConfiguration")
+        mode = approval_mode(api, configuration)
+        if approval_unrecognized(api, configuration):
+            # An unknown mode still approves in a trusted registry, so the scan cannot be complete.
+            self._registry_gap(
+                "cloud.aws: registry approval configuration not recognized; approval mode unknown"
+            )
+        if any(unrecognized_relation(entry) for entry in entries):
+            self._registry_gap("cloud.aws: registry record provenance relation not recognized; not bound")
+        summary = mapping(rec.get("_descriptor_summary"))
+        if rec.get("_detail") == "unknown":
+            self._registry_gap("cloud.aws: registry record details unavailable; descriptor coverage unknown")
+        if rec.get("_descriptor_parse") == "invalid":
+            self._registry_gap("cloud.aws: registry record descriptor invalid; descriptor coverage unknown")
+        if rec.get("_listing_complete") is False:
+            self._registry_gap("cloud.aws: registry record listing incomplete; records may be missing")
+        kind = KINDS[descriptor_type]
+        name = names[1] or names[0]
+        f = cloud_finding(
+            self.name,
+            "aws",
+            kind=kind,
+            title=f"{api.label} record: {name or record_id}",
+            resource=_resource_id(arn),
+            resource_type=api.record_kind,
+            account=self._arn_account(arn),
+            region=rec.get("_region"),
+            first_seen=_optional_str(rec.get("createdAt")),
+            last_seen=_optional_str(rec.get("updatedAt")),
+        )
+        f.add_framework("cloud.aws-bedrock-agents")
+        if descriptor_type == "mcp" or "mcp" in summary:
+            f.add_framework("protocol.mcp")
+        if descriptor_type == "a2a" or "a2a" in summary:
+            f.add_framework("protocol.a2a")
+        review = ""
+        if status == "approved" and mode == "auto":
+            # AGENTS.md: an automatic approval is not a human review. The mode is the registry's
+            # setting at scan time, and a change applies only to records submitted after it, so
+            # it cannot say how this record was approved.
+            review = (
+                "; the registry currently auto-approves records; "
+                "this record may not have been reviewed by a person"
+            )
+        scope = "; listed by the discovery API, which returns approved records only" if discoverable else ""
+        f.add_evidence(
+            registry_evidence(
+                api.registry_type,
+                f"{api.label} record '{name}' ({vendor_status}, {vendor_type} {rec.get('recordVersion')}) "
+                f"in registry {registry.get('name') or registry_arn}{review}{scope}",
+                location=arn,
+            )
+        )
+        bindings = (
+            [item for entry in entries if (item := binding(entry)) is not None]
+            if provenance_binds(rec)
+            else []
+        )
+        # Weightless locations let correlation link the record to the role it signs requests with.
+        roles = [
+            role
+            for source in sequence(summary.get("sources"))
+            for credential in sequence(mapping(source).get("credential_providers"))
+            if isinstance(role := mapping(credential).get("roleArn"), str)
+        ]
+        for location in [*(item["resource"] for item in bindings), *roles][:MAX_PROVENANCE]:
+            f.add_evidence(
+                Evidence(
+                    signal="aws:registry-record-reference",
+                    description="Resource named by the registry record",
+                    location=location,
+                    weight=0.0,
+                )
+            )
+        if mapping(summary.get("a2a")).get("auth_declared") is False:
+            f.add_tag("no-auth-declared")
+        mcp = mapping(summary.get("mcp"))
+        remotes = sequence(mcp.get("remotes"))
+        if remotes:
+            record_server_risks(f, {"name": mcp.get("name") or name, "urls": list(remotes)}, arn)
+        record: dict[str, Any] = {
+            "schema": RECORD_SCHEMA,
+            "registry": api.registry_type,
+            "registry_id": registry_arn,
+            "record_id": record_id,
+            "status": status,
+            "descriptor_type": descriptor_type,
+            "bindings": bindings,
+            # A discovery listing omits every record that is not approved.
+            "listing_complete": rec.get("_listing_complete") is True and not discoverable,
+            "approval_mode": mode,
+        }
+        updated = _optional_str(rec.get("updatedAt"))
+        if updated is not None:
+            record["updated_at"] = updated
+        f.metadata.update(
+            {
+                RECORD_KEY: record,
+                "registry_arn": registry_arn,
+                "registry_name": registry.get("name"),
+                "record_status": vendor_status,
+                "record_type": vendor_type,
+                "record_version": rec.get("recordVersion"),
+                "status_reason": rec.get("statusReason"),
+                "created_by_auto_detection": rec.get("createdByAutoDetection"),
+                "created_by": rec.get("createdBy"),
+                "name": names[0],
+                "display_name": names[1],
+                "provenance": [
+                    {k: v for k, v in entry.items() if not str(k).startswith("_")}
+                    for entry in entries
+                    if isinstance(entry, dict)
+                ],
+                # True only for a registry that approves records without a person.
+                "registry_auto_approval": {"auto": True, "manual": False}.get(mode),
+                "descriptor": summary,
+            }
+        )
+        if discoverable:
+            f.metadata["registry_coverage"] = "approved-only"
+        return done(f, self.index, kind)
+
     def _h_lambda(self, rec: dict[str, Any]) -> Finding | None:
         arn = rec.get("FunctionArn")
         f = cloud_finding(
@@ -1668,6 +2449,8 @@ class AwsConnector(BaseConnector):
                     signature="provider.aws-bedrock",
                 )
             )
+        # Autonomy: an unattended workflow definition. Neither approval-bypass nor initiation
+        # evidence: a run can still be started by a person and wait at an approval step.
         f.add_capability("autonomous")
         f.metadata.update({"role": rec.get("roleArn")})
         return done(f, self.index, Kind.WORKFLOW)
@@ -1963,19 +2746,25 @@ class _EcsInventory:
     def call(self, op: str, **kwargs: Any) -> dict[str, Any] | None:
         """One budgeted request; exhaustion, failures and malformed responses mark coverage incomplete."""
         if self.remaining == 0:
+            self.connector._attest_call(op, "truncated")
             if not self.limit_reported:
                 self.ctx.warn(f"cloud.aws: max_ecs_api_calls reached in {self.region}", incomplete=True)
                 self.limit_reported = True
             return None
         self.remaining -= 1
-        response = self.connector._safe(lambda: getattr(self.client, op)(**kwargs))
+        response, outcome = self.connector._call(lambda: getattr(self.client, op)(**kwargs))
         if response is None:
+            self.connector._attest_call(op, outcome if outcome != "ok" else "failed")
             return None
         if not isinstance(response, dict):
+            self.connector._attest_call(op, "failed")
             self.ctx.warn(f"cloud.aws: invalid ECS {op} response in {self.region}", incomplete=True)
             return None
         if response.get("failures"):
+            self.connector._attest_call(op, "failed")
             self.ctx.warn(f"cloud.aws: partial ECS {op} failure in {self.region}", incomplete=True)
+            return response
+        self.connector._attest_call(op, "ok")
         return response
 
     def identifiers(self, op: str, key: str, **kwargs: Any) -> Iterator[str]:
@@ -2129,6 +2918,19 @@ def _batches(values: Iterator[str], size: int) -> Iterator[list[str]]:
         yield batch
 
 
+def _foreign_registry_record(finding: Finding) -> bool:
+    """A record of a registry read through the discovery API, which may belong to another account."""
+    return (
+        finding.resource_type == AGENT_REGISTRY.record_kind
+        and finding.metadata.get("registry_coverage") == "approved-only"
+    )
+
+
+def _batch_error_code(error: Any) -> str:
+    code = error.get("errorCode") if isinstance(error, dict) else None
+    return code if isinstance(code, str) and code in _BATCH_ERROR_CODES else "unrecognized"
+
+
 def _ecs_definition_record(definition: dict[str, Any], arn: str, region: str) -> dict[str, Any]:
     return {
         "_kind": "ecs-task-definition",
@@ -2179,6 +2981,70 @@ def _cloudtrail_record(ev: dict[str, Any], region: str) -> dict[str, Any] | None
         "modelId": (detail.get("requestParameters") or {}).get("modelId")
         or (detail.get("requestParameters") or {}).get("agentId"),
         "errorCode": detail.get("errorCode"),
+    }
+
+
+def _bedrock_malformed_functions(ags: list[Any]) -> int:
+    """Function entries of enabled action groups that are not objects, or a non-list ``functions``.
+
+    Such an entry cannot be read, so it could be an unconfirmed function: it keeps the gate
+    partial and makes the scan incomplete.
+    """
+    malformed = 0
+    for ag in ags:
+        if (
+            not isinstance(ag, dict)
+            or ag.get("actionGroupState") == "DISABLED"
+            or ag.get("parentActionSignature") == "AMAZON.UserInput"
+        ):
+            continue
+        schema = ag.get("functionSchema")
+        if schema is None:
+            continue
+        functions = schema.get("functions") if isinstance(schema, dict) else None
+        if not isinstance(functions, list):
+            malformed += 1
+            continue
+        malformed += sum(1 for fn in functions if not isinstance(fn, dict))
+    return malformed
+
+
+def _bedrock_approval_gate(ags: list[Any]) -> dict[str, Any] | None:
+    """Positive approval gating from action group function ``requireConfirmation`` settings.
+
+    Every action is gated only when every enabled action group (the user-input group asks for
+    information and acts on nothing) defines functions and each one requires confirmation. A
+    code interpreter or an API-schema group carries no per-function setting this reader can
+    verify, so it leaves the gate partial. No confirmation at all records nothing.
+    """
+    acting = [
+        ag
+        for ag in ags
+        if isinstance(ag, dict)
+        and ag.get("actionGroupState") != "DISABLED"
+        and ag.get("parentActionSignature") != "AMAZON.UserInput"
+    ]
+    every = bool(acting) and not _bedrock_malformed_functions(ags)
+    confirmed = total = 0
+    for ag in acting:
+        schema = ag.get("functionSchema")
+        functions = schema.get("functions") if isinstance(schema, dict) else None
+        functions = [fn for fn in functions if isinstance(fn, dict)] if isinstance(functions, list) else []
+        required = sum(1 for fn in functions if fn.get("requireConfirmation") == "ENABLED")
+        confirmed += required
+        total += len(functions)
+        if not functions or required < len(functions):
+            every = False
+    if not confirmed:
+        return None
+    return {
+        "scope": "every-action" if every else "some-actions",
+        "settings": [
+            {
+                "setting": "functionSchema.functions.requireConfirmation",
+                "value": f"ENABLED for {confirmed} of {total} function(s)",
+            }
+        ],
     }
 
 

@@ -12500,6 +12500,9 @@
       "category": "provider",
       "vendor": "OpenAI"
      }
+    ],
+    "threats": [
+     "maestro-2025:L5"
     ]
    },
    "identity_discriminator": "caller",
@@ -12743,6 +12746,9 @@
       "category": "provider",
       "vendor": "Anthropic"
      }
+    ],
+    "threats": [
+     "maestro-2025:L5"
     ]
    },
    "identity_discriminator": "caller",

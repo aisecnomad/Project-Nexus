@@ -84,6 +84,26 @@ def failure_summary(exc: BaseException) -> str:
     return f"HTTP {exc.status}" if isinstance(exc, HttpError) else type(exc).__name__
 
 
+def failure_outcome(exc: BaseException) -> str:
+    """The live scope outcome (``ConnectorContext.attest_operation``) of a failed HTTP collection call.
+
+    Retries have already run when an ``HttpError`` reaches a connector, so a 429 is throttling
+    the client could not wait out. The shared paginators report their page limit in a fixed
+    message; every other failure is ``failed``.
+    """
+    if isinstance(exc, HttpError):
+        if exc.status in (401, 403):
+            return "denied"
+        if exc.status == 429:
+            return "throttled"
+        if exc.status in (404, 501):
+            return "unavailable"
+        return "failed"
+    if isinstance(exc, RuntimeError) and str(exc).startswith("Pagination limit reached"):
+        return "truncated"
+    return "failed"
+
+
 def config_boolean(value: Any, name: str) -> bool:
     """Require the native boolean produced by the configuration boundary."""
     if not isinstance(value, bool):

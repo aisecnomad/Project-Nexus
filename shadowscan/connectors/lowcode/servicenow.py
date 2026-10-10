@@ -358,6 +358,7 @@ class ServiceNowConnector(BaseConnector):
             ):
                 f.add_capability("code-exec")
         else:
+            # Autonomy: initiation evidence (the event-triggered tag), not approval-bypass evidence.
             f.add_capability("autonomous")
             f.add_tag("event-triggered")
         f.add_evidence(
@@ -429,6 +430,7 @@ class ServiceNowConnector(BaseConnector):
             str(_val(a.get("autonomous"))).lower() in {"true", "1", "yes"}
             or "autonomous" in str(_val(a.get("agent_type")) or "").lower()
         ):
+            # Autonomy: approval-bypass evidence (the agent is configured to act without a person).
             f.add_capability("autonomous")
         apply_matches(f, self._optional_name_matches(name, _val(a.get("description"))), weight_scale=0.4)
         f.metadata.update(
@@ -479,6 +481,7 @@ class ServiceNowConnector(BaseConnector):
             )
         )
         if triggers or str(_val(u.get("trigger_type") or "")).lower() not in {"", "manual", "none"}:
+            # Autonomy: initiation evidence (the event-triggered tag), not approval-bypass evidence.
             f.add_capability("autonomous")
             f.add_tag("event-triggered")
         f.metadata.update(

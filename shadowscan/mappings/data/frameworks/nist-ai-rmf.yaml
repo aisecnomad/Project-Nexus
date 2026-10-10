@@ -1,0 +1,26 @@
+framework: nist-ai-rmf
+edition: "1.0"
+prefix: nist-ai-rmf-1.0
+name: NIST AI Risk Management Framework (AI 100-1)
+kind: control
+source_url: https://airc.nist.gov/airmf-resources/airmf/5-sec-core/
+licence: Public domain (US government work)
+checked: "2026-10-10"
+verification: secondary
+notes: >-
+  Subcategory identifiers from the AI RMF Core. Titles are short summaries in
+  the project's own words, not the subcategory text. The NIST site could not
+  be retrieved when this catalog was written, so the identifiers are marked
+  as checked against secondary sources only.
+entries:
+  GOVERN-1.6: {title: Mechanisms exist to inventory AI systems}
+  GOVERN-1.7: {title: AI systems are decommissioned and phased out safely}
+  GOVERN-2.1: {title: Roles and responsibilities for AI risk are documented}
+  GOVERN-3.2: {title: Roles for human-AI configurations and oversight are defined}
+  GOVERN-6.1: {title: Policies address third-party AI risks}
+  MAP-3.5: {title: Human oversight processes are defined and documented}
+  MAP-4.1: {title: Legal and technology risks of AI components are mapped}
+  MEASURE-2.7: {title: AI system security and resilience are evaluated}
+  MEASURE-3.1: {title: Existing and emergent AI risks are tracked over time}
+  MANAGE-3.1: {title: Third-party AI risks are monitored and controlled}
+  MANAGE-4.1: {title: Post-deployment monitoring plans are implemented}

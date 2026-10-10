@@ -20,6 +20,7 @@
 - [ ] `pytest -q --cov=shadowscan --cov-fail-under=80` passes
 - [ ] `make audit` (`pip-audit`) reports no known vulnerabilities
 - [ ] `python -m shadowscan.signatures.validate` passes
+- [ ] `python -m shadowscan.mappings.validate` passes
 - [ ] `make secrets` finds no hardcoded credentials
 - [ ] `make policy` passes (when `.github/`, a top-level document or a docs page changed)
 - [ ] Every commit carries a `Signed-off-by` trailer (`git commit -s`; see the DCO in `CONTRIBUTING.md`)
@@ -40,6 +41,12 @@
 - [ ] `python -m shadowscan.signatures.validate` passes
 - [ ] Evaluation corpus updated and `make evaluate` passes (all bundled corpora)
 - [ ] No false positives introduced on existing negative corpus entries
+
+### Required for mapping changes
+
+- [ ] `python -m shadowscan.mappings.validate` passes
+- [ ] `docs/concepts/mappings-reference.md` regenerated (`make mapping-reference`)
+- [ ] Each changed rule has a test in `tests/unit/test_mappings.py`
 
 ### Required for security-sensitive changes
 

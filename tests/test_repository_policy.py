@@ -41,6 +41,9 @@ ACTION_PIN = re.compile(r"[\w.-]+/[\w.-]+(?:/[\w./-]+)?@[0-9a-f]{40}")
 # Privileges belong only to the job that needs them, never to every workflow.
 WRITE_SCOPES = {
     ("codeql.yml", "analyze"): {"security-events"},
+    # Optional third-party scanners that upload SARIF to code scanning.
+    ("checkmarx-one.yml", "build"): {"security-events"},
+    ("semgrep.yml", "semgrep"): {"security-events"},
     ("scorecard.yml", "analysis"): {"security-events", "id-token"},
     ("release.yml", "attest"): {"attestations", "id-token"},
     ("release.yml", "publish"): {"id-token"},
@@ -565,6 +568,48 @@ def _dockerfile_violations(text: str) -> list[str]:
     return problems
 
 
+def _dockerignore_pattern(pattern: str) -> re.Pattern[str]:
+    """A .dockerignore pattern as Docker's matcher reads it: `**/` spans directories, `*` and `?` do not."""
+    regex, position = "", 0
+    while position < len(pattern):
+        if pattern.startswith("**", position):
+            position += 2
+            if pattern.startswith("/", position):
+                position += 1
+            regex += ".*" if position == len(pattern) else "(?:.*/)?"
+            continue
+        char = pattern[position]
+        regex += "[^/]*" if char == "*" else "[^/]" if char == "?" else re.escape(char)
+        position += 1
+    return re.compile(regex)
+
+
+def _build_context_includes(patterns: list[str], path: str) -> bool:
+    """Whether Docker sends ``path``: the last matching pattern wins, and a matching parent counts."""
+    parts = path.split("/")
+    candidates = ["/".join(parts[:end]) for end in range(1, len(parts) + 1)]
+    included = True
+    for pattern in patterns:
+        regex = _dockerignore_pattern(pattern.removeprefix("!"))
+        if any(regex.fullmatch(candidate) for candidate in candidates):
+            included = pattern.startswith("!")
+    return included
+
+
+def _package_data() -> dict[str, list[str]]:
+    setuptools = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["tool"]["setuptools"]
+    return dict(setuptools["package-data"])
+
+
+def _packaged_files() -> list[str]:
+    """Repository paths of the files the wheel ships: package modules and declared package data."""
+    files = {path for path in (ROOT / "shadowscan").rglob("*.py") if "__pycache__" not in path.parts}
+    for package, globs in _package_data().items():
+        for glob in globs:
+            files.update((ROOT / package.replace(".", "/")).glob(glob))
+    return sorted(path.relative_to(ROOT).as_posix() for path in files if path.is_file())
+
+
 def _dockerignore_violations(text: str) -> list[str]:
     """The build context is an allow-list: exclude everything, re-include files."""
     patterns = [line.strip() for line in text.splitlines() if line.strip() and not line.startswith("#")]
@@ -579,6 +624,17 @@ def _dockerignore_violations(text: str) -> list[str]:
         # untracked files included.
         if target.endswith("/") or target.rsplit("/", 1)[-1] in {"*", "**"} or (ROOT / target).is_dir():
             problems.append(f".dockerignore re-includes the directory {pattern}; re-include files instead")
+    # The image builds its wheel from this context, so it must hold everything
+    # the wheel ships: a missing data directory builds an image whose scans
+    # fail. Each package-data glob is re-included as written, which also covers
+    # globs that match no file yet.
+    for package, globs in _package_data().items():
+        for glob in globs:
+            if f"!{package}/{glob}" not in patterns:
+                problems.append(f".dockerignore does not re-include {package}/{glob}, which the wheel ships")
+    for path in _packaged_files():
+        if not _build_context_includes(patterns, path):
+            problems.append(f".dockerignore leaves {path} out of the build context; the wheel ships it")
     return problems
 
 
@@ -675,6 +731,25 @@ def test_local_make_targets_enforce_the_same_coverage_floors_as_ci() -> None:
 def test_container_build_is_digest_pinned_hash_locked_and_non_root() -> None:
     assert not _violations(ROOT / "Dockerfile")
     assert not _violations(ROOT / ".dockerignore")
+
+
+def test_build_context_matcher_follows_docker_pattern_rules() -> None:
+    patterns = ["**", "!shadowscan/**/*.py", "!shadowscan/data/**/*.yaml", "shadowscan/data/private/*.yaml"]
+    included = {
+        "shadowscan/__init__.py": True,
+        "shadowscan/a/b/c.py": True,
+        "shadowscan/__pycache__/c.cpython-313.pyc": False,
+        "shadowscan/data/x.yaml": True,
+        "shadowscan/data/deep/x.yaml": True,
+        "shadowscan/data/private/x.yaml": False,
+        "shadowscan/data/x.yml": False,
+        "tests/test_x.py": False,
+    }
+    assert {path: _build_context_includes(patterns, path) for path in included} == included
+    # Excluding a directory excludes everything below it, unless a later pattern re-includes it.
+    assert not _build_context_includes(["shadowscan"], "shadowscan/x.py")
+    assert _build_context_includes(["shadowscan", "!shadowscan/x.py"], "shadowscan/x.py")
+    assert {"shadowscan/mappings/data/rules/threats.yaml", "shadowscan/py.typed"} <= set(_packaged_files())
 
 
 def _replace(old: str, new: str) -> Callable[[str], str]:
@@ -988,6 +1063,24 @@ _SELF_SCAN = "run: shadowscan scan -c examples/shadowscan.offline.yaml --format 
             lambda text: text + "!shadowscan/\n",
             "re-includes the directory !shadowscan/",
             id="directory-reinclude",
+        ),
+        pytest.param(
+            ".dockerignore",
+            _replace("!shadowscan/mappings/data/**/*.yaml\n", ""),
+            ".dockerignore leaves shadowscan/mappings/data/rules/threats.yaml out of the build context",
+            id="packaged-data-left-out",
+        ),
+        pytest.param(
+            ".dockerignore",
+            _replace("!shadowscan/signatures/data/**/*.yml\n", ""),
+            "does not re-include shadowscan/signatures/data/**/*.yml",
+            id="packaged-glob-left-out",
+        ),
+        pytest.param(
+            ".dockerignore",
+            lambda text: text + "shadowscan/mappings/data/frameworks/*.yaml\n",
+            "leaves shadowscan/mappings/data/frameworks/owasp-llm.yaml out of the build context",
+            id="packaged-data-excluded-again",
         ),
     ],
 )
@@ -2056,3 +2149,279 @@ def test_label_sync_only_mutates_labels_from_main() -> None:
     assert parsers, "no step parses .github/labels.yml"
     for index in parsers:
         assert index > install and '"$RUNNER_TEMP/labels-venv/bin/python" - <<' in scripts[index]
+
+
+# Consumer examples are copied verbatim into other repositories and clusters, so
+# the weekly drift templates follow the same rules as this repository's workflows.
+DRIFT_WORKFLOW = ROOT / "examples" / "github-action-drift.yml"
+NETWORK_POLICY_EXAMPLE = ROOT / "examples" / "k8s-network-policy.yaml"
+# Every other Kubernetes example runs a workload; the egress policies have their own test.
+KUBERNETES_EXAMPLES = sorted(set((ROOT / "examples").glob("k8s-*.yaml")) - {NETWORK_POLICY_EXAMPLE})
+_DRIFT_CLASSES_GATED = "--fail-on-drift inventory,capability,autonomy,governance"
+
+
+def _drift_job() -> tuple[str, dict[str, Any]]:
+    ((name, job),) = _load(DRIFT_WORKFLOW)["jobs"].items()
+    return name, job
+
+
+def _step_running(job: dict[str, Any], text: str) -> dict[str, Any]:
+    (step,) = [step for step in job["steps"] if text in step.get("run", "")]
+    return step
+
+
+def _joined(script: str) -> str:
+    return " ".join(script.replace("\\\n", " ").split())
+
+
+def test_drift_workflow_is_scheduled_least_privilege_and_fail_closed() -> None:
+    workflow = _load(DRIFT_WORKFLOW)
+    text = DRIFT_WORKFLOW.read_text(encoding="utf-8")
+    # A pull request must never run a job that can assume cloud roles or read the baseline.
+    assert _trigger_names(workflow) == {"schedule", "workflow_dispatch"}
+    assert "pull_request" not in text
+    assert workflow["permissions"] == {"contents": "read"}
+    assert workflow["concurrency"]["cancel-in-progress"] is False
+    name, job = _drift_job()
+    # OIDC federation is the only write scope, and only the collecting job has it.
+    assert job["permissions"] == {"contents": "read", "id-token": "write"}
+    assert job["environment"] == "shadowscan-drift"
+    without_oidc = json.loads(json.dumps(workflow))
+    without_oidc["jobs"][name]["permissions"] = {"contents": "read"}
+    assert not [
+        *_trigger_violations(workflow),
+        *_job_violations(DRIFT_WORKFLOW.name, without_oidc),
+        *_concurrency_violations(DRIFT_WORKFLOW.name, workflow),
+        *_run_violations(DRIFT_WORKFLOW.name, workflow),
+        *_publication_violations(text),
+    ]
+    assert not _SUPPRESSION.search(text), "the drift example must preserve exit codes 2 and 3"
+    checkouts = [step for step in job["steps"] if step.get("uses", "").startswith("actions/checkout@")]
+    assert len(checkouts) == 2 and all(step["with"]["persist-credentials"] is False for step in checkouts)
+    baseline = next(step for step in checkouts if "repository" in step["with"])
+    assert baseline["with"]["repository"] == "${{ vars.SHADOWSCAN_BASELINE_REPOSITORY }}"
+    assert baseline["with"]["token"] == "${{ secrets.SHADOWSCAN_BASELINE_TOKEN }}"
+    (upload,) = [step for step in job["steps"] if step.get("uses", "").startswith("actions/upload-artifact@")]
+    assert upload["with"]["retention-days"] == 14 and upload.get("if") == "always()"
+
+
+def test_drift_workflow_compares_against_a_pinned_unexpired_baseline() -> None:
+    _, job = _drift_job()
+    scan = _joined(_step_running(job, "shadowscan -q scan")["run"])
+    assert '-c "$SHADOWSCAN_CONFIG" --format json -o "$RUNNER_TEMP/current.json"' in scan
+    compare = _joined(_step_running(job, "shadowscan diff")["run"])
+    assert _DRIFT_CLASSES_GATED in compare
+    assert '--baseline-sha256 "$SHADOWSCAN_BASELINE_SHA256"' in compare
+    assert "--max-baseline-age-days 35" in compare
+    # The comparison holds findings: it goes to a file, never the log.
+    assert "--json" in compare and '> "$RUNNER_TEMP/drift.json"' in compare
+    assert compare.endswith('exit "$status"')
+    for step in job["steps"]:
+        if re.search(r"\b(?:python3?|shadowscan)\b", step.get("run", "")):
+            assert step.get("working-directory") == "${{ runner.temp }}", step.get("name")
+    if shutil.which("bash"):
+        for step in job["steps"]:
+            if "run" in step:
+                checked = subprocess.run(
+                    ["bash", "-n"], input=step["run"], text=True, capture_output=True, timeout=30
+                )
+                assert checked.returncode == 0, (step.get("name"), checked.stderr)
+
+
+def _summary_script() -> str:
+    _, job = _drift_job()
+    script = _step_running(job, "GITHUB_STEP_SUMMARY")["run"]
+    return script.split("<<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
+
+
+@pytest.mark.parametrize("comparison", ["drift", "missing", "malformed"])
+def test_drift_workflow_summary_writes_counts_per_class_only(tmp_path: Path, comparison: str) -> None:
+    from shadowscan.comparison import DRIFT_CLASSES, compare_reports
+    from shadowscan.models import Finding, Kind, ScanResult, ScanStats, Surface
+
+    def report(*permissions: str) -> dict[str, Any]:
+        finding = Finding(
+            surface=Surface.CODE,
+            connector="code.filesystem",
+            kind=Kind.AGENT,
+            title="tenant-4711 private agent",
+            resource="acme/private-agent",
+            resource_type="repository",
+            permissions=list(permissions),
+        )
+        scope = {"schema": "shadowscan.collection-scope/v1", "comparable": True, "fingerprint": "a" * 64}
+        return ScanResult(
+            findings=[finding],
+            stats=[ScanStats(connector="code.filesystem", started_at="2026-01-01")],
+            collection_scope=scope,
+        ).to_dict()
+
+    if comparison == "drift":
+        document = compare_reports(report("Mail.Read"), report("Mail.Read", "Mail.Send"))
+        (tmp_path / "drift.json").write_text(json.dumps(document), encoding="utf-8")
+    elif comparison == "malformed":
+        (tmp_path / "drift.json").write_text('{"drift_summary": []}', encoding="utf-8")
+    summary = tmp_path / "summary.md"
+    result = subprocess.run(
+        [sys.executable, "-I", "-"],
+        input=_summary_script(),
+        text=True,
+        capture_output=True,
+        env={"RUNNER_TEMP": str(tmp_path), "GITHUB_STEP_SUMMARY": str(summary)},
+        timeout=60,
+    )
+    assert result.returncode == 0 and not result.stdout and not result.stderr, result.stderr
+    written = summary.read_text(encoding="utf-8")
+    assert "tenant-4711" not in written and "private-agent" not in written and "Mail" not in written
+    if comparison == "drift":
+        assert "| capability | 1 | yes |" in written
+        assert all(f"| {name} |" in written for name in DRIFT_CLASSES)
+    else:
+        assert written == "No drift result: see the exit codes of the scan and comparison steps.\n"
+
+
+# (scan exit, diff exit, job exit): a scan that failed its own gate fails the job even when
+# the comparison passes, and the comparison's verdict wins whenever it is not 0.
+_EXIT_PROPAGATION = [(0, 0, 0), (2, 0, 2), (3, 0, 3), (0, 2, 2), (0, 3, 3), (2, 3, 3), (3, 2, 2), (1, 0, 1)]
+_STUB_SHADOWSCAN = """#!/bin/sh
+for arg do
+  case "$prev" in -o) printf '{}' > "$arg" ;; esac
+  prev="$arg"
+done
+case " $* " in *" scan "*) exit "$STUB_SCAN_EXIT" ;; esac
+printf '{}'
+exit "$STUB_DIFF_EXIT"
+"""
+
+
+def _stub_environment(tmp_path: Path, scan: int, diff: int) -> dict[str, str]:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    stub = bin_dir / "shadowscan"
+    stub.write_text(_STUB_SHADOWSCAN, encoding="utf-8")
+    stub.chmod(0o755)
+    return {
+        "PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}",
+        "STUB_SCAN_EXIT": str(scan),
+        "STUB_DIFF_EXIT": str(diff),
+        "SHADOWSCAN_BASELINE_SHA256": "a" * 64,
+    }
+
+
+@pytest.mark.skipif(not shutil.which("bash"), reason="needs bash")
+@pytest.mark.parametrize(("scan", "diff", "expected"), _EXIT_PROPAGATION)
+def test_drift_workflow_job_fails_when_the_scan_or_the_comparison_does(
+    tmp_path: Path, scan: int, diff: int, expected: int
+) -> None:
+    _, job = _drift_job()
+    config = tmp_path / "shadowscan.yaml"
+    config.write_text("connectors: []\n", encoding="utf-8")
+    env = {
+        **_stub_environment(tmp_path, scan, diff),
+        "RUNNER_TEMP": str(tmp_path),
+        "SHADOWSCAN_CONFIG": str(config),
+        "SHADOWSCAN_BASELINE": str(tmp_path / "baseline.json"),
+    }
+    status = 0
+    for text in ("shadowscan -q scan", "shadowscan diff"):
+        step = subprocess.run(
+            ["bash", "-c", _step_running(job, text)["run"]],
+            cwd=tmp_path,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        status = step.returncode
+        if text.endswith("scan") and status not in (0, 2, 3):
+            break  # the job stops at a scan that produced no usable result
+    assert status == expected
+
+
+@pytest.mark.skipif(not shutil.which("sh"), reason="needs sh")
+@pytest.mark.parametrize(("scan", "diff", "expected"), _EXIT_PROPAGATION)
+def test_kubernetes_drift_cronjob_fails_when_the_scan_or_the_comparison_does(
+    tmp_path: Path, scan: int, diff: int, expected: int
+) -> None:
+    (cronjob,) = yaml.safe_load_all(
+        (ROOT / "examples" / "k8s-drift-cronjob.yaml").read_text(encoding="utf-8")
+    )
+    ((script,),) = [container["args"] for container in _pod_spec(cronjob)["containers"]]
+    for mount in ("/output", "/config", "/baseline"):
+        (tmp_path / mount.strip("/")).mkdir()
+        script = script.replace(f"{mount}/", f"{tmp_path}{mount}/")
+    result = subprocess.run(
+        ["sh", "-c", script],
+        cwd=tmp_path,
+        env=_stub_environment(tmp_path, scan, diff),
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == expected, result.stderr
+
+
+def _pod_spec(manifest: dict[str, Any]) -> dict[str, Any]:
+    if manifest["kind"] == "CronJob":
+        return manifest["spec"]["jobTemplate"]["spec"]["template"]["spec"]
+    return manifest["spec"]["template"]["spec"]
+
+
+@pytest.mark.parametrize("path", KUBERNETES_EXAMPLES, ids=lambda path: path.name)
+def test_kubernetes_examples_run_non_root_read_only_and_digest_pinned(path: Path) -> None:
+    manifests = list(yaml.safe_load_all(path.read_text(encoding="utf-8")))
+    workloads = [manifest for manifest in manifests if manifest["kind"] in {"Job", "CronJob"}]
+    assert workloads, f"{path.name} defines no Job or CronJob"
+    for workload in workloads:
+        job = workload["spec"]["jobTemplate"]["spec"] if workload["kind"] == "CronJob" else workload["spec"]
+        assert job["backoffLimit"] == 0
+        assert type(job["activeDeadlineSeconds"]) is int and job["activeDeadlineSeconds"] > 0
+        pod = _pod_spec(workload)
+        assert pod["restartPolicy"] == "Never" and pod["automountServiceAccountToken"] is False
+        context = pod["securityContext"]
+        assert context["runAsNonRoot"] is True and context["seccompProfile"] == {"type": "RuntimeDefault"}
+        for container in pod["containers"]:
+            assert re.fullmatch(r"\S+@sha256:\S+", container["image"]), container["image"]
+            security = container["securityContext"]
+            assert security["allowPrivilegeEscalation"] is False
+            assert security["readOnlyRootFilesystem"] is True
+            assert security["capabilities"] == {"drop": ["ALL"]}
+            assert "limits" in container["resources"]
+
+
+def test_kubernetes_network_policy_example_denies_egress_unless_live() -> None:
+    deny, live = yaml.safe_load_all(NETWORK_POLICY_EXAMPLE.read_text(encoding="utf-8"))
+    scanner = {"app.kubernetes.io/name": "shadowscan"}
+    # NetworkPolicies are additive: a pod without the live label matches only the deny-all policy.
+    assert deny["kind"] == live["kind"] == "NetworkPolicy"
+    assert deny["spec"] == {"podSelector": {"matchLabels": scanner}, "policyTypes": ["Egress"], "egress": []}
+    assert live["spec"]["podSelector"] == {"matchLabels": {**scanner, "shadowscan-mode": "live"}}
+    assert live["spec"]["policyTypes"] == ["Egress"]
+    blocks = [peer["ipBlock"] for rule in live["spec"]["egress"] for peer in rule["to"] if "ipBlock" in peer]
+    (https,) = [rule for rule in live["spec"]["egress"] if any("ipBlock" in peer for peer in rule["to"])]
+    assert https["ports"] == [{"protocol": "TCP", "port": 443}]
+    # Private, carrier-grade NAT and link-local (cloud metadata) ranges and Azure's wire server.
+    private = {"10.0.0.0/8", "100.64.0.0/10", "169.254.0.0/16", "172.16.0.0/12", "192.168.0.0/16"}
+    (block,) = blocks
+    assert block["cidr"] == "0.0.0.0/0" and private | {"168.63.129.16/32"} <= set(block["except"])
+
+
+def test_kubernetes_drift_cronjob_never_overlaps_and_mounts_inputs_read_only() -> None:
+    (cronjob,) = yaml.safe_load_all(
+        (ROOT / "examples" / "k8s-drift-cronjob.yaml").read_text(encoding="utf-8")
+    )
+    assert cronjob["kind"] == "CronJob" and cronjob["spec"]["concurrencyPolicy"] == "Forbid"
+    pod = _pod_spec(cronjob)
+    (container,) = pod["containers"]
+    mounts = {mount["name"]: mount for mount in container["volumeMounts"]}
+    for name in ("config", "baseline"):
+        # Volume keys are links, which ShadowScan refuses; subPath mounts the file itself.
+        assert mounts[name]["readOnly"] is True and mounts[name]["subPath"]
+    volumes = {volume["name"]: volume for volume in pod["volumes"]}
+    assert "emptyDir" in volumes["output"]
+    (script,) = container["args"]
+    assert _DRIFT_CLASSES_GATED in _joined(script)
+    assert not _SUPPRESSION.search(script) and script.rstrip().endswith('exit "$status"')
+    if shutil.which("sh"):
+        checked = subprocess.run(["sh", "-n"], input=script, text=True, capture_output=True, timeout=30)
+        assert checked.returncode == 0, checked.stderr

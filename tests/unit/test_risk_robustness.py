@@ -37,6 +37,7 @@ from shadowscan.models import (
     now_iso,
 )
 from shadowscan.risk import (
+    AUTONOMY_WEIGHTS,
     CAPABILITY_WEIGHTS,
     GOVERNANCE_WEIGHTS,
     KIND_BASE,
@@ -305,6 +306,19 @@ def test_unusual_confidences_scale_without_error_and_keep_the_factors_exact(conf
     clamped = 1.0 if confidence != confidence else max(0.0, min(1.0, float(confidence)))
     assert risk.score == _documented_score(75, clamped)
     assert sum(factor.weight for factor in risk.factors) == risk.score
+
+
+def test_governance_keys_are_the_documented_factors():
+    # mcp-not-in-approved-registry joined the governance factors with options.mcp_registries.
+    assert set(GOVERNANCE_WEIGHTS) == {"shadow", "registered", "no-owner", "mcp-not-in-approved-registry"}
+    with pytest.raises(ValueError) as failure:
+        RiskPolicy.from_options({"governance": {"unregistered": 5}})
+    assert str(failure.value) == (
+        "risk_weights.governance.unregistered must be one of shadow, registered, no-owner, "
+        "mcp-not-in-approved-registry"
+    )
+    policy = RiskPolicy.from_options({"governance": {"mcp-not-in-approved-registry": 20}})
+    assert policy.governance["mcp-not-in-approved-registry"] == 20
 
 
 def test_danger_basis_omits_zero_weight_governance_factors():
@@ -848,7 +862,7 @@ def test_builtin_tag_keys_do_not_warn(caplog, monkeypatch):
 
 # The default weights are policy: a change moves every score, so it has to be deliberate. When this
 # fails, update docs/concepts/risk.md, the changelog and the migration notes, then this digest.
-_DEFAULT_WEIGHTS_DIGEST = "4deaeb53fc5c5530aeb1aed0bfca422893584ea76885cdd5351465fa1542030b"
+_DEFAULT_WEIGHTS_DIGEST = "cf6e45d0caea34ff896417d086fc78c82faba500cbb7b40ad03eaefd83330618"
 
 
 def test_default_risk_weights_change_only_deliberately():
@@ -858,6 +872,7 @@ def test_default_risk_weights_change_only_deliberately():
         "tags": TAG_WEIGHTS,
         "providers": PROVIDER_WEIGHTS,
         "governance": GOVERNANCE_WEIGHTS,
+        "autonomy": AUTONOMY_WEIGHTS,
     }
     digest = hashlib.sha256(json.dumps(tables, sort_keys=True).encode()).hexdigest()
     assert digest == _DEFAULT_WEIGHTS_DIGEST, f"the default risk weights changed (new digest {digest})"

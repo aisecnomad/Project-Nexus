@@ -65,7 +65,12 @@ Issues = "https://github.com/aisecnomad/Project-Nexus/issues"
 include = ["shadowscan*"]
 
 [tool.setuptools.package-data]
-shadowscan = ["signatures/data/**/*.yaml", "signatures/data/**/*.yml", "py.typed"]
+shadowscan = [
+  "signatures/data/**/*.yaml",
+  "signatures/data/**/*.yml",
+  "mappings/data/**/*.yaml",
+  "py.typed",
+]
 
 [tool.ruff]
 line-length = 110

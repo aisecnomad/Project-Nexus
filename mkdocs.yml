@@ -108,6 +108,9 @@ nav:
       - Inventory: inventory.md
       - Scanning: scanning.md
       - Risk scoring: concepts/risk.md
+      - Autonomy tiers: concepts/autonomy.md
+      - Threat and control mappings: concepts/mappings.md
+      - Mapping catalog reference: concepts/mappings-reference.md
       - Severity and enforcement: severity.md
   - Operations:
       - Production deployment: production.md
@@ -115,6 +118,8 @@ nav:
       - Assurance results (2026-09-24): assurance-results.md
       - Tenant canaries: canaries.md
       - CI integration: operations/ci.md
+      - Operational controls: operations/operational-controls.md
+      - Scheduled drift detection: operations/drift.md
       - AI bill of materials: operations/ai-bom.md
       - OCSF events: operations/ocsf.md
       - LLM triage: operations/llm-triage.md
@@ -126,6 +131,7 @@ nav:
       - Contributing: contributing.md
       - Testing: testing.md
       - Governance: governance.md
+      - "Proposals: agent governance": proposals/agent-governance.md
       - Maintainer onboarding: maintainer-onboarding.md
       - ADRs:
           - adrs/index.md
@@ -141,9 +147,11 @@ nav:
           - Models: api/models.md
           - Config: api/config.md
           - Risk: api/risk.md
+          - Autonomy: api/autonomy.md
           - Merge: api/merge.md
           - Correlation: api/correlation.md
           - Inventory registry: api/registry.md
+          - Vendor registries: api/registries.md
       - Connectors:
           - Base: api/base.md
       - Utilities:

@@ -1,12 +1,15 @@
 name: CI Black Duck security scan
 
-# Optional third-party SAST/SCA. The job runs only when a Black Duck SCA
-# server is configured (repository variable BLACKDUCKSCA_URL and secret
-# BLACKDUCKSCA_TOKEN); without one the action has nothing to scan against
-# and fails. Pull requests from forks receive no secrets, so the job is
-# limited to same-repository events. Pull-request comments or SARIF upload
-# would need write scopes that tests/test_repository_policy.py must allow
-# for this workflow explicitly.
+# Optional third-party SAST/SCA through Black Duck SCA, Coverity, Polaris or
+# Software Risk Manager (https://github.com/blackduck-inc/black-duck-security-scan),
+# pinned by full commit SHA. The job runs only when at least one of those
+# services is configured as a repository variable (BLACKDUCKSCA_URL,
+# COVERITY_URL, POLARIS_SERVER_URL or SRM_URL) with its secret; without one the
+# action has nothing to scan against and fails. Pull requests from forks
+# receive no secrets, so the job is limited to same-repository events. The
+# action gets no GitHub token, so it neither comments on pull requests nor
+# uploads SARIF; either would need a write scope that
+# tests/test_repository_policy.py must allow for this job explicitly.
 on:
   push:
     branches: [main]
@@ -21,7 +24,8 @@ permissions:
 jobs:
   build:
     if: >-
-      vars.BLACKDUCKSCA_URL != '' &&
+      (vars.BLACKDUCKSCA_URL != '' || vars.COVERITY_URL != '' ||
+       vars.POLARIS_SERVER_URL != '' || vars.SRM_URL != '') &&
       (github.event_name != 'pull_request' ||
        github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-latest
@@ -32,8 +36,17 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Black Duck SCA scan
+      - name: Black Duck security scan
         uses: blackduck-inc/black-duck-security-scan@805cbd09e806b01907bbea0f990723c2bb85abe9
         with:
           blackducksca_url: ${{ vars.BLACKDUCKSCA_URL }}
           blackducksca_token: ${{ secrets.BLACKDUCKSCA_TOKEN }}
+          coverity_url: ${{ vars.COVERITY_URL }}
+          coverity_user: ${{ secrets.COVERITY_USER }}
+          coverity_passphrase: ${{ secrets.COVERITY_PASSPHRASE }}
+          polaris_server_url: ${{ vars.POLARIS_SERVER_URL }}
+          polaris_access_token: ${{ secrets.POLARIS_ACCESS_TOKEN }}
+          polaris_assessment_types: "SCA,SAST"
+          srm_url: ${{ vars.SRM_URL }}
+          srm_apikey: ${{ secrets.SRM_API_KEY }}
+          srm_assessment_types: "SCA,SAST"

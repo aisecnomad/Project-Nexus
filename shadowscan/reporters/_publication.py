@@ -18,6 +18,15 @@ _TERMINAL_CONTROLS = re.compile(
 )
 
 
+def unassessed_count(result: ScanResult) -> int:
+    """Findings without a shadow status in a report that has an inventory.
+
+    Only a fleet merge produces them: a finding that only sources scanned
+    without an inventory reported. Rendering them blank would read as clean.
+    """
+    return sum(1 for f in result.findings if f.shadow is None) if has_inventory(result) else 0
+
+
 def has_inventory(result: ScanResult) -> bool:
     """Include empty supplied inventories and results made by older direct callers."""
     return (

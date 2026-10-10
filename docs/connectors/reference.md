@@ -142,7 +142,7 @@ Also accepted: `label`.
 
 ### `identity.entra`
 
-Entra ID service principals, OAuth consent grants, app-only permissions and app registrations via Microsoft Graph.
+Entra ID service principals, OAuth consent grants, app-only permissions, app registrations, Agent ID agent identities and Microsoft Agent 365 packages via Microsoft Graph.
 
 Offline input: JSON / JSONL / YAML / CSV export.
 
@@ -151,9 +151,15 @@ Offline input: JSON / JSONL / YAML / CSV export.
 | `tenant_id` | env AZURE\_TENANT\_ID |
 | `client_id` | env AZURE\_CLIENT\_ID |
 | `client_secret` | env AZURE\_CLIENT\_SECRET |
-| `access_token` | pre-issued Graph token (env GRAPH\_ACCESS\_TOKEN) instead of client credentials |
+| `access_token` | pre-issued Graph token (env GRAPH\_ACCESS\_TOKEN) instead of client credentials; with include\_agent\_registry and tenant\_id, its tid claim must equal tenant\_id; with an opt-in agent collection, a decodable token must be a Microsoft Graph token (aud), and one that is not app-only (idtyp app, no scp) gives caller-scoped listings and an incomplete scan |
+| `auth_mode` | app-only (default: client credentials or access\_token) or delegated (a signed-in user's Graph token read from the environment variable named by delegated\_token\_env; never refreshed) |
+| `delegated_token_env` | name of the environment variable that holds the delegated Graph token (default GRAPH\_DELEGATED\_TOKEN); the token itself is never configuration |
 | `include_first_party` | include Microsoft first-party service principals (default false, Copilot SPs always kept) |
-| `max_app_role_lookups` | cap on per-SP appRoleAssignments calls (default 2000) |
+| `max_app_role_lookups` | cap on per-principal appRoleAssignments calls, agent identities included (default 2000) |
+| `include_agent_identities` | collect Entra Agent ID agent identities from the Graph beta API (default false) |
+| `include_agent_registry` | collect Microsoft Agent 365 catalog packages as registry records (default false; needs CopilotPackages.Read.All) |
+| `agent_registry_api` | Graph version for the Agent 365 package catalog: v1.0 (default) or beta |
+| `max_package_lookups` | cap on per-package detail calls (default 2000) |
 | `input` | offline: JSON export of Graph objects |
 | `max_input_bytes` | offline: maximum expanded bytes read across all input files (default 256 MiB, hard ceiling 512 MiB) |
 | `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
@@ -530,7 +536,7 @@ Also accepted: `label`.
 
 ### `cloud.aws`
 
-Bedrock Agents / AgentCore, Lambda, ECS, SageMaker, Step Functions, Q Business, Lex, IAM grants, secret names and CloudTrail LLM callers.
+Bedrock Agents / AgentCore, Lambda, ECS, SageMaker, Step Functions, Q Business, Lex, IAM grants, secret names and CloudTrail LLM callers; opt-in AWS Agent Registry and AgentCore registry records.
 
 Requires: `boto3`. Offline input: JSONL dump of records.
 
@@ -541,10 +547,12 @@ Requires: `boto3`. Offline input: JSONL dump of records.
 | `account_id` | expected AWS account id for live scans (verified through STS); account label for offline exports |
 | `allow_instance_credentials` | allow EC2/ECS credential discovery (default false; inherited from options) |
 | `regions` | regions to scan (default \['us-east-1', 'us-west-2', 'eu-west-1', 'eu-central-1', 'ap-southeast-1', 'ap-northeast-1'\]; 'all' = every enabled region) |
-| `services` | subset of: bedrock, agentcore, lambda, ecs, sagemaker, stepfunctions, qbusiness, lex, iam, secrets, cloudtrail (default all) |
+| `services` | subset of: bedrock, agentcore, lambda, ecs, sagemaker, stepfunctions, qbusiness, lex, iam, secrets, cloudtrail, registry (default: all except registry) |
 | `cloudtrail_days` | look-back window in days for LLM invocation events, a non-negative integer (default 7, 0 disables) |
 | `max_lambda` | cap on Lambda functions per region, a positive integer (default 2000) |
 | `max_ecs_api_calls` | cap on ECS list/detail API calls per region, a positive integer (default 2000; reaching it marks coverage incomplete) |
+| `max_registry_records` | cap on registry records per region and registry namespace, a positive integer (default 1000; reaching it marks coverage incomplete) |
+| `registry_arns` | exact agent-registry registry ARNs of other accounts to read through the discovery API, which lists approved records only (needs services: registry) |
 | `input` | offline: JSONL of dumped records |
 | `max_input_bytes` | offline: maximum expanded bytes read across all input files (default 256 MiB, hard ceiling 512 MiB) |
 | `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
@@ -574,7 +582,7 @@ Also accepted: `label`.
 
 ### `cloud.gcp`
 
-Vertex AI Agent Engine, Dialogflow CX, Agentspace/Discovery Engine, Cloud Run/Functions, IAM bindings, service accounts, Gemini API keys, secret names, audit-log callers.
+Vertex AI Agent Engine, Dialogflow CX, Agentspace/Discovery Engine, Cloud Run/Functions, IAM bindings, service accounts, Gemini API keys, secret names, audit-log callers; opt-in Agent Registry and Gemini Enterprise agent catalogs.
 
 Offline input: JSONL dump of records.
 
@@ -588,6 +596,11 @@ Offline input: JSONL dump of records.
 | `audit_days` | look back N days in Cloud Audit Logs for Vertex callers, a non-negative integer (default 0 = off) |
 | `max_projects` | cap on projects scanned, a positive integer (default 200) |
 | `max_pages` | maximum pages per paginated call, capped at 1000 (default 1000; resource lists stop at 500 pages and audit-log queries at 50 pages regardless) |
+| `agent_registry` | read Google Agent Registry agents, MCP servers and endpoints as registry records where agentregistry.googleapis.com is enabled (default false) |
+| `agent_registry_version` | Agent Registry API version: v1 (default) or v1alpha (experimental; adds skills and publishers) |
+| `agent_registry_locations` | Agent Registry locations to list (default: every location the API reports; when set, listings are never complete for reconciliation) |
+| `gemini_enterprise` | read the agents of Gemini Enterprise apps (Discovery Engine v1alpha, caller-scoped) as registry records (default false) |
+| `discovery_collections` | Discovery Engine collections whose engines are listed (default \["default\_collection"\]) |
 | `input` | offline: JSONL dump of records |
 | `max_input_bytes` | offline: maximum expanded bytes read across all input files (default 256 MiB, hard ceiling 512 MiB) |
 | `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
@@ -703,13 +716,17 @@ Offline input: JSON / JSONL (exported endpoint records or osquery results).
 
 ### `endpoint.mcp`
 
-Analyze offline MCP server tool, resource, and prompt inventory exports.
+MCP and A2A endpoint inventory: offline MCP tool-list exports and opt-in A2A Agent Card probes.
 
 Offline input: JSON / JSONL / YAML export.
 
 | Key | Description |
 | --- | --- |
-| `input` | Offline MCP list-responses JSON / JSONL export; live probes require explicit opt-in. |
+| `input` | Offline MCP list-responses JSON / JSONL export, or A2A card records from --dump-records. |
+| `agent_card_urls` | opt-in live probe: list of HTTPS A2A Agent Card URLs or agent origins; an origin is probed at /.well-known/agent-card.json (then /.well-known/agent.json on 404); URLs inside a card are never fetched; refused together with input |
+| `max_agent_cards` | maximum number of agent\_card\_urls (default 100); a longer list is refused, never truncated |
+| `agent_card_jwks_url` | optional operator-trusted HTTPS JWKS endpoint that verifies Agent Card signatures; keys or key URLs named by a card are never used |
+| `ca_bundle` | optional PEM file trusted instead of the default CA store for Agent Card and JWKS endpoints (private CA) |
 | `max_input_bytes` | offline: maximum expanded bytes read across all input files (default 256 MiB, hard ceiling 512 MiB) |
 | `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
 | `max_input_files` | offline: maximum files read from a directory input (default 10,000) |

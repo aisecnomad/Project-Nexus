@@ -348,7 +348,9 @@ class GitHubConnector(RemoteRepositoryConnector):
                 f"code.github: API mode samples repository {full}; source coverage partial",
                 incomplete=True,
             )
-        dest, fetched = self._write_api_snapshot(repo, blobs, selected, tmp, f" in {full}")
+        dest, fetched = self._write_api_snapshot(
+            repo, blobs, selected, tmp, f" in {full}", tree_paths=[t["path"] for t in entries]
+        )
         self.log.info("code.github: %s fetched %d/%d files via API", full, fetched, len(paths))
         return dest
 

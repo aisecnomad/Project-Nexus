@@ -7,6 +7,7 @@ import hashlib
 import json
 import logging
 import os
+import string
 import sys
 import traceback
 from collections.abc import Callable, Sequence
@@ -23,7 +24,15 @@ from rich.table import Table
 from rich.text import Text
 
 from shadowscan import __version__
-from shadowscan.comparison import MAX_REPORT_BYTES, compare_reports, load_report
+from shadowscan.comparison import (
+    DRIFT_CLASSES,
+    MAX_BASELINE_AGE_DAYS,
+    MAX_REPORT_BYTES,
+    ReportDigestMismatch,
+    compare_reports,
+    load_report,
+    load_report_with_digest,
+)
 from shadowscan.config import (
     ConfigValidationError,
     ConnectorSpec,
@@ -52,6 +61,14 @@ from shadowscan.endpoint import (
 from shadowscan.engine import Engine
 from shadowscan.errors import SetupError
 from shadowscan.fleet import merge_reports, source_names
+from shadowscan.mcp_registry import (
+    DEFAULT_MAX_PAGES,
+    DEFAULT_REGISTRY_URL,
+    PAGE_LIMIT,
+    SnapshotError,
+    fetch_snapshot,
+    registry_base_url,
+)
 from shadowscan.models import Finding, ScanResult, ScanStats, Surface, now_iso
 from shadowscan.registry import Inventory, card_stub_for
 from shadowscan.reporters import FORMATS, render
@@ -1180,6 +1197,8 @@ def inventory_check(paths: tuple[str, ...]) -> None:
     for link in inv.skipped_links:
         message = f"warning: inventory {link}: symbolic link skipped (links are not followed)"
         err_console.print(Text(terminal_text(message), style="yellow"))
+    for notice in inv.autonomy_warnings():
+        err_console.print(Text(terminal_text(f"warning: {notice}"), style="yellow"))
     table = Table(title=f"{len(inv)} registered agents", header_style="bold")
     table.add_column("Agent id")
     table.add_column("Name")
@@ -1260,7 +1279,90 @@ def inventory_stubs(findings_json: str, out_dir: str, kinds: str, min_risk: str)
     console.print(Text(terminal_text(f"wrote {n} capability card stub(s) to {out}"), style="green"))
 
 
+# -------------------------------------------------------------- mcp registry
+@main.group("mcp-registry")
+def mcp_registry() -> None:
+    """Produce MCP Registry snapshots to pin in options.mcp_registries."""
+
+
+@mcp_registry.command("snapshot")
+@click.option(
+    "--url",
+    default=DEFAULT_REGISTRY_URL,
+    show_default=True,
+    help="base URL of a registry serving the MCP Registry API (HTTPS only)",
+)
+@click.option(
+    "--output",
+    "-o",
+    type=click.Path(dir_okay=False),
+    required=True,
+    help="snapshot file to write (mode 0600)",
+)
+@click.option(
+    "--max-pages",
+    type=click.IntRange(1, DEFAULT_MAX_PAGES),
+    default=DEFAULT_MAX_PAGES,
+    show_default=True,
+    help=f"fail without writing when the listing has more pages of {PAGE_LIMIT} server versions",
+)
+@click.option(
+    "--ca-bundle",
+    type=click.Path(exists=True, dir_okay=False),
+    help="PEM CA bundle for a registry behind private PKI; verification stays on",
+)
+@click.option(
+    "--allow-private-origin",
+    is_flag=True,
+    help="allow a registry on a private address; HTTPS and origin checks still apply",
+)
+def mcp_registry_snapshot(
+    url: str, output: str, max_pages: int, ca_bundle: str | None, allow_private_origin: bool
+) -> None:
+    """List every server version of an MCP registry (deleted ones included) into a pinned snapshot.
+
+    The listing is complete or nothing is written: a failed request, an invalid page, a
+    repeated cursor or a page or size limit exits 3. The SHA-256 to pin is printed on stdout.
+    """
+    try:
+        registry_base_url(url, allow_private_origin=allow_private_origin)
+    except SnapshotError as exc:
+        raise click.BadParameter(str(exc), param_hint="--url") from None
+    try:
+        text = fetch_snapshot(
+            url, max_pages=max_pages, ca_bundle=ca_bundle, allow_private_origin=allow_private_origin
+        )
+    except SnapshotError as exc:
+        err_console.print(Text(terminal_text(f"error: {exc}; no snapshot written"), style="red"))
+        sys.exit(3)
+    try:
+        write_private_text(output, text)
+    except (OSError, ValueError):
+        raise click.ClickException("could not write snapshot; check output path and permissions") from None
+    digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    note = f"wrote MCP registry snapshot to {output}; pin it with sha256: {digest}"
+    err_console.print(Text(terminal_text(note), style="green"))
+    click.echo(digest)
+
+
 # ---------------------------------------------------------------------- diff
+def _drift_classes_option(ctx: click.Context, param: click.Parameter, value: str | None) -> tuple[str, ...]:
+    if value is None:
+        return ()
+    names = [name.strip() for name in value.split(",")]
+    if any(name not in DRIFT_CLASSES for name in names):
+        raise click.BadParameter(f"expected a comma-separated list of {', '.join(DRIFT_CLASSES)}")
+    return tuple(dict.fromkeys(names))
+
+
+def _sha256_option(ctx: click.Context, param: click.Parameter, value: str | None) -> str | None:
+    if value is None:
+        return None
+    if len(value) != 64 or any(character not in string.hexdigits for character in value):
+        raise click.BadParameter("expected a SHA-256 digest of 64 hexadecimal characters")
+    return value.lower()
+
+
 @main.command()
 @click.argument("baseline", type=click.Path(exists=True, dir_okay=False))
 @click.argument("current", type=click.Path(exists=True, dir_okay=False))
@@ -1274,6 +1376,32 @@ def inventory_stubs(findings_json: str, out_dir: str, kinds: str, min_risk: str)
     ),
 )
 @click.option(
+    "--fail-on-drift",
+    "fail_on_drift",
+    metavar="CLASSES",
+    callback=_drift_classes_option,
+    help=(
+        "exit 2 if the comparison has adverse drift in any of these comma-separated classes "
+        f"({', '.join(DRIFT_CLASSES)}); an incomplete comparison still exits 3"
+    ),
+)
+@click.option(
+    "--baseline-sha256",
+    metavar="HEX",
+    callback=_sha256_option,
+    help="refuse the baseline (exit 1) unless the SHA-256 of its file is HEX, as sha256sum prints it",
+)
+@click.option(
+    "--max-baseline-age-days",
+    type=click.IntRange(min=1, max=MAX_BASELINE_AGE_DAYS),
+    default=None,
+    metavar="DAYS",
+    help=(
+        "make the comparison incomplete (exit 3) if the baseline scan started more than this many "
+        "days ago, has no valid start time, or started after the current scan"
+    ),
+)
+@click.option(
     "--shadow-only",
     is_flag=True,
     help=(
@@ -1281,15 +1409,33 @@ def inventory_stubs(findings_json: str, out_dir: str, kinds: str, min_risk: str)
         "inventory); counts, incompleteness reasons and exit codes still cover every finding"
     ),
 )
-def diff(baseline: str, current: str, as_json: bool, fail_on_new: bool, shadow_only: bool) -> None:
+def diff(
+    baseline: str,
+    current: str,
+    as_json: bool,
+    fail_on_new: bool,
+    fail_on_drift: tuple[str, ...],
+    baseline_sha256: str | None,
+    max_baseline_age_days: int | None,
+    shadow_only: bool,
+) -> None:
     """Compare reports; missing findings require complete, comparable scans to resolve."""
     try:
+        baseline_report, digest = load_report_with_digest(baseline, expected_sha256=baseline_sha256)
+    except ReportDigestMismatch:
+        # Nothing from an unreviewed baseline is parsed or echoed.
+        raise click.ClickException("baseline digest does not match --baseline-sha256") from None
+    except (ValueError, TypeError, OSError):
+        raise click.ClickException("invalid comparison input; expected two ShadowScan JSON reports") from None
+    try:
         comparison = compare_reports(
-            load_report(baseline),
+            baseline_report,
             load_report(current),
+            max_baseline_age_days=max_baseline_age_days,
         )
     except (ValueError, TypeError, OSError):
         raise click.ClickException("invalid comparison input; expected two ShadowScan JSON reports") from None
+    comparison["baseline"].update(sha256=digest, pinned=baseline_sha256 is not None)
 
     def displayed(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
         # shadow is tri-state: None means no inventory was supplied, which is
@@ -1322,6 +1468,13 @@ def diff(baseline: str, current: str, as_json: bool, fail_on_new: bool, shadow_o
             f" [bold]{len(unknown)} unknown[/bold], [bold]{len(changed)} changed[/bold],"
             f" [bold]{len(local_baseline) + len(local_current)} not comparable[/bold]"
         )
+        totals = ", ".join(f"{name} {count}" for name, count in comparison["drift_summary"].items())
+        adverse = [name for name, flagged in comparison["adverse"].items() if flagged]
+        console.print(
+            f"drift: {totals}" + (f" (adverse: {', '.join(adverse)})" if adverse else ""),
+            markup=False,
+            highlight=False,
+        )
         for reason in comparison["reasons"]:
             console.print(f"Comparison incomplete: {reason}", markup=False)
         # Imported titles and resources are untrusted: Rich's highlighter is
@@ -1342,10 +1495,15 @@ def diff(baseline: str, current: str, as_json: bool, fail_on_new: bool, shadow_o
             x, y = change["before"], change["after"]
             fields_changed = ", ".join(change["changed_fields"])
             line = f"  ~ {y['title']}: {fields_changed} (risk {x['risk']['score']} → {y['risk']['score']})"
+            classes = list(dict.fromkeys(entry["class"] for entry in change["drift"]))
+            if classes:
+                line += f" [{', '.join(classes)}]"
             console.print(terminal_text(line), markup=False, highlight=False)
     if not comparison["comparable"]:
         raise click.exceptions.Exit(3)
     if fail_on_new and (comparison["new"] or any(_risk_rose(change) for change in comparison["changed"])):
+        raise click.exceptions.Exit(2)
+    if any(comparison["adverse"][name] for name in fail_on_drift):
         raise click.exceptions.Exit(2)
 
 

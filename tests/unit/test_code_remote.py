@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import json
 import shutil
 import subprocess
 from pathlib import Path
@@ -1071,6 +1072,39 @@ def _api_snapshot_with_a_pointer(tmp_path, index, monkeypatch, cls, **config):
     dest, written = connector._write_api_snapshot({}, blobs, list(blobs), str(tmp_path), " in acme/app")
     assert written == 2 and Path(dest, "app.py").exists()
     return connector.ctx.stats
+
+
+@pytest.mark.parametrize("cls", PROVIDERS)
+@pytest.mark.parametrize("dropped", ["not-selected", "download-failed"])
+def test_api_snapshot_missing_a_settings_file_keeps_the_gate_partial(
+    tmp_path, index, monkeypatch, cls, dropped
+):
+    # Regression: a settings file of the tree that API mode did not write (a link, too big, past
+    # the sample cap, or a failed download) left the fetched settings.json to claim an
+    # every-action gate; the delegated filesystem scan now records it as unreadable.
+    connector = _connector(index, cls)
+    gated = json.dumps({"permissions": {"defaultMode": "default"}}).encode()
+    bypass = json.dumps({"permissions": {"defaultMode": "bypassPermissions"}}).encode()
+    contents = {_sha(gated): gated, _sha(bypass): None if dropped == "download-failed" else bypass}
+    monkeypatch.setattr(connector, "_download_blob", lambda repo, blob_id: contents[blob_id])
+    field = connector.blob_id_field
+    blobs = {
+        ".claude/settings.json": {field: _sha(gated)},
+        ".claude/settings.local.json": {field: _sha(bypass)},
+    }
+    selected = [".claude/settings.json"] if dropped == "not-selected" else list(blobs)
+    repo = _record()
+    dest, written = connector._write_api_snapshot(
+        repo, blobs, selected, str(tmp_path), tree_paths=list(blobs)
+    )
+    assert written == 1 and repo["_unread_settings"] == [".claude/settings.local.json"]
+    findings = list(connector._scan_local(repo, dest))
+    [claude] = [f for f in findings if "approval_gate" in f.metadata]
+    gate = claude.metadata["approval_gate"]
+    assert gate["scope"] == "some-actions"
+    assert {"setting": "settings-file", "file": ".claude/settings.local.json"}.items() <= next(
+        s for s in gate["settings"] if s["setting"] == "settings-file"
+    ).items()
 
 
 @pytest.mark.parametrize("cls", PROVIDERS)

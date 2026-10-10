@@ -19,6 +19,7 @@ from threading import Event, Lock
 from typing import Any
 
 from shadowscan import __version__
+from shadowscan.autonomy import apply_autonomy
 from shadowscan.comparison import IDENTITY_KEY_ENV, build_collection_scope
 from shadowscan.config import ConfigValidationError, ConnectorSpec, ScanConfig, validate_min_confidence
 from shadowscan.connectors import ConnectorContext, builtin_connector_names, get_connector_class
@@ -26,9 +27,17 @@ from shadowscan.connectors.base import BaseConnector, ConnectorError
 from shadowscan.correlation import correlate, correlate_lifecycle, correlate_runtime
 from shadowscan.errors import SetupError
 from shadowscan.incremental import IncrementalCache
+from shadowscan.mcp_registry import LoadedRegistries, enrich_mcp_findings, load_registries
 from shadowscan.merge import merge
 from shadowscan.models import Finding, ScanResult, ScanStats, now_iso
-from shadowscan.registry import Inventory
+from shadowscan.registries import (
+    RECORD_KEY,
+    REGISTRY_TYPES,
+    TrustedApprovals,
+    prune_reconciliation_links,
+    reconcile_registries,
+)
+from shadowscan.registry import Inventory, InventoryEntry, clear_match_state
 from shadowscan.risk import RiskPolicy, assess, provider_ids
 from shadowscan.signatures import SignatureIndex, get_index
 from shadowscan.signatures.loader import signature_source_digest
@@ -189,6 +198,76 @@ def _retain_sanitizable(candidates: list[Finding]) -> tuple[list[Finding], int]:
     return retained, omitted
 
 
+def _withhold_registry_records(
+    hooks: type[BaseConnector], builtin: bool, findings: list[Finding], st: ScanStats
+) -> None:
+    """Keep registry records only from built-in connectors that declare they read vendor registries.
+
+    A trusted registry's approved record approves findings of any connector. Another connector
+    that copies record-shaped metadata from an export or a repository, or a plugin that declares
+    the hook, must not create an approval, so the key is dropped and the drop is reported. A
+    declaring connector keeps only records of the registry types it lists, so it cannot speak
+    for another vendor's registry.
+    """
+    declared = getattr(hooks, "emits_registry_records", False) is True
+    declared_types = getattr(hooks, "registry_record_types", None)
+    types: frozenset[Any] = declared_types if isinstance(declared_types, frozenset) else frozenset()
+    dropped = undeclared_type = 0
+    for finding in findings:
+        if RECORD_KEY not in finding.metadata:
+            continue
+        record = finding.metadata[RECORD_KEY]
+        registry = record.get("registry") if isinstance(record, dict) else None
+        if declared and builtin:
+            # A malformed record stays for reconciliation, which reports it as malformed.
+            if registry in types or registry not in REGISTRY_TYPES:
+                continue
+            undeclared_type += 1
+        else:
+            dropped += 1
+        del finding.metadata[RECORD_KEY]
+    if dropped:
+        reason = (
+            "only built-in connectors may emit registry records"
+            if declared
+            else "the connector does not declare registry records"
+        )
+        st.warnings.append(f"registry record metadata ignored on {dropped} finding(s): {reason}")
+    if undeclared_type:
+        st.warnings.append(
+            f"registry record metadata ignored on {undeclared_type} finding(s): "
+            "the connector does not declare that registry type"
+        )
+
+
+def _offline_record_ids(spec: ConnectorSpec, findings: list[Finding]) -> set[str]:
+    """Ids of the registry record findings a job replayed from an offline export.
+
+    The engine decides this from the job's configuration (``input`` set, as
+    ``BaseConnector.offline`` decides it), never from anything the connector
+    returns, so a connector cannot present an exported record as live. Kept
+    by finding id, a record observed both live and offline in one scan counts
+    as offline after merging.
+    """
+    if not spec.config.get("input"):
+        return set()
+    return {finding.id for finding in findings if RECORD_KEY in finding.metadata}
+
+
+@dataclass
+class _RegistryOutcome:
+    """What one post-process pass learned about vendor registries, for ``run`` to report."""
+
+    # Malformed records: an incomplete engine.registries entry.
+    warnings: list[str] = field(default_factory=list)
+    # Trusted registries without records: advisory engine.inventory warnings.
+    inventory_warnings: list[str] = field(default_factory=list)
+    # Approved records of trusted registries: one inventory item each.
+    approval_entries: int = 0
+    # MCP registry snapshots that failed to load or match: an incomplete engine.mcp-registry entry.
+    mcp_registry_errors: list[str] = field(default_factory=list)
+
+
 class _ExportLedger:
     """Record-export manifest entries reported by connector workers of one run."""
 
@@ -221,6 +300,33 @@ class _ExportLedger:
             return entries
 
 
+class _ScopeLedger:
+    """Live collection scope records reported by connector workers of one run, by configuration ordinal.
+
+    A cancelled job reports nothing, and ``records`` drops what a timed-out job reported:
+    its findings are discarded, so its scope must not be attested either.
+    """
+
+    def __init__(self) -> None:
+        self._lock = Lock()
+        self._records: dict[int, dict[str, Any] | None] = {}
+
+    def record(self, state: _JobState, number: int, record: dict[str, Any]) -> None:
+        with self._lock:
+            if state.cancelled.is_set():
+                return
+            # One record per configured entry; a second report attests nothing.
+            self._records[number] = None if number in self._records else record
+
+    def records(self, timed_out: set[int]) -> dict[int, dict[str, Any]]:
+        with self._lock:
+            return {
+                number: record
+                for number, record in self._records.items()
+                if record is not None and number not in timed_out
+            }
+
+
 class _ConnectorRunner:
     """Run one configured connector on a worker thread and shape its result.
 
@@ -230,7 +336,12 @@ class _ConnectorRunner:
     """
 
     def __init__(
-        self, engine: Engine, cache: IncrementalCache, dump_directory: Path | None, exports: _ExportLedger
+        self,
+        engine: Engine,
+        cache: IncrementalCache,
+        dump_directory: Path | None,
+        exports: _ExportLedger,
+        scopes: _ScopeLedger | None = None,
     ) -> None:
         self._engine = engine
         self._config = engine.config
@@ -238,6 +349,7 @@ class _ConnectorRunner:
         self._cache = cache
         self._dump_directory = dump_directory
         self._exports = exports
+        self._scopes = scopes if scopes is not None else _ScopeLedger()
         # Identical sources in one report share an opaque identity, while
         # separate Engine.run calls cannot link redacted caller/scope IDs
         # unless the operator supplied a stable key.
@@ -404,6 +516,8 @@ class _ConnectorRunner:
     ) -> _JobResult:
         self._engine._report_progress(spec.id, "starting")
         hooks = _hooks(resolved)
+        # Plugins cannot take a built-in name, so the name says whose hooks these are.
+        builtin = spec.name in builtin_connector_names()
         try:
             inherits_approval = hooks.inherits_instance_credentials_approval()
         except BaseException as exc:  # noqa: BLE001 - a failing plugin hook is a connector failure
@@ -430,6 +544,7 @@ class _ConnectorRunner:
         try:
             st, reused = self._collect(spec, resolved, ctx, started_at, fs)
             if reused:
+                _withhold_registry_records(hooks, builtin, fs, st)
                 return spec, fs, st
         except KeyboardInterrupt:
             raise
@@ -449,7 +564,12 @@ class _ConnectorRunner:
             reset_request_deadline(limits_token)
             reset_allow_private_origin(origin_token)
         st.findings = len(fs)
+        _withhold_registry_records(hooks, builtin, fs, st)
         _sanitize_diagnostics(st)
+        if builtin and hooks.attests_live_scope and not ctx.input_path:
+            # Read after collection and completion bookkeeping: the scope a live connector
+            # attests is what its provider reported in this run.
+            self._scopes.record(state, int(dump_key.split("-")[0]), ctx.scope_record(hooks.scope_options))
         if self._dump_directory and not state.cancelled.is_set():
             exported = ctx.dump_path == cfg.get("_dump_path") and ctx.dump_path is not None and not st.skipped
             self._exports.record(
@@ -631,6 +751,7 @@ def _inventory_warnings(
 ) -> list[str]:
     """Approvals that scanned content could change, or whose resource scope is broad.
 
+    Also lists cards whose autonomy level was not read because they lack schema_version 2.
     Advisory, not incomplete: ``shadowscan code . --inventory agent-card.yaml``
     is legitimate locally, but in CI a pull request can edit an inventory kept
     in the scanned tree and approve its own findings.
@@ -680,6 +801,7 @@ def _inventory_warnings(
         f"inventory {link}: symbolic link skipped (links are not followed)"
         for link in inventory.skipped_links
     ]
+    warnings += inventory.autonomy_warnings()
     warnings = list(dict.fromkeys(warnings))
     if len(warnings) > _MAX_INVENTORY_WARNINGS:
         omitted = len(warnings) - _MAX_INVENTORY_WARNINGS
@@ -835,6 +957,8 @@ class Engine:
         # reloads the inventory: approval can change after construction and a
         # stale first-run snapshot must never authorize a finding.
         self.inventory: Inventory | None = Inventory.load(config.inventory) if config.inventory else None
+        # Pinned MCP Registry snapshots, read again by every run (see _prepare_run).
+        self._mcp_registries: LoadedRegistries | None = None
 
     def _report_progress(self, connector: str, message: str) -> None:
         """A failed output observer must not change collection or scan completeness."""
@@ -910,6 +1034,8 @@ class Engine:
         self._refresh_index()
         self._validate_risk_policy()
         self._refresh_inventory()
+        # A replaced or revoked catalog must not keep counting: snapshots are never reused.
+        self._mcp_registries = load_registries(self.config.mcp_registries)
 
     # -------------------------------------------------------------- selection
     def _invalid_selectors(self, only: list[str] | None) -> list[str]:
@@ -994,6 +1120,49 @@ class Engine:
             )
         ]
 
+    @staticmethod
+    def _registry_stats(
+        outcome: _RegistryOutcome, stats: list[ScanStats], started_at: str
+    ) -> list[ScanStats]:
+        """Report malformed registry records (incomplete) and unused trusted registries (advisory).
+
+        Advisory notices join the run's ``engine.inventory`` entry, which is created when absent.
+        """
+        added: list[ScanStats] = []
+        if outcome.inventory_warnings:
+            entry = next((st for st in stats if st.connector == "engine.inventory"), None)
+            if entry is None:
+                entry = ScanStats(connector="engine.inventory", started_at=started_at, finished_at=now_iso())
+                added.append(entry)
+            entry.warnings += outcome.inventory_warnings
+            log.warning("inventory approval warning recorded in scan stats (engine.inventory)")
+            _sanitize_diagnostics(entry)
+        if outcome.warnings:
+            log.warning("registry records were malformed; scan marked incomplete (engine.registries)")
+            registries = ScanStats(
+                connector="engine.registries",
+                started_at=started_at,
+                finished_at=now_iso(),
+                incomplete=True,
+                warnings=list(outcome.warnings),
+            )
+            _sanitize_diagnostics(registries)
+            added.append(registries)
+        if outcome.mcp_registry_errors:
+            log.warning(
+                "MCP registry snapshots were not usable; scan marked incomplete (engine.mcp-registry)"
+            )
+            mcp = ScanStats(
+                connector="engine.mcp-registry",
+                started_at=started_at,
+                finished_at=now_iso(),
+                incomplete=True,
+                errors=list(outcome.mcp_registry_errors),
+            )
+            _sanitize_diagnostics(mcp)
+            added.append(mcp)
+        return added
+
     # ------------------------------------------------------------- collection
     def _collect(
         self,
@@ -1002,6 +1171,7 @@ class Engine:
         dump_directory: Path | None,
         exports: _ExportLedger,
         started_at: str,
+        scopes: _ScopeLedger | None = None,
     ) -> tuple[dict[int, _JobResult], set[int]]:
         """Run every selected connector under deadline supervision."""
         states = {
@@ -1011,7 +1181,7 @@ class Engine:
             )
             for number, spec in jobs
         }
-        runner = _ConnectorRunner(self, cache, dump_directory, exports)
+        runner = _ConnectorRunner(self, cache, dump_directory, exports, scopes)
         workers = max(1, min(self.config.parallel, len(jobs) or 1))
         # Supervise the single-worker path too. A ThreadPoolExecutor context
         # manager would wait forever for a stuck connector on exit.
@@ -1035,19 +1205,50 @@ class Engine:
         return supervisor.completed, supervisor.timed_out
 
     # --------------------------------------------------------- postprocessing
-    def _reconcile_and_score(self, findings: list[Finding]) -> None:
+    def _reconcile_and_score(
+        self,
+        findings: list[Finding],
+        outcome: _RegistryOutcome | None = None,
+        offline: frozenset[str] = frozenset(),
+    ) -> None:
         risk_policy = RiskPolicy.from_options(self.config.risk_weights, self.config.risk_basis)
+        trusted = self.config.trusted_registries
+        # Approvals of trusted registries are rebuilt from this run's records every time and
+        # matched beside the loaded inventory, which is never changed.
+        approvals = TrustedApprovals(findings, trusted, offline=offline) if trusted else None
+        inventory = self.inventory if self.inventory is not None or approvals is None else Inventory()
         for f in findings:
-            if self.inventory is not None:
-                entry = self.inventory.match(f)
+            entry: InventoryEntry | None = None
+            if inventory is None:
+                # Nothing was assessed: a match a connector or plugin set is not a registration.
+                clear_match_state(f)
+                f.shadow = f.registry_match = None
+            else:
+                entry = inventory.match(f, approvals.candidates(f) if approvals is not None else ())
                 f.registry_match = entry.agent_id if entry else None
                 f.shadow = entry is None
                 if entry and not f.owner:
                     f.owner = entry.owner
-            f.risk = assess(f, self.index, inventory_present=self.inventory is not None, policy=risk_policy)
+            # Before scoring: a declared level below the observed floor adds a weighted tag.
+            apply_autonomy(f, entry)
+            f.risk = assess(f, self.index, inventory_present=inventory is not None, policy=risk_policy)
+        if outcome is not None and approvals is not None:
+            outcome.approval_entries = approvals.entries
+            outcome.inventory_warnings += approvals.warnings()
 
-    def _postprocess(self, findings: list[Finding]) -> tuple[list[Finding], list[str]]:
-        """Merge, correlate, reconcile and score; report what had to be omitted."""
+    def _postprocess(
+        self,
+        findings: list[Finding],
+        *,
+        registries: _RegistryOutcome | None = None,
+        offline: frozenset[str] = frozenset(),
+    ) -> tuple[list[Finding], list[str]]:
+        """Merge, correlate, match MCP registries, reconcile and score; report what had to be omitted.
+
+        ``registries`` receives the MCP registry, registry reconciliation and trusted-approval results.
+        ``offline`` holds the ids of registry record findings replayed from an offline export
+        (:func:`_offline_record_ids`).
+        """
         # Individually bounded findings can exceed the output budget when
         # merged. Reject only that aggregate before correlation touches it.
         findings, omitted = _retain_sanitizable(merge(findings))
@@ -1058,7 +1259,15 @@ class Engine:
         except SanitizationLimitError:
             errors.append("runtime correlation incomplete: sanitization safety limit exceeded")
         correlate_lifecycle(findings)
-        self._reconcile_and_score(findings)
+        outcome = registries if registries is not None else _RegistryOutcome()
+        if self._mcp_registries is None:
+            self._mcp_registries = load_registries(self.config.mcp_registries)
+        outcome.mcp_registry_errors += [
+            *self._mcp_registries.errors,
+            *enrich_mcp_findings(findings, self._mcp_registries),
+        ]
+        outcome.warnings += reconcile_registries(findings)
+        self._reconcile_and_score(findings, outcome, offline)
         findings, omitted_after_scoring = _retain_sanitizable(findings)
         omitted += omitted_after_scoring
         if omitted:
@@ -1135,7 +1344,8 @@ class Engine:
         result = ScanResult(
             version=__version__,
             inventory_size=len(self.inventory) if self.inventory else 0,
-            inventory_present=self.inventory is not None,
+            # Trusted registries are an inventory source even without inventory files.
+            inventory_present=self.inventory is not None or bool(self.config.trusted_registries),
         )
         invalid = self._invalid_selectors(only)
         if invalid:
@@ -1143,8 +1353,21 @@ class Engine:
         jobs = self._select_jobs(only)
         specs = [spec for _, spec in jobs]
         self.config.validate_connector_isolation(specs)
+        stats = self._selection_stats(specs) + self._inventory_stats(specs, result.started_at)
+        cache = IncrementalCache(self.config, self.index, identity_key=self._identity_key)
+        dump_records = self.config.dump_records
+        dump_directory = prepare_private_directory(dump_records) if dump_records else None
+        exports = _ExportLedger()
+        scopes = _ScopeLedger()
+        completed, timed_out = self._collect(jobs, cache, dump_directory, exports, result.started_at, scopes)
+        # After collection: a live connector attests the scope its provider reported.
+        live = scopes.records(timed_out)
         result.collection_scope = build_collection_scope(
-            self.config, self.index, specs, identity_key=self._identity_key
+            self.config,
+            self.index,
+            specs,
+            identity_key=self._identity_key,
+            live_records=[live.get(number) for number, _ in jobs],
         )
         result.collection_scope["credential_identity_schema"] = "shadowscan.credential-identity/v1"
         result.collection_scope["credential_identity_scope"] = "keyed" if self._identity_key else "run"
@@ -1152,21 +1375,22 @@ class Engine:
         if not_run:
             # Outside the fingerprint and comparability: operator intent only.
             result.collection_scope["not_run"] = not_run
-        stats = self._selection_stats(specs) + self._inventory_stats(specs, result.started_at)
-        cache = IncrementalCache(self.config, self.index, identity_key=self._identity_key)
-        dump_records = self.config.dump_records
-        dump_directory = prepare_private_directory(dump_records) if dump_records else None
-        exports = _ExportLedger()
-        completed, timed_out = self._collect(jobs, cache, dump_directory, exports, result.started_at)
         # Merge uses first-observed owner and metadata as precedence.
         # Preserve configured order regardless of request completion.
         findings: list[Finding] = []
-        for number, _ in jobs:
+        offline: set[str] = set()
+        for number, spec in jobs:
             _, fs, st = completed[number]
             findings.extend(fs)
             stats.append(st)
+            offline |= _offline_record_ids(spec, fs)
         export_entries = exports.entries(jobs, timed_out) if dump_directory else []
-        findings, postprocess_errors = self._postprocess(findings)
+        registries = _RegistryOutcome()
+        findings, postprocess_errors = self._postprocess(
+            findings, registries=registries, offline=frozenset(offline)
+        )
+        result.inventory_size += registries.approval_entries
+        stats += self._registry_stats(registries, stats, result.started_at)
         if postprocess_errors:
             stats.append(
                 ScanStats(
@@ -1178,10 +1402,16 @@ class Engine:
                 )
             )
         if self.config.min_confidence > 0:
-            findings = [f for f in findings if f.confidence >= self.config.min_confidence]
+            # A registry record is a declaration with a fixed evidence weight (0.5), not an
+            # observation the threshold grades. Its approvals apply whatever the threshold, so
+            # the record that conferred them stays in the report.
+            findings = [
+                f for f in findings if f.confidence >= self.config.min_confidence or RECORD_KEY in f.metadata
+            ]
             _prune_related(findings)
             _prune_runtime_links(findings)
             _prune_lifecycle_links(findings)
+            prune_reconciliation_links(findings)
         findings.sort(key=lambda f: (-f.risk.score, -f.confidence, f.surface.value, f.title))
         if self.config.llm_triage.enabled:
             stats.append(self._triage(findings, result.started_at, job_deadline))

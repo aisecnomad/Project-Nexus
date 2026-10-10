@@ -13,7 +13,7 @@ from shadowscan.correlation import correlate
 from shadowscan.engine import Engine, _prune_runtime_links, _resource_pattern_breadth
 from shadowscan.merge import merge
 from shadowscan.models import Evidence, Finding, Kind, RiskLevel, ScanStats, Surface, now_iso
-from shadowscan.registry import Inventory, card_stub_for
+from shadowscan.registry import UNVERIFIED_IDENTITY_TAG, Inventory, card_stub_for
 from shadowscan.risk import assess
 from shadowscan.signatures import SignatureIndex
 
@@ -438,6 +438,44 @@ def test_gateway_caller_keeps_export_metrics_separate_and_correlates_both(tmp_pa
     }
 
 
+def test_without_an_inventory_connector_supplied_registration_is_cleared(monkeypatch):
+    # Regression: in a scan without inventory or trusted registries, the shadow and
+    # registry_match a connector or plugin set passed through, and a fleet merge then
+    # counted the finding as registered.
+    forged = _f(
+        kind=Kind.AGENT,
+        title="Rogue agent",
+        resource="repo://rogue",
+        shadow=False,
+        registry_match="approved-by-plugin",
+        tags=[UNVERIFIED_IDENTITY_TAG],
+        metadata={
+            "registry_match_reason": "forged",
+            "registry_suggestions": ["approved-by-plugin"],
+            "registry_match_assurance": "unverified",
+        },
+    )
+
+    class Connector:
+        def __init__(self, ctx):
+            self.ctx = ctx
+
+        def run(self):
+            self.ctx.stats = ScanStats(connector="test", started_at=now_iso(), finished_at=now_iso())
+            return [forged]
+
+    monkeypatch.setattr("shadowscan.engine.get_connector_class", lambda name: Connector)
+    result = Engine(ScanConfig(connectors=[ConnectorSpec("code.extension")]), SignatureIndex([])).run()
+    [finding] = result.findings
+    assert not result.inventory_present
+    assert finding.shadow is None and finding.registry_match is None
+    assert not {"registry_match_reason", "registry_suggestions", "registry_match_assurance"} & set(
+        finding.metadata
+    )
+    assert UNVERIFIED_IDENTITY_TAG not in finding.tags
+    assert not {"shadow", "registered"} & {factor.id for factor in finding.risk.factors}
+
+
 def test_engine_end_to_end_with_config(tmp_path: Path, fixtures, index):
     cfg = ScanConfig(
         connectors=[
@@ -686,3 +724,52 @@ def test_cli_shows_in_tree_inventory_warning_without_changing_the_gate(tmp_path)
     assert report["summary"]["complete"] is True
     [stats] = [s for s in report["stats"] if s["connector"] == "engine.inventory"]
     assert len(stats["warnings"]) == 2 and not stats["errors"]
+
+
+def test_mcp_registry_snapshot_enriches_a_scanned_mcp_configuration(tmp_path, index):
+    import hashlib
+
+    from shadowscan.mcp_registry import McpRegistrySource
+
+    snapshot = Path(__file__).resolve().parents[1] / "fixtures" / "mcp" / "registry_snapshot.json"
+    pin = hashlib.sha256(snapshot.read_bytes()).hexdigest()
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / ".mcp.json").write_text(
+        json.dumps(
+            {
+                "mcpServers": {
+                    "files": {"command": "npx", "args": ["-y", "@acme/mcp-files@1.0.0"]},
+                    "legacy": {"command": "uvx", "args": ["acme-legacy-mcp==0.9.0"]},
+                    "remote": {"type": "http", "url": "https://mcp.example.com/mcp"},
+                    "private": {"command": "npx", "args": ["-y", "@corp/internal-mcp@2.0.0"]},
+                }
+            }
+        )
+    )
+    spec = ConnectorSpec("code.filesystem", {"path": str(repo), "use_git": False})
+    registries = [McpRegistrySource("official", str(snapshot), pin)]
+    result = Engine(ScanConfig(connectors=[spec], mcp_registries=registries), index).run()
+    assert result.complete
+    finding = next(f for f in result.findings if f.kind == Kind.MCP_SERVER)
+    servers = {server["name"]: server for server in finding.metadata["servers"]}
+    assert servers["files"]["registry"][0]["is_latest"] is False
+    assert servers["legacy"]["registry"][0]["status"] == "deprecated"
+    assert servers["remote"]["registry"][0]["match"] == "remote"
+    assert servers["private"]["registry"] == []
+    assert {
+        "mcp-registry-published",
+        "mcp-registry-outdated",
+        "mcp-registry-deprecated",
+        "mcp-unpublished",
+    } <= set(finding.tags)
+    # The public registry is not an approved catalog: no governance factor, and tags weigh nothing.
+    assert finding.metadata["mcp_registry"]["approved_checked"] is False
+    plain = Engine(ScanConfig(connectors=[spec]), index).run()
+    baseline = next(f for f in plain.findings if f.kind == Kind.MCP_SERVER)
+    assert baseline.risk.score == finding.risk.score and baseline.id == finding.id
+    approved = [McpRegistrySource("official", str(snapshot), pin, approved=True)]
+    gated = Engine(ScanConfig(connectors=[spec], mcp_registries=approved), index).run()
+    gated_finding = next(f for f in gated.findings if f.kind == Kind.MCP_SERVER)
+    assert gated_finding.metadata["mcp_registry"]["not_in_approved"] == 1
+    assert "mcp-not-in-approved-registry" in {f.id for f in gated_finding.risk.factors}

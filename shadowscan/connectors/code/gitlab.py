@@ -349,12 +349,14 @@ class GitLabConnector(RemoteRepositoryConnector):
             "commit_sha": snapshot,
         }
         blobs: dict[str, dict[str, Any]] = {}
+        tree_paths: list[str] = []
         skipped_links = False
         tree_params = {"recursive": "true", "per_page": 100, "ref": snapshot}
         for item in self.http.paginate_link(f"/projects/{pid}/repository/tree", params=tree_params):
             if not isinstance(item, dict) or not isinstance(item.get("path"), str):
                 self.ctx.warn("code.gitlab: malformed tree entry; source coverage partial", incomplete=True)
                 continue
+            tree_paths.append(item["path"])
             if item.get("type") == "commit" or item.get("mode") in {"120000", "160000"}:
                 if not skipped_links:
                     self.ctx.warn(
@@ -372,7 +374,7 @@ class GitLabConnector(RemoteRepositoryConnector):
                 "code.gitlab: API mode samples repository; source coverage partial",
                 incomplete=True,
             )
-        dest, _ = self._write_api_snapshot(proj, blobs, selected, tmp)
+        dest, _ = self._write_api_snapshot(proj, blobs, selected, tmp, tree_paths=tree_paths)
         return dest
 
     def _download_blob(self, proj: dict[str, Any], blob_id: str) -> bytes | None:

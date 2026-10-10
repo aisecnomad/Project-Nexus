@@ -1,0 +1,6 @@
+{"_kind": "project-number", "_project": "acme-ml", "project_number": "123"}
+{"_kind": "registry-coverage", "_project": "acme-ml", "_location": "us-central1", "catalog": "vertex-ai", "collection": "reasoningEngines", "api_version": "v1", "complete": true, "listing_scope": "project"}
+{"_kind": "registry-coverage", "_project": "acme-ml", "_location": null, "catalog": "google-agent-registry", "collection": "locations", "api_version": "v1", "complete": true, "listing_scope": "project", "locations": ["global"]}
+{"_kind": "registry-coverage", "_project": "acme-ml", "_location": "global", "catalog": "google-agent-registry", "collection": "agents", "api_version": "v1", "complete": true, "listing_scope": "project"}
+{"_kind": "registry-coverage", "_project": "acme-ml", "_location": "global", "catalog": "google-agent-registry", "collection": "mcpServers", "api_version": "v1", "complete": true, "listing_scope": "project"}
+{"_kind": "registry-coverage", "_project": "acme-ml", "_location": "global", "catalog": "google-agent-registry", "collection": "endpoints", "api_version": "v1", "complete": true, "listing_scope": "project"}

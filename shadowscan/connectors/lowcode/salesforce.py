@@ -492,6 +492,8 @@ class SalesforceConnector(BaseConnector):
         )
         apply_matches(f, matches, weight_scale=0.5)
         if rec.get("TriggerType") in {"Scheduled", "RecordAfterSave", "RecordBeforeSave", "PlatformEvent"}:
+            # Autonomy: initiation evidence (a schedule or a record or platform event, read from
+            # metadata.trigger_type), not approval-bypass evidence.
             f.add_capability("autonomous")
         f.metadata.update(
             {

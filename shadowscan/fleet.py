@@ -4,13 +4,20 @@ A fleet report is the union of its sources. Findings with the same identity
 (the same object seen by the same connector, for example one workstation
 scanned twice) merge exactly as repeated observations do inside one scan:
 evidence and technologies union, the earliest ``first_seen`` and latest
-``last_seen`` survive, the first report's metadata wins. Findings from
-different machines keep their own resources because the endpoint label
-prefixes every resource. A finding is shadow when any source that reported it
-found it unregistered, registered when one matched it to that source's
-inventory, and unassessed when none of the sources that reported it was given
-an inventory (``--inventory`` or the configuration's ``inventory:`` key), even
-if other sources were.
+``last_seen`` survive, the first report's metadata wins. The autonomy interval
+(``metadata.autonomy``) is the exception: it is classified again from the merged
+finding and widened to admit whatever any source's validated block admits, so
+evidence from a later source is never hidden behind the first source's interval.
+Findings from different machines keep their own resources because the endpoint
+label prefixes every resource. Registration counts only from sources that
+reconciled against an inventory (``inventory_present: true``: ``--inventory``,
+the configuration's ``inventory:`` key or trusted registries). A finding is
+shadow when any such source found it unregistered, registered when such
+sources matched it to one agent, ambiguous (shadow, with
+``registry_match_reason: ambiguous-resource-approval``) when they matched it
+to different agents, as two matching inventory entries are in one scan, and
+unassessed when no such source reported it, even if other sources were given
+an inventory. A ``shadow: false`` that names no match is not a registration.
 
 The merged report is comparable with ``shadowscan diff`` only when every
 source is complete and carries a comparable collection scope; its fingerprint
@@ -25,14 +32,17 @@ import hashlib
 import os
 from collections.abc import Sequence
 from dataclasses import fields
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from shadowscan import __version__
+from shadowscan.autonomy import merge_autonomy, valid_autonomy
 from shadowscan.comparison import _SCHEMA as _SCOPE_SCHEMA
-from shadowscan.comparison import _complete, _findings, _scope_digest, _summary_matches_findings
+from shadowscan.comparison import _complete, _findings, _scope_digest, _started_at, _summary_matches_findings
 from shadowscan.merge import merge
 from shadowscan.models import FINDING_IDENTITY_SCHEMA, Finding, Risk, ScanResult, ScanStats, now_iso
+from shadowscan.registry import clear_match_state
 
 MAX_SOURCES = 10_000
 _STATS_FIELDS = {f.name for f in fields(ScanStats)}
@@ -46,6 +56,11 @@ def _check(report: Any, name: str) -> dict[str, Any]:
     for finding in report["findings"]:
         if not isinstance(finding, dict) or finding.get("identity_schema") != FINDING_IDENTITY_SCHEMA:
             raise ValueError(f"{name}: a finding does not carry the current identity schema")
+        metadata = finding.get("metadata")
+        # The merged interval admits at least what every source's block admits, so a block the
+        # merge cannot read is refused rather than ignored.
+        if isinstance(metadata, dict) and "autonomy" in metadata and not valid_autonomy(metadata["autonomy"]):
+            raise ValueError(f"{name}: a finding has malformed autonomy metadata; rescan before merging")
     _findings(report)
     return report
 
@@ -90,6 +105,27 @@ def source_names(paths: Sequence[str]) -> list[str]:
     return [Path(os.path.relpath(path, parent)).as_posix() for path in absolute]
 
 
+def _merge_registration(finding: Finding, unregistered: bool, matches: set[str]) -> None:
+    """Set the merged finding's registration from what its reconciling sources reported.
+
+    Unregistered in any source wins. Sources that matched it to different agents are ambiguous,
+    as two matching inventory entries are in one scan: the finding stays shadow and names the
+    candidates. Without a reconciling source it is unassessed, and any match state another
+    source carried is removed.
+    """
+    if unregistered:
+        finding.shadow, finding.registry_match = True, None
+    elif len(matches) == 1:
+        finding.shadow, finding.registry_match = False, next(iter(matches))
+    else:
+        clear_match_state(finding)
+        finding.registry_match = None
+        finding.shadow = True if matches else None
+        if matches:
+            finding.metadata["registry_suggestions"] = sorted(matches)
+            finding.metadata["registry_match_reason"] = "ambiguous-resource-approval"
+
+
 def merge_reports(reports: list[tuple[str, dict[str, Any]]]) -> ScanResult:
     """Merge ``(name, report)`` pairs into one :class:`ScanResult`; raises ``ValueError`` on bad input."""
     if not reports:
@@ -99,15 +135,17 @@ def merge_reports(reports: list[tuple[str, dict[str, Any]]]) -> ScanResult:
     findings: list[Finding] = []
     sources_by_id: dict[str, list[str]] = {}
     risks_by_id: dict[str, Risk] = {}
-    shadow_by_id: dict[str, bool] = {}
-    registry_by_id: dict[str, str] = {}
+    unregistered: set[str] = set()
+    matches_by_id: dict[str, set[str]] = {}
     identity_by_id: dict[str, str] = {}
+    autonomy_by_id: dict[str, list[Any]] = {}
     stats: list[ScanStats] = []
     sources: list[dict[str, Any]] = []
     fingerprints: list[str] = []
     comparable = True
     reasons: list[str] = []
-    started: list[str] = []
+    started: list[tuple[datetime, str]] = []
+    undated = False
     finished: list[str] = []
     inventory_size = 0
     inventory_present = False
@@ -125,6 +163,9 @@ def merge_reports(reports: list[tuple[str, dict[str, Any]]]) -> ScanResult:
             reasons.append(f"{name}: collection scope not comparable")
         else:
             fingerprints.append(fingerprint)
+        present = report.get("inventory_present", False)
+        if type(present) is not bool:
+            raise ValueError("report inventory presence must be a boolean")
         for entry in report["findings"]:
             finding = Finding.from_dict(entry)
             # A report's ids are untrusted. Findings merge only when the
@@ -143,16 +184,15 @@ def merge_reports(reports: list[tuple[str, dict[str, Any]]]) -> ScanResult:
                 previous.danger_score,
             ):
                 risks_by_id[finding.id] = finding.risk
-            # Registration has three states: unregistered in any source wins,
-            # then registered against a supplied inventory. A finding no source
-            # reconciled (shadow None: no inventory) stays unassessed rather
-            # than being reported as unregistered. Only a source that names a
-            # nonempty match records one, so a report claiming registration
-            # without a match cannot blank a later source's match.
-            if finding.shadow is False and finding.registry_match:
-                registry_by_id.setdefault(finding.id, finding.registry_match)
-            if finding.shadow is not None and shadow_by_id.get(finding.id) is not True:
-                shadow_by_id[finding.id] = finding.shadow
+            # Only a source that reconciled against an inventory assessed registration: a
+            # connector or plugin can set shadow and registry_match in a scan without one. A
+            # registration must name its match, so a bare shadow false is unassessed.
+            if present and finding.shadow is True:
+                unregistered.add(finding.id)
+            elif present and finding.shadow is False and finding.registry_match:
+                matches_by_id.setdefault(finding.id, set()).add(finding.registry_match)
+            if "autonomy" in finding.metadata:
+                autonomy_by_id.setdefault(finding.id, []).append(finding.metadata["autonomy"])
             findings.append(finding)
         stats.extend(_stats(report))
         if not complete:
@@ -164,17 +204,17 @@ def merge_reports(reports: list[tuple[str, dict[str, Any]]]) -> ScanResult:
                     errors=[f"{name}: source report is incomplete or has inconsistent completion evidence"],
                 )
             )
-        if isinstance(report.get("started_at"), str):
-            started.append(report["started_at"])
+        moment = _started_at(report)
+        if moment is None:
+            undated = True
+        else:
+            started.append((moment, report["started_at"]))
         if isinstance(report.get("finished_at"), str):
             finished.append(report["finished_at"])
         size = report.get("inventory_size", 0)
         if type(size) is not int or size < 0:
             raise ValueError("report inventory size must be a nonnegative integer")
         inventory_size = max(inventory_size, size)
-        present = report.get("inventory_present", False)
-        if type(present) is not bool:
-            raise ValueError("report inventory presence must be a boolean")
         inventory_present = inventory_present or present
         sources.append(
             {
@@ -195,8 +235,10 @@ def merge_reports(reports: list[tuple[str, dict[str, Any]]]) -> ScanResult:
         finding.risk = risks_by_id[finding.id]
         # merge() keeps the first observation's registry match, which may come
         # from a source that did not reconcile the finding.
-        finding.shadow = shadow_by_id.get(finding.id)
-        finding.registry_match = registry_by_id.get(finding.id) if finding.shadow is False else None
+        _merge_registration(finding, finding.id in unregistered, matches_by_id.get(finding.id, set()))
+        # Unioned tags, capabilities and evidence can change the interval; the merged one also
+        # admits at least what each source's block admits, as risk keeps the highest score.
+        merge_autonomy(finding, autonomy_by_id.get(finding.id, []))
         finding.metadata["fleet_risk_aggregation"] = "maximum-source-score"
     merged.sort(key=lambda f: (-f.risk.score, f.resource, f.id))
     if comparable:
@@ -213,7 +255,9 @@ def merge_reports(reports: list[tuple[str, dict[str, Any]]]) -> ScanResult:
         inventory_present=inventory_present,
         collection_scope=scope_out,
     )
-    if started:
-        result.started_at = min(started)
+    # The fleet started when its oldest source did, so a baseline age limit measures its oldest
+    # evidence. One source without a valid start time leaves the fleet undated: dating it by the
+    # merge would let an arbitrarily old baseline pass the limit.
+    result.started_at = "" if undated else min(started, key=lambda item: item[0])[1]
     result.finished_at = max(finished) if finished else None
     return result

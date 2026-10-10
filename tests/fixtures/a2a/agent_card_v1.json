@@ -1,0 +1,30 @@
+{
+  "name": "Synthetic Route Planner",
+  "description": "Synthetic A2A 1.0 Agent Card modeled on the A2A specification sample; not taken from a live service.",
+  "supportedInterfaces": [
+    {"url": "https://planner.agents.example.com/a2a/v1", "protocolBinding": "JSONRPC", "protocolVersion": "1.0"},
+    {"url": "https://planner.agents.example.com/a2a/json", "protocolBinding": "HTTP+JSON", "protocolVersion": "1.0"}
+  ],
+  "provider": {"organization": "Example Synthetic Org", "url": "https://www.agents.example.com"},
+  "version": "1.2.0",
+  "documentationUrl": "https://docs.agents.example.com/planner",
+  "capabilities": {"streaming": true, "pushNotifications": false},
+  "securitySchemes": {
+    "oidc": {
+      "openIdConnectSecurityScheme": {
+        "openIdConnectUrl": "https://login.agents.example.com/.well-known/openid-configuration"
+      }
+    }
+  },
+  "securityRequirements": [{"schemes": {"oidc": {"list": ["openid"]}}}],
+  "defaultInputModes": ["application/json", "text/plain"],
+  "defaultOutputModes": ["application/json"],
+  "skills": [
+    {
+      "id": "route-optimizer",
+      "name": "Route Optimizer",
+      "description": "Plans a route between two places.",
+      "tags": ["maps", "routing"]
+    }
+  ]
+}

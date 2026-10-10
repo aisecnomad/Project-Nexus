@@ -302,6 +302,7 @@ def configured_capabilities(
                 result.add("code-exec")
             mode = values.get("human_input_mode")
             if isinstance(mode, ast.Constant) and mode.value == "NEVER":
+                # Autonomy: approval-bypass evidence (the agent never asks a person for input).
                 result.add("autonomous")
         if signature == "framework.crewai" and symbol == "Agent":
             delegation = values.get("allow_delegation")

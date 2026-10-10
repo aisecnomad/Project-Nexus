@@ -92,6 +92,7 @@ include:
 | `shadow` | Not in the sanctioned inventory (only when an inventory is supplied) | 25 |
 | `registered` | Matched to exactly one inventory entry | −10 |
 | `no-owner` | No identifiable owner | 10 |
+| `mcp-not-in-approved-registry` | An enabled MCP server that no approved MCP registry lists by what its client fetches or connects to, lists only as deleted, or that has no such identity (only when `options.mcp_registries` has an approved registry and every approved registry loaded) | 15 |
 | `tag:plaintext-credential` | Plaintext credential exposed | 25 |
 | `tag:public-network` | Public network access enabled | 5 |
 | `tag:public-ingress` | Publicly reachable ingress | 10 |
@@ -106,6 +107,9 @@ include:
 | `tag:posture-unauthenticated-gateway` | That exposed gateway has no auth token | 15 |
 | `tag:exposed-llm-server` | LLM inference service is reachable beyond loopback or cluster scope | 15 |
 | `tag:tool-poisoning` | MCP tool description contains prompt-injection or exfiltration indicators | 15 |
+| `tag:no-auth-declared` | An A2A Agent Card declares no security scheme | 10 |
+| `tag:a2a-plaintext-interface` | An A2A Agent Card declares an `http://` or `ws://` interface to a host other than loopback | 10 |
+| `tag:a2a-card-signature-invalid` | An A2A Agent Card signature is malformed or does not verify against the operator-trusted keys (`agent_card_jwks_url`) | 10 |
 | `tag:unsafe-serialization` | Model artifact uses an unsafe serialization format | 15 |
 | `tag:cluster-admin` | Workload service account is bound to cluster-admin | 20 |
 | `tag:privileged-pod` | Workload requests privileged host access | 15 |
@@ -117,9 +121,12 @@ include:
 | `tag:hidden-instructions` | Instruction file carries content hidden from the rendered view (an HTML comment holding sentences) | 20 |
 | `tag:remote-code-fetch` | Instruction file downloads and executes code in one step, or decodes an inline blob into an interpreter | 15 |
 | `tag:invisible-text` | Instruction file contains invisible or bidirectional control characters | 10 |
+| `tag:autonomy-understated` | The matched inventory entry declares an autonomy level below the observed floor ([autonomy tiers](autonomy.md)) | 10 |
+| `autonomy:L0` … `autonomy:L5` | Observed autonomy floor; weighted only through `options.risk_weights.autonomy` | 0 |
 | `tag:disabled` / `tag:inactive` / `tag:suspended` | Resource is not active | −10 |
 | `tag:test-code-only` / `tag:generated-code-only` | Code evidence is only in test or fixture code, or only in generated files | −10 |
 | `tag:docs-only` / `tag:example-code-only` | Code evidence is only in documentation or example directories inside the project | −8 |
+| `tag:mcp-registry-published` / `tag:mcp-unpublished` / `tag:mcp-registry-deprecated` / `tag:mcp-registry-deleted` / `tag:mcp-registry-version-unpublished` / `tag:mcp-registry-outdated` / `tag:mcp-registry-unidentified` | MCP registry review hints from `options.mcp_registries` ([MCP registry provenance](../connectors/code.md#mcp-registry-provenance)) | 0 |
 
 The `kind` base weight is 30 for `secret`; 15 for `agent` and `mcp-server`;
 10 for `agent-config`, `workflow`, `bot-app`, `oauth-grant`,
@@ -128,8 +135,15 @@ The `kind` base weight is 30 for `secret`; 15 for `agent` and `mcp-server`;
 `ai-app`, `local-model` and `network-contact`.
 
 The complete tables are `KIND_BASE`, `CAPABILITY_WEIGHTS`, `TAG_WEIGHTS`,
-`PROVIDER_WEIGHTS` and `GOVERNANCE_WEIGHTS` in `shadowscan/risk.py`; tags with
-a zero weight add no factor. Some factors depend on finding metadata:
+`PROVIDER_WEIGHTS`, `GOVERNANCE_WEIGHTS` and `AUTONOMY_WEIGHTS` in
+`shadowscan/risk.py`; tags with a zero weight add no factor.
+`AUTONOMY_WEIGHTS` holds one weight per autonomy level, `L0` to `L5`, all 0 by
+default: the `autonomous` capability and the approval-bypass tags already score
+the evidence behind a high floor. A nonzero weight adds the factor
+`autonomy:L<n>` ("observed autonomy floor L<n> <label>") for the finding's
+observed floor, recomputed from the finding rather than read from
+`metadata.autonomy`; a finding kind without autonomy never gets one. See
+[autonomy tiers](autonomy.md). Some factors depend on finding metadata:
 `vendor-notes` (5, signature risk notes), `multiple-secrets` (5),
 `mcp-stdio` (5), `mcp-auto-approve` (10), `mcp-plain-http` (10), `sub-agents`
 (3 per definition, at most 10), `volume` (5 from 1,000 gateway events, 10 from
@@ -141,9 +155,18 @@ The factors are broader: `mcp-plain-http` scores any server URL whose scheme
 tag marks only plaintext URLs to another host, and both factors also count servers marked disabled, which the
 tags skip.
 Posture and MCP-risk evidence has weight 0: it changes risk, not confidence.
+The MCP registry tags weigh 0, so configuring `options.mcp_registries` changes
+no score by itself, and a server's publication never lowers its risk. Only an
+approved registry (`approved: true`) scores, through the
+`mcp-not-in-approved-registry` governance factor: once per finding, whatever
+the number of servers it counts, and like the other governance factors it is
+excluded from `danger_score` and reported with weight 0 under
+`risk_basis: danger`. When an approved registry fails to load, the factor is
+not applied and the scan is incomplete.
 `options.risk_weights` overrides weights; see the README's risk policy. Its
 keys are checked, so a typo cannot silently change nothing: unknown groups,
-`kinds` and `governance` keys are rejected, `capabilities` keys must be one of
+`kinds`, `governance` and `autonomy` keys are rejected (`autonomy` keys are `L0`
+to `L5`), `capabilities` keys must be one of
 the capability names (`code-exec`, `autonomous`, `saas-actions`, `data-access`,
 `browsing`, `memory`, `multi-agent`, `delegated-identity`, `tool-use`,
 `mcp-server`, `rag`),
@@ -175,7 +198,8 @@ a `confidence-scaling` factor, which is never positive, and a clamp at 0 or 100
 as a `bounds` factor, so the listed factors always add up to `score`.
 
 `risk.danger_score` applies the same scale and bounds to the factors other than
-the governance factors (`shadow`, `registered`, `no-owner`). With
+the governance factors (`shadow`, `registered`, `no-owner`,
+`mcp-not-in-approved-registry`). With
 `options.risk_basis: danger` the governance factors are reported with weight 0,
 so `score`, `level` and `--fail-on` follow the danger score.
 
@@ -183,7 +207,10 @@ so `score`, `level` and `--fail-on` follow the danger score.
 
 A finding is `shadow: true` unless **exactly one** inventory entry matches
 via an explicit resource pattern and its configured scope restrictions.
-Name-only matches suggest entries for review but do not approve.
+Name-only matches suggest entries for review but do not approve. Approved
+records of the vendor registries listed in `options.trusted_registries` add
+exact-resource entries for the scan; see
+[vendor registries as inventory sources](../inventory.md#vendor-registries-as-inventory-sources).
 
 An approved entry lends its `owner` to the finding.
 

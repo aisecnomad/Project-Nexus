@@ -62,7 +62,15 @@ from shadowscan.connectors.endpoint.catalog import (
     ModelStore,
 )
 from shadowscan.connectors.mcp_risk import record_server_risks
-from shadowscan.connectors.posture import POSTURE_DESCRIPTIONS, record_posture
+from shadowscan.connectors.posture import (
+    POSTURE_DESCRIPTIONS,
+    approval_settings,
+    posture_client,
+    record_approval,
+    record_posture,
+    unreadable_settings,
+    valid_approval,
+)
 from shadowscan.connectors.posture import assess as assess_posture
 from shadowscan.connectors.posture import parseable as posture_parseable
 from shadowscan.models import Evidence, Finding, Kind, Surface
@@ -82,6 +90,8 @@ _EXTENSION_VERSION = re.compile(
 )
 _ENV_ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 _RECORD_TYPES = {"agent_config", "ide_extension", "browser_extension", "local_model", "shell_history"}
+# Internal marker on a replayed record that lost approval or posture entries; never exported.
+_GATE_INCOMPLETE = "_approval_entries_dropped"
 _OWN_STRINGS = (
     "device", "home", "client", "product", "signature", "location", "editor", "extension_id", "version",
     "browser", "profile", "name", "runtime", "provider", "shell", "tool",
@@ -107,6 +117,9 @@ class _Home:
     fd: int
     entries: int = 0
     exhausted: bool = False
+    # Relative paths that could not be read or parsed at all (not a problem inside a file that
+    # was read): a settings file among them may loosen its client's approval gate.
+    unread: set[str] = field(default_factory=set)
 
 
 @dataclass
@@ -203,10 +216,24 @@ class EndpointInventoryConnector(BaseConnector):
 
     def _home_records(self, home: _Home) -> Iterator[dict[str, Any]]:
         base = {"device": self.label, "home": home.ref}
-        for loc in CONFIG_LOCATIONS:
-            record = self._config_record(home, loc)
-            if record is not None:
-                yield {**base, **record}
+        configs = [
+            {**base, **record}
+            for record in (self._config_record(home, loc) for loc in CONFIG_LOCATIONS)
+            if record is not None
+        ]
+        # A settings file that could not be read may loosen its client's approval gate: each of
+        # the client's records carries an entry that keeps the gate partial, also on replay.
+        unread = {
+            client: f"~/{rel}"
+            for rel in sorted(home.unread)
+            if (client := posture_client(rel)) is not None and client != "openclaw"
+        }
+        for record in configs:
+            client = record.get("client")
+            if isinstance(client, str) and client in unread:
+                entry = {**unreadable_settings(client).as_dict(), "file": unread[client]}
+                record["approval"] = [*record.get("approval", []), entry]
+        yield from configs
         for rec in self._ide_extensions(home):
             yield {**base, **rec}
         for rec in self._browser_extensions(home):
@@ -225,7 +252,9 @@ class EndpointInventoryConnector(BaseConnector):
             )
 
     # ------------------------------------------------------- safe file access
-    def _gap(self, home: _Home, rel: str, reason: str) -> None:
+    def _gap(self, home: _Home, rel: str, reason: str, *, unread: bool = True) -> None:
+        if unread:
+            home.unread.add(rel)
         self.ctx.warn(f"endpoint.inventory: ~{home.ref}/{rel} not read: {reason}")
 
     def _open_dir(self, home: _Home, rel: str) -> int | None:
@@ -362,17 +391,24 @@ class EndpointInventoryConnector(BaseConnector):
         text = self._read(home, loc.path, limit)
         if text is None:
             return None
+        # A settings file that does not parse cannot show its posture or approval settings.
+        parsed = posture_parseable(loc.path, text)
         if loc.mcp:
             errors: list[str] = []
             record["mcp_servers"] = _mcp_servers(loc, text, errors)
             if errors:
-                self._gap(home, loc.path, f"MCP configuration problem: {errors[0]}")
-        elif not posture_parseable(loc.path, text):
-            # The agent's settings could not be read, so their posture is unknown.
+                # A problem with one server entry does not make the file's settings unreadable.
+                self._gap(home, loc.path, f"MCP configuration problem: {errors[0]}", unread=not parsed)
+            elif not parsed:
+                self._gap(home, loc.path, "invalid configuration syntax")
+        elif not parsed:
             self._gap(home, loc.path, "invalid configuration syntax")
         issues = assess_posture(loc.path, text)
         if issues:
             record["posture"] = [{**issue.as_dict(), "file": f"~/{loc.path}"} for issue in issues]
+        approvals = approval_settings(loc.path, text)
+        if approvals:
+            record["approval"] = [{**setting.as_dict(), "file": f"~/{loc.path}"} for setting in approvals]
         return record
 
     # ---------------------------------------------------------- IDE extensions
@@ -528,6 +564,9 @@ class EndpointInventoryConnector(BaseConnector):
         groups: dict[tuple[str, ...], _Group] = {}
         history: list[dict[str, Any]] = []
         unknown = 0
+        # (device, home, client) groups that lost a whole malformed agent_config record; None
+        # stands for a record whose group could not be read, which leaves every group partial.
+        lost_gates: set[tuple[str, str, str] | None] = set()
         for raw in records:
             self.ctx.examined()
             rec = self._normalize(raw)
@@ -535,7 +574,9 @@ class EndpointInventoryConnector(BaseConnector):
                 unknown += 1
                 continue
             if rec.get("ignored"):
-                continue  # an inventory row for a product that is not an AI tool
+                if rec.get("malformed") and rec.get("record_type") == "agent_config":
+                    lost_gates.add(rec.get("gate_group"))
+                continue  # a malformed record, or an inventory row for a product that is not an AI tool
             kind = rec["record_type"]
             if kind == "shell_history":
                 history.append(rec)
@@ -564,7 +605,8 @@ class EndpointInventoryConnector(BaseConnector):
         for key, group in groups.items():
             kind = key[0]
             if kind == "agent_config":
-                findings += self._client_findings(group.records)
+                lost = None in lost_gates or (key[1], key[2], key[3]) in lost_gates
+                findings += self._client_findings(group.records, gate_complete=not lost)
             elif kind == "ide_extension":
                 findings.append(self._extension_finding(group.records))
             elif kind == "browser_extension":
@@ -581,16 +623,22 @@ class EndpointInventoryConnector(BaseConnector):
             if not self._record_fields_valid(
                 raw,
                 strings=_OWN_STRINGS,
-                arrays=("mcp_servers", "posture", "models"),
+                arrays=("mcp_servers", "posture", "approval", "models"),
                 required=_OWN_REQUIRED[str(raw["record_type"])],
             ) or not all(isinstance(raw.get(k, 0), int) for k in ("count", "model_count", "entry_count")):
                 self.ctx.warn("endpoint.inventory: skipped a malformed endpoint record")
-                return {"record_type": raw["record_type"], "ignored": True}
+                skipped = {"record_type": raw["record_type"], "ignored": True, "malformed": True}
+                if raw["record_type"] == "agent_config":
+                    # The skipped settings file could have loosened its client's approval gate.
+                    who = (raw.get("device", self.label), raw.get("home", "unknown"), raw.get("client"))
+                    skipped["gate_group"] = who if all(isinstance(v, str) for v in who) else None
+                return skipped
             rec = dict(raw)
             rec.setdefault("device", self.label)
             rec.setdefault("home", "unknown")
             servers = list(rec.get("mcp_servers") or [])
             posture = list(rec.get("posture") or [])
+            approvals = list(rec.get("approval") or [])
             models = list(rec.get("models") or [])
             rec["mcp_servers"] = [s for s in servers if _valid_server(s)]
             rec["posture"] = [
@@ -601,20 +649,32 @@ class EndpointInventoryConnector(BaseConnector):
                 and p["id"] in POSTURE_DESCRIPTIONS
                 and all(isinstance(p.get(k), str) for k in ("client", "setting", "value"))
             ]
+            # An approval entry this scanner would not have written for this record's settings
+            # file is dropped (and reported): it can never gate an action.
+            rec["approval"] = [
+                a for a in approvals if valid_approval(a, client=rec.get("client"), file=rec.get("location"))
+            ]
             rec["models"] = [m for m in models if isinstance(m, str)]
             dropped = (
                 len(servers)
                 - len(rec["mcp_servers"])
                 + len(posture)
                 - len(rec["posture"])
+                + len(approvals)
+                - len(rec["approval"])
                 + len(models)
                 - len(rec["models"])
             )
             if dropped:
                 self.ctx.warn(
-                    f"endpoint.inventory: dropped {dropped} malformed server, posture or model "
+                    f"endpoint.inventory: dropped {dropped} malformed server, posture, approval or model "
                     f"entr{'y' if dropped == 1 else 'ies'} from a {rec['record_type']} record"
                 )
+            # A dropped approval or posture entry could have loosened the gate, so what is left
+            # cannot show that every action is approved.
+            rec[_GATE_INCOMPLETE] = len(posture) != len(rec["posture"]) or len(approvals) != len(
+                rec["approval"]
+            )
             return rec
         nested = raw.get("columns")
         columns: dict[str, Any] = nested if isinstance(nested, dict) else raw
@@ -691,7 +751,7 @@ class EndpointInventoryConnector(BaseConnector):
         for capability in sig.capabilities:
             f.add_capability(capability)
 
-    def _client_findings(self, records: list[dict[str, Any]]) -> list[Finding]:
+    def _client_findings(self, records: list[dict[str, Any]], *, gate_complete: bool = True) -> list[Finding]:
         first = records[0]
         client, product = str(first.get("client")), str(first.get("product") or first.get("client"))
         signature = next((r.get("signature") for r in records if r.get("signature")), None)
@@ -714,6 +774,11 @@ class EndpointInventoryConnector(BaseConnector):
         posture = [p for r in records for p in r.get("posture") or [] if isinstance(p, dict)]
         if posture:
             record_posture(f, posture)
+        record_approval(
+            f,
+            [a for r in records for a in r.get("approval") or [] if isinstance(a, dict)],
+            complete=gate_complete and not any(r.get(_GATE_INCOMPLETE) for r in records),
+        )
         f.kind = kind
         out.append(finalize(f, self.index))
         # Each server keeps the file it came from, so its risks cite that file.
@@ -937,7 +1002,7 @@ def _json_object(text: str | None) -> dict[str, Any] | None:
 
 
 _SERVER_STRINGS = ("name", "transport", "command", "url", "location")
-_SERVER_STRING_LISTS = ("args", "urls", "env_names", "headers", "risks", "secret_locations")
+_SERVER_STRING_LISTS = ("args", "urls", "env_names", "headers", "risks", "secret_locations", "launch_context")
 
 
 def _valid_server(server: Any) -> bool:
@@ -950,6 +1015,16 @@ def _valid_server(server: Any) -> bool:
         server.get(k) is not None
         and not (isinstance(server[k], list) and all(isinstance(v, str) for v in server[k]))
         for k in _SERVER_STRING_LISTS
+    ):
+        return False
+    # Only a registry manifest's record has packages: objects of optional strings.
+    packages = server.get("packages")
+    if packages is not None and not (
+        isinstance(packages, list)
+        and all(
+            isinstance(package, dict) and all(v is None or isinstance(v, str) for v in package.values())
+            for package in packages
+        )
     ):
         return False
     return all(server.get(k) is None or isinstance(server[k], bool) for k in ("disabled", "secrets_inline"))

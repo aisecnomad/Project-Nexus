@@ -7,12 +7,13 @@ import hashlib
 import html
 import json
 
-from shadowscan.compliance import compliance_references
-from shadowscan.models import ScanResult
+from shadowscan.mappings import describe, finding_references
+from shadowscan.models import DERIVED_METADATA_KEYS, ScanResult
 from shadowscan.reporters._publication import (
     has_inventory,
     publication_stats,
     related_finding_ids,
+    unassessed_count,
     visible_controls,
 )
 
@@ -94,6 +95,16 @@ def _tags(values: list[str]) -> str:
     return "".join(f"<span class=tag>{_e(value)}</span>" for value in values)
 
 
+def _references(label: str, refs: list[str]) -> str:
+    """A labelled list of edition-qualified references with their catalog titles."""
+    items = []
+    for ref in refs:
+        entry = describe(ref)
+        title = f" {_e(entry.title)}" if entry else ""
+        items.append(f"<li><code>{_e(ref)}</code>{title}</li>")
+    return f"<div><b>{label}</b><ul>{''.join(items)}</ul></div>"
+
+
 _LEVELS = ("critical", "high", "medium", "low", "info")
 _COLUMNS = (
     ("score", "Risk"),
@@ -141,6 +152,8 @@ def render_html(result: ScanResult) -> str:
             f"<div class='stat'><b class='shadow'>{s['shadow']}</b>shadow (unregistered)</div>"
             f"<div class='stat'><b>{_e(result.inventory_size)}</b>registered agents</div>"
         )
+        if unassessed := unassessed_count(result):
+            parts.append(f"<div class='stat'><b>{_e(unassessed)}</b>unassessed (no source inventory)</div>")
     for lvl in _LEVELS:
         count = s["by_risk_level"].get(lvl, 0)
         parts.append(f"<div class='stat'><b><span class='pill {lvl}'>{count}</span></b>{lvl}</div>")
@@ -177,8 +190,12 @@ def render_html(result: ScanResult) -> str:
         )
         + "<th>Technologies</th></tr></thead><tbody>"
     )
+    inventory = has_inventory(result)
     for n, f in enumerate(result.findings):
-        shadow = "" if f.shadow is None else ("yes" if f.shadow else "no")
+        if f.shadow is None:
+            shadow = "unassessed" if inventory else ""
+        else:
+            shadow = "yes" if f.shadow else "no"
         level = f.risk.level.value
         labels = " ".join(f.frameworks + f.model_providers + f.tags + f.capabilities)
         text = " ".join(
@@ -216,9 +233,11 @@ def render_html(result: ScanResult) -> str:
             parts.append("<div><b>Capabilities</b> " + _tags(f.capabilities) + "</div>")
         if f.tags:
             parts.append("<div><b>Tags</b> " + _tags(f.tags) + "</div>")
-        compliance = compliance_references(f.tags)
-        if compliance:
-            parts.append("<div><b>Compliance</b> " + _tags(compliance) + "</div>")
+        threats, controls = finding_references(f)
+        if threats:
+            parts.append(_references("Threats", threats))
+        if controls:
+            parts.append(_references("Controls", controls))
         if f.models:
             parts.append(f"<div><b>Models</b> {_e(', '.join(f.models[:8]))}</div>")
         if f.permissions:
@@ -254,6 +273,7 @@ def render_html(result: ScanResult) -> str:
             parts.append(f"<div class='muted'>… {len(f.evidence) - 20} more</div>")
         parts.append("</div>")
         hidden = {"related", "technologies", "evidence_counts", "agent_indicators", "scan_root"}
+        hidden |= DERIVED_METADATA_KEYS
         meta = {k: v for k, v in f.metadata.items() if k not in hidden}
         if meta:
             dumped = _e(json.dumps(meta, indent=2, default=str)[:6000])
@@ -280,6 +300,10 @@ def render_html(result: ScanResult) -> str:
         if diagnostics:
             parts.append("<ul>" + "".join(f"<li>{_e(message)}</li>" for message in diagnostics) + "</ul>")
         parts.append("</li>")
-    parts.append("</ul></footer>")
+    parts.append("</ul>")
+    parts.append(
+        "<p><b>Threats and controls.</b> Evidence references, not compliance determinations."
+        " Author mappings, not independently reviewed.</p></footer>"
+    )
     parts.append("<script>" + _JS + "</script></body></html>")
     return "".join(parts)

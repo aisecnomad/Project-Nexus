@@ -13,9 +13,11 @@ These pages are built from source docstrings using
 | [Models](models.md) | Finding, Evidence, ScanResult and supporting data types |
 | [Config](config.md) | Scan configuration parsing and validation |
 | [Risk](risk.md) | Risk scoring and policy |
+| [Autonomy](autonomy.md) | Autonomy tier interval (L0 to L5) and declared-level comparison |
 | [Merge](merge.md) | Finding deduplication and merge logic |
 | [Correlation](correlation.md) | Cross-surface finding correlation |
 | [Inventory registry](registry.md) | Sanctioned agent inventory and reconciliation |
+| [Vendor registries](registries.md) | Registry record contract, reconciliation statuses and trusted-registry approvals |
 
 ## Connector Framework
 

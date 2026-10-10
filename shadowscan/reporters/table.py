@@ -10,7 +10,12 @@ from rich.table import Table
 from rich.text import Text
 
 from shadowscan.models import Finding, ScanResult
-from shadowscan.reporters._publication import has_inventory, publication_stats, without_connector_prefix
+from shadowscan.reporters._publication import (
+    has_inventory,
+    publication_stats,
+    unassessed_count,
+    without_connector_prefix,
+)
 from shadowscan.utils.output import terminal_text
 
 _LEVEL_STYLE = {
@@ -48,6 +53,8 @@ def _header(result: ScanResult) -> Text:
     if has_inventory(result):
         header.append(f"  •  {s['shadow']} shadow", style="bold red")
         header.append(f" (inventory: {result.inventory_size} registered agents)", style="dim")
+        if unassessed := unassessed_count(result):
+            header.append(f"  •  {unassessed} unassessed", style="bold yellow")
     header.append("  •  ")
     for lvl in ("critical", "high", "medium", "low", "info"):
         n = s["by_risk_level"].get(lvl, 0)
@@ -120,6 +127,8 @@ def print_table(
         if show_shadow:
             if f.shadow:
                 cells.append(Text("SHADOW", style="bold red"))
+            elif f.shadow is None:
+                cells.append(Text("unassessed", style="yellow"))
             else:
                 cells.append(Text(terminal_text(f.registry_match or ""), style="green"))
         cells += [

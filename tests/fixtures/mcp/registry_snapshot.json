@@ -1,0 +1,177 @@
+{
+  "schema": "shadowscan.mcp-registry-snapshot/v1",
+  "registry": "https://registry.modelcontextprotocol.io",
+  "api": "v0.1",
+  "fetched_at": "2026-10-10T00:00:00Z",
+  "complete": true,
+  "servers": [
+    {
+      "server": {
+        "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+        "name": "io.github.acme/files",
+        "description": "Synthetic file server entry, not a real registry record.",
+        "version": "1.0.0",
+        "packages": [
+          {"registryType": "npm", "identifier": "@acme/mcp-files", "version": "1.0.0", "transport": {"type": "stdio"}}
+        ]
+      },
+      "_meta": {
+        "io.modelcontextprotocol.registry/official": {
+          "status": "active",
+          "statusChangedAt": "2026-01-10T10:00:00Z",
+          "publishedAt": "2026-01-10T10:00:00Z",
+          "isLatest": false
+        }
+      }
+    },
+    {
+      "server": {
+        "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+        "name": "io.github.acme/files",
+        "description": "Synthetic file server entry, not a real registry record.",
+        "version": "1.1.0",
+        "packages": [
+          {"registryType": "npm", "identifier": "@acme/mcp-files", "version": "1.1.0", "transport": {"type": "stdio"}}
+        ]
+      },
+      "_meta": {
+        "io.modelcontextprotocol.registry/official": {
+          "status": "active",
+          "statusChangedAt": "2026-03-02T10:00:00Z",
+          "publishedAt": "2026-03-02T10:00:00Z",
+          "updatedAt": "2026-03-02T10:00:00Z",
+          "isLatest": true
+        }
+      }
+    },
+    {
+      "server": {
+        "$schema": "https://static.modelcontextprotocol.io/schemas/2025-10-17/server.schema.json",
+        "name": "io.github.acme/legacy",
+        "description": "Synthetic deprecated Python server.",
+        "version": "0.9.0",
+        "packages": [
+          {"registryType": "pypi", "identifier": "Acme_Legacy.MCP", "version": "0.9.0", "transport": {"type": "stdio"}}
+        ]
+      },
+      "_meta": {
+        "io.modelcontextprotocol.registry/official": {
+          "status": "deprecated",
+          "statusChangedAt": "2026-05-01T00:00:00Z",
+          "statusMessage": "Use io.github.acme/files instead.",
+          "publishedAt": "2025-11-01T00:00:00Z",
+          "isLatest": true
+        }
+      }
+    },
+    {
+      "server": {
+        "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+        "name": "io.github.acme/gone",
+        "description": "Synthetic deleted container server.",
+        "version": "2.0.0",
+        "packages": [
+          {"registryType": "oci", "identifier": "ghcr.io/acme/gone-mcp:2.0.0", "transport": {"type": "stdio"}}
+        ]
+      },
+      "_meta": {
+        "io.modelcontextprotocol.registry/official": {
+          "status": "deleted",
+          "statusChangedAt": "2026-06-01T00:00:00Z",
+          "publishedAt": "2026-02-01T00:00:00Z",
+          "isLatest": true
+        }
+      }
+    },
+    {
+      "server": {
+        "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+        "name": "com.example/remote",
+        "title": "Example remote",
+        "description": "Synthetic remote server, first endpoint.",
+        "version": "1.0.0",
+        "remotes": [{"type": "sse", "url": "https://old.example.com/sse"}]
+      },
+      "_meta": {
+        "io.modelcontextprotocol.registry/official": {
+          "status": "active",
+          "statusChangedAt": "2026-02-01T00:00:00Z",
+          "publishedAt": "2026-02-01T00:00:00Z",
+          "isLatest": false
+        }
+      }
+    },
+    {
+      "server": {
+        "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+        "name": "com.example/remote",
+        "title": "Example remote",
+        "description": "Synthetic remote server, current endpoint.",
+        "version": "2.0.0",
+        "remotes": [
+          {"type": "streamable-http", "url": "https://mcp.example.com/mcp"},
+          {"type": "streamable-http", "url": "https://{tenant}.mcp.example.com/mcp"}
+        ]
+      },
+      "_meta": {
+        "io.modelcontextprotocol.registry/official": {
+          "status": "active",
+          "statusChangedAt": "2026-07-01T00:00:00Z",
+          "publishedAt": "2026-07-01T00:00:00Z",
+          "isLatest": true
+        }
+      }
+    },
+    {
+      "server": {
+        "name": "io.github.acme/shared-a",
+        "description": "Synthetic entry sharing a package with shared-b.",
+        "version": "1.0.0",
+        "packages": [
+          {"registryType": "npm", "identifier": "@acme/shared-mcp", "version": "1.0.0", "transport": {"type": "stdio"}}
+        ]
+      },
+      "_meta": {
+        "io.modelcontextprotocol.registry/official": {
+          "status": "active",
+          "publishedAt": "2026-04-01T00:00:00Z",
+          "isLatest": true
+        }
+      }
+    },
+    {
+      "server": {
+        "name": "io.github.acme/shared-b",
+        "description": "Synthetic entry sharing a package with shared-a.",
+        "version": "1.0.0",
+        "packages": [
+          {"registryType": "npm", "identifier": "@acme/shared-mcp", "version": "1.0.0", "transport": {"type": "stdio"}}
+        ]
+      },
+      "_meta": {
+        "io.modelcontextprotocol.registry/official": {
+          "status": "deleted",
+          "publishedAt": "2026-04-02T00:00:00Z",
+          "isLatest": true
+        }
+      }
+    },
+    {
+      "server": {
+        "name": "io.github.acme/manifest-tool",
+        "description": "Synthetic entry a server.json manifest names.",
+        "version": "3.0.0",
+        "packages": [
+          {"registryType": "mcpb", "identifier": "https://downloads.example.com/manifest-tool-3.0.0.mcpb", "version": "3.0.0", "fileSha256": "0000000000000000000000000000000000000000000000000000000000000000", "transport": {"type": "stdio"}}
+        ]
+      },
+      "_meta": {
+        "io.modelcontextprotocol.registry/official": {
+          "status": "active",
+          "publishedAt": "2026-08-01T00:00:00Z",
+          "isLatest": true
+        }
+      }
+    }
+  ]
+}

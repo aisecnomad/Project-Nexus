@@ -1,0 +1,16 @@
+{
+  "protocolVersion": "0.3.0",
+  "name": "Synthetic Travel Desk",
+  "description": "Synthetic A2A 0.3 Agent Card with a plaintext HTTP+JSON fallback and no security scheme; not taken from a live service.",
+  "url": "https://travel.agents.example.com/a2a",
+  "preferredTransport": "JSONRPC",
+  "additionalInterfaces": [
+    {"url": "https://travel.agents.example.com/a2a", "transport": "JSONRPC"},
+    {"url": "http://travel.agents.example.com/a2a/rest", "transport": "HTTP+JSON"}
+  ],
+  "version": "0.9.1",
+  "capabilities": {"streaming": false},
+  "defaultInputModes": ["text/plain"],
+  "defaultOutputModes": ["text/plain"],
+  "skills": [{"id": "book-trip", "name": "Book trip", "tags": ["travel"]}]
+}

@@ -70,6 +70,14 @@ repos:
         pass_filenames: false
         files: ^shadowscan/signatures/
 
+      - id: mapping-validate
+        name: Validate threat and control mapping catalogs
+        entry: python -m shadowscan.mappings.validate
+        language: system
+        pass_filenames: false
+        # Rules are checked against risk tags, capabilities and finding kinds.
+        files: ^shadowscan/(mappings/|risk\.py$|models\.py$|signatures/schema\.py$)
+
       - id: no-hardcoded-secrets
         name: Check for hardcoded secret patterns
         entry: python tools/check_secrets.py
