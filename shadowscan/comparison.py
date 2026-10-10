@@ -122,6 +122,10 @@ def build_collection_scope(
         local = spec.name == "code.filesystem" and bool(spec.config.get("path") or spec.config.get("paths"))
         if not offline and not local:
             return {**unavailable, "reason": "live collection scope is not attested"}
+        if spec.name == "code.filesystem" and spec.config.get("diff_base"):
+            # Which files were read depends on Git state outside the configuration, and
+            # unchanged files are not read at all: absence is not evidence of resolution.
+            return {**unavailable, "reason": "diff-scoped collection is not a repository inventory"}
         options = dict(spec.config)
         for key in PATH_KEYS:
             val = options.get(key)

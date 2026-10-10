@@ -544,6 +544,106 @@
       "assertions": {
         "exact_findings": []
       }
+    },
+    {
+      "id": "mcp-python-fastmcp-server",
+      "family": "mcp-server",
+      "description": "FastMCP server exposing two arithmetic tools over stdio: the project implements an MCP server (mcp-server with the protocol's tool-use), it is not an agent",
+      "files": {
+        "requirements.txt": "mcp>=1.2\n",
+        "server.py": "from mcp.server.fastmcp import FastMCP\n\nmcp = FastMCP(\"arithmetic\")\n\n\n@mcp.tool()\ndef add(a: int, b: int) -> int:\n    \"\"\"Add two integers.\"\"\"\n    return a + b\n\n\n@mcp.tool(description=\"Multiply two integers\")\ndef multiply(a: int, b: int) -> int:\n    return a * b\n\n\nif __name__ == \"__main__\":\n    mcp.run(transport=\"stdio\")\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "protocol.mcp"
+      },
+      "present": false,
+      "assertions": {
+        "expected_findings": [
+          {
+            "kind": "framework-usage",
+            "product_signature": "protocol.mcp",
+            "capabilities": [
+              "mcp-server",
+              "tool-use"
+            ]
+          }
+        ],
+        "max_agent_findings": 0
+      }
+    },
+    {
+      "id": "mcp-typescript-mcpserver",
+      "family": "mcp-server",
+      "description": "TypeScript McpServer with one registered arithmetic tool on a stdio transport: an MCP server implementation (mcp-server with tool-use), not an agent",
+      "files": {
+        "package.json": "{\n  \"name\": \"arithmetic-mcp\",\n  \"private\": true,\n  \"type\": \"module\",\n  \"dependencies\": { \"@modelcontextprotocol/sdk\": \"^1.17.0\", \"zod\": \"^3.25.0\" }\n}\n",
+        "src/index.ts": "import { McpServer } from \"@modelcontextprotocol/sdk/server/mcp.js\";\nimport { StdioServerTransport } from \"@modelcontextprotocol/sdk/server/stdio.js\";\nimport { z } from \"zod\";\n\nconst server = new McpServer({ name: \"arithmetic\", version: \"1.0.0\" });\n\nserver.registerTool(\n  \"add\",\n  { description: \"Add two integers\", inputSchema: { a: z.number(), b: z.number() } },\n  async ({ a, b }) => ({ content: [{ type: \"text\", text: String(a + b) }] }),\n);\n\nconst transport = new StdioServerTransport();\nawait server.connect(transport);\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "protocol.mcp"
+      },
+      "present": false,
+      "assertions": {
+        "expected_findings": [
+          {
+            "kind": "framework-usage",
+            "product_signature": "protocol.mcp",
+            "capabilities": [
+              "mcp-server",
+              "tool-use"
+            ]
+          }
+        ],
+        "max_agent_findings": 0
+      }
+    },
+    {
+      "id": "http-server-class-near-miss",
+      "family": "mcp-server",
+      "description": "HTTP and socket servers whose classes are imported under the name Server, in Python and TypeScript: not MCP servers, nothing here uses a model",
+      "files": {
+        "server.py": "from http.server import BaseHTTPRequestHandler\nfrom http.server import HTTPServer as Server\n\n\nclass Handler(BaseHTTPRequestHandler):\n    def do_GET(self) -> None:\n        self.send_response(200)\n        self.end_headers()\n        self.wfile.write(b\"ok\")\n\n\nhttpd = Server((\"\", 8000), Handler)\nhttpd.serve_forever()\n",
+        "web/index.ts": "import { Server } from \"http\";\nimport { Server as SocketServer } from \"socket.io\";\n\nconst http = new Server((request, response) => response.end(\"ok\"));\nconst io = new SocketServer(http);\nio.on(\"connection\", () => undefined);\nhttp.listen(8000);\n"
+      },
+      "target": {
+        "kind": "framework-usage",
+        "signature": "protocol.mcp"
+      },
+      "present": false,
+      "assertions": {
+        "exact_findings": [],
+        "max_agent_findings": 0
+      }
+    },
+    {
+      "id": "mcp-client-with-http-server-near-miss",
+      "family": "mcp-server",
+      "description": "An MCP client (Python ClientSession, TypeScript Client) next to aiohttp and socket.io servers constructed as Server(: the client's protocol evidence corroborates the ambiguous class name, but the project implements no MCP server (tool-use only, no mcp-server), and it is not an agent",
+      "files": {
+        "client.py": "import asyncio\n\nfrom mcp import ClientSession\nfrom mcp.client.stdio import StdioServerParameters, stdio_client\n\n\nasync def main() -> None:\n    params = StdioServerParameters(command=\"npx\", args=[\"-y\", \"@modelcontextprotocol/server-filesystem\", \".\"])\n    async with stdio_client(params) as (read, write):\n        async with ClientSession(read, write) as session:\n            await session.initialize()\n            print(await session.list_tools())\n\n\nasyncio.run(main())\n",
+        "web.py": "from aiohttp import web\n\n\nasync def handler(request: web.BaseRequest) -> web.Response:\n    return web.Response(text=\"ok\")\n\n\nserver = web.Server(handler)\n",
+        "src/client.ts": "import { Client } from \"@modelcontextprotocol/sdk/client/index.js\";\nimport { StdioClientTransport } from \"@modelcontextprotocol/sdk/client/stdio.js\";\n\nconst client = new Client({ name: \"inspector\", version: \"1.0.0\" });\nawait client.connect(new StdioClientTransport({ command: \"npx\", args: [\"-y\", \"@modelcontextprotocol/server-filesystem\", \".\"] }));\nconsole.log(await client.listTools());\n",
+        "src/io.ts": "import { createServer } from \"http\";\nimport { Server } from \"socket.io\";\n\nconst httpServer = createServer();\nconst io = new Server(httpServer);\nio.on(\"connection\", () => undefined);\nhttpServer.listen(8000);\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "protocol.mcp"
+      },
+      "present": false,
+      "assertions": {
+        "expected_findings": [
+          {
+            "kind": "framework-usage",
+            "product_signature": "protocol.mcp",
+            "capabilities": [
+              "tool-use"
+            ]
+          }
+        ],
+        "max_agent_findings": 0
+      }
     }
   ]
 }

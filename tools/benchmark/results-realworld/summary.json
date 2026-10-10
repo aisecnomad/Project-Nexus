@@ -1,0 +1,1983 @@
+{
+ "manifest": {
+  "corpus": "corpus.json",
+  "corpus_sha256": "6469bdee66c83338710003cdf19e1dcc22ae13cdcd3cf6b2c8de657954acda04",
+  "corpus_metadata": {
+   "name": "ShadowScan real-world repository benchmark",
+   "type": "real-world",
+   "surface": "repo",
+   "retrieved_at": "2026-10-08",
+   "provenance": "Public repositories pinned by commit; labels assigned by the benchmark author by inspecting each checkout at the pinned commit, before any tool ran on the corpus. Not an independent or field-adjudicated sample.",
+   "labels": {
+    "agent": 22,
+    "llm": 3,
+    "none": 9
+   }
+  },
+  "cases_run": 34,
+  "timeout_seconds": 900,
+  "python": "3.13.16",
+  "platform": "Linux-6.18.44-fc-v80-x86_64-with-glibc2.39",
+  "checkouts_dirtied_by_tool": {},
+  "runs": [
+   {
+    "tool": "grep-baseline",
+    "display": "Naive grep baseline",
+    "source": "this repository (tools/benchmark/realworld_adapters.py)",
+    "surfaces": {
+     "repo": "fixed regex set over paths and text file contents (no .git)"
+    },
+    "wall_seconds": 218.8,
+    "ok": 34,
+    "error": 0,
+    "n/a": 0
+   },
+   {
+    "tool": "safedep-vet",
+    "display": "SafeDep vet (code scan)",
+    "source": "safedep/vet",
+    "surfaces": {
+     "repo": "vet code scan on the checkout; any AI code-analysis finding"
+    },
+    "wall_seconds": 1283.4,
+    "ok": 33,
+    "error": 1,
+    "n/a": 0
+   },
+   {
+    "tool": "agentic-radar",
+    "display": "Agentic Radar (SplxAI)",
+    "source": "splx-ai/agentic-radar",
+    "surfaces": {
+     "repo": "scan <framework> --export-graph-json per framework; any graph with an agent node"
+    },
+    "wall_seconds": 438.4,
+    "ok": 33,
+    "error": 1,
+    "n/a": 0
+   },
+   {
+    "tool": "shadowscan",
+    "display": "Project Nexus ShadowScan",
+    "source": "aisecnomad/Project-Nexus",
+    "surfaces": {
+     "repo": "code.filesystem on the pinned checkout, default options"
+    },
+    "wall_seconds": 283.3,
+    "ok": 19,
+    "error": 15,
+    "n/a": 0
+   },
+   {
+    "tool": "agentdiscover",
+    "display": "AgentDiscover Scanner",
+    "source": "Defend-AI-Tech-Inc/agent-discover-scanner",
+    "surfaces": {
+     "repo": "scan --format sarif + audit --skip-layers 2,3,4,5, empty HOME"
+    },
+    "wall_seconds": 197.7,
+    "ok": 34,
+    "error": 0,
+    "n/a": 0
+   },
+   {
+    "tool": "agent-bom",
+    "display": "agent-bom",
+    "source": "msaad00/agent-bom",
+    "surfaces": {
+     "repo": "scan <checkout> --no-scan --offline (inventory only), empty HOME"
+    },
+    "wall_seconds": 486.1,
+    "ok": 34,
+    "error": 0,
+    "n/a": 0
+   },
+   {
+    "tool": "cisco-aibom",
+    "display": "Cisco AI BOM",
+    "source": "cisco-ai-defense/aibom",
+    "surfaces": {
+     "repo": "analyze on the pinned checkout; Tier-3 LLM classifier unreachable"
+    },
+    "wall_seconds": 4002.7,
+    "ok": 30,
+    "error": 4,
+    "n/a": 0
+   },
+   {
+    "tool": "shadowscan-tuned",
+    "display": "ShadowScan (max_file_size 20 MiB)",
+    "source": "aisecnomad/Project-Nexus",
+    "surfaces": {
+     "repo": "code.filesystem, max_file_size raised to 20 MiB, otherwise default"
+    },
+    "wall_seconds": 291.3,
+    "ok": 22,
+    "error": 12,
+    "n/a": 0
+   }
+  ]
+ },
+ "tools": {
+  "agent-bom": {
+   "surfaces": {
+    "repo": {
+     "n": 34,
+     "tp": 23,
+     "fp": 7,
+     "fn": 2,
+     "tn": 2,
+     "errors": 0,
+     "recall": [
+      0.92,
+      0.7503389104960468,
+      0.9777795987151524
+     ],
+     "specificity": [
+      0.2222222222222222,
+      0.06322510711784671,
+      0.5474110308930111
+     ],
+     "precision": [
+      0.7666666666666667,
+      0.5907167384187784,
+      0.8820761185551049
+     ],
+     "f1": 0.8363636363636363,
+     "balanced_accuracy": 0.5711111111111111,
+     "mcc": 0.19474579822405907,
+     "rate_by_label": {
+      "agent": [
+       0.9545454545454546,
+       22
+      ],
+      "llm": [
+       0.6666666666666666,
+       3
+      ],
+      "none": [
+       0.7777777777777778,
+       9
+      ]
+     },
+     "f1_ci": [
+      0.7083333333333334,
+      0.9310344827586207
+     ],
+     "median_seconds": 10.204,
+     "agent_tier": {
+      "agent_recall": [
+       0.7272727272727273,
+       0.5184826598759762,
+       0.8684923971201053
+      ],
+      "agent_false_alarm_on_non_agent": [
+       0.08333333333333333,
+       0.014865094404917095,
+       0.35387991114111694
+      ]
+     }
+    }
+   },
+   "supported_cases": 34,
+   "supported_overall": {
+    "n": 34,
+    "tp": 23,
+    "fp": 7,
+    "fn": 2,
+    "tn": 2,
+    "errors": 0,
+    "recall": [
+     0.92,
+     0.7503389104960468,
+     0.9777795987151524
+    ],
+    "specificity": [
+     0.2222222222222222,
+     0.06322510711784671,
+     0.5474110308930111
+    ],
+    "precision": [
+     0.7666666666666667,
+     0.5907167384187784,
+     0.8820761185551049
+    ],
+    "f1": 0.8363636363636363,
+    "balanced_accuracy": 0.5711111111111111,
+    "mcc": 0.19474579822405907,
+    "rate_by_label": {
+     "agent": [
+      0.9545454545454546,
+      22
+     ],
+     "llm": [
+      0.6666666666666666,
+      3
+     ],
+     "none": [
+      0.7777777777777778,
+      9
+     ]
+    }
+   },
+   "estate": {
+    "recall": [
+     0.92,
+     0.7503389104960468,
+     0.9777795987151524
+    ],
+    "specificity": [
+     0.2222222222222222,
+     0.06322510711784671,
+     0.5474110308930111
+    ],
+    "n": 34
+   }
+  },
+  "agentdiscover": {
+   "surfaces": {
+    "repo": {
+     "n": 34,
+     "tp": 19,
+     "fp": 3,
+     "fn": 6,
+     "tn": 6,
+     "errors": 0,
+     "recall": [
+      0.76,
+      0.5657031664457093,
+      0.8850368630659855
+     ],
+     "specificity": [
+      0.6666666666666666,
+      0.3542021355803963,
+      0.879416181613089
+     ],
+     "precision": [
+      0.8636363636363636,
+      0.6666501283342828,
+      0.9525099628594474
+     ],
+     "f1": 0.8085106382978723,
+     "balanced_accuracy": 0.7133333333333334,
+     "mcc": 0.3938927711338647,
+     "rate_by_label": {
+      "agent": [
+       0.8636363636363636,
+       22
+      ],
+      "llm": [
+       0.0,
+       3
+      ],
+      "none": [
+       0.3333333333333333,
+       9
+      ]
+     },
+     "f1_ci": [
+      0.6666666666666666,
+      0.9130434782608695
+     ],
+     "median_seconds": 3.916,
+     "agent_tier": {
+      "agent_recall": [
+       0.8181818181818182,
+       0.6148339256287345,
+       0.9269311541657794
+      ],
+      "agent_false_alarm_on_non_agent": [
+       0.25,
+       0.08894166839405471,
+       0.5323053349335657
+      ]
+     }
+    }
+   },
+   "supported_cases": 34,
+   "supported_overall": {
+    "n": 34,
+    "tp": 19,
+    "fp": 3,
+    "fn": 6,
+    "tn": 6,
+    "errors": 0,
+    "recall": [
+     0.76,
+     0.5657031664457093,
+     0.8850368630659855
+    ],
+    "specificity": [
+     0.6666666666666666,
+     0.3542021355803963,
+     0.879416181613089
+    ],
+    "precision": [
+     0.8636363636363636,
+     0.6666501283342828,
+     0.9525099628594474
+    ],
+    "f1": 0.8085106382978723,
+    "balanced_accuracy": 0.7133333333333334,
+    "mcc": 0.3938927711338647,
+    "rate_by_label": {
+     "agent": [
+      0.8636363636363636,
+      22
+     ],
+     "llm": [
+      0.0,
+      3
+     ],
+     "none": [
+      0.3333333333333333,
+      9
+     ]
+    }
+   },
+   "estate": {
+    "recall": [
+     0.76,
+     0.5657031664457093,
+     0.8850368630659855
+    ],
+    "specificity": [
+     0.6666666666666666,
+     0.3542021355803963,
+     0.879416181613089
+    ],
+    "n": 34
+   }
+  },
+  "agentic-radar": {
+   "surfaces": {
+    "repo": {
+     "n": 34,
+     "tp": 5,
+     "fp": 0,
+     "fn": 20,
+     "tn": 9,
+     "errors": 1,
+     "recall": [
+      0.2,
+      0.08860584686802572,
+      0.3913095036954033
+     ],
+     "specificity": [
+      1.0,
+      0.7008549515804559,
+      1.0
+     ],
+     "precision": [
+      1.0,
+      0.5655175352168251,
+      1.0
+     ],
+     "f1": 0.3333333333333333,
+     "balanced_accuracy": 0.6,
+     "mcc": 0.24913643956121992,
+     "rate_by_label": {
+      "agent": [
+       0.22727272727272727,
+       22
+      ],
+      "llm": [
+       0.0,
+       3
+      ],
+      "none": [
+       0.0,
+       9
+      ]
+     },
+     "f1_ci": [
+      0.08695652173913043,
+      0.5555555555555556
+     ],
+     "median_seconds": 12.387,
+     "agent_tier": {
+      "agent_recall": [
+       0.23809523809523808,
+       0.10628013022636468,
+       0.4509117368295075
+      ],
+      "agent_false_alarm_on_non_agent": [
+       0.0,
+       2.7755575615628914e-17,
+       0.24249400665524085
+      ]
+     }
+    }
+   },
+   "supported_cases": 34,
+   "supported_overall": {
+    "n": 34,
+    "tp": 5,
+    "fp": 0,
+    "fn": 20,
+    "tn": 9,
+    "errors": 1,
+    "recall": [
+     0.2,
+     0.08860584686802572,
+     0.3913095036954033
+    ],
+    "specificity": [
+     1.0,
+     0.7008549515804559,
+     1.0
+    ],
+    "precision": [
+     1.0,
+     0.5655175352168251,
+     1.0
+    ],
+    "f1": 0.3333333333333333,
+    "balanced_accuracy": 0.6,
+    "mcc": 0.24913643956121992,
+    "rate_by_label": {
+     "agent": [
+      0.22727272727272727,
+      22
+     ],
+     "llm": [
+      0.0,
+      3
+     ],
+     "none": [
+      0.0,
+      9
+     ]
+    }
+   },
+   "estate": {
+    "recall": [
+     0.2,
+     0.08860584686802572,
+     0.3913095036954033
+    ],
+    "specificity": [
+     1.0,
+     0.7008549515804559,
+     1.0
+    ],
+    "n": 34
+   }
+  },
+  "cisco-aibom": {
+   "surfaces": {
+    "repo": {
+     "n": 34,
+     "tp": 21,
+     "fp": 3,
+     "fn": 4,
+     "tn": 6,
+     "errors": 4,
+     "recall": [
+      0.84,
+      0.6534637839282114,
+      0.9359654854332355
+     ],
+     "specificity": [
+      0.6666666666666666,
+      0.3542021355803963,
+      0.879416181613089
+     ],
+     "precision": [
+      0.875,
+      0.6899611872949993,
+      0.9565566591987655
+     ],
+     "f1": 0.8571428571428571,
+     "balanced_accuracy": 0.7533333333333333,
+     "mcc": 0.49057789051960615,
+     "rate_by_label": {
+      "agent": [
+       0.8181818181818182,
+       22
+      ],
+      "llm": [
+       1.0,
+       3
+      ],
+      "none": [
+       0.3333333333333333,
+       9
+      ]
+     },
+     "f1_ci": [
+      0.7317073170731707,
+      0.9433962264150944
+     ],
+     "median_seconds": 79.308,
+     "agent_tier": {
+      "agent_recall": [
+       0.7222222222222222,
+       0.4912734343970254,
+       0.8750024662044601
+      ],
+      "agent_false_alarm_on_non_agent": [
+       0.08333333333333333,
+       0.014865094404917095,
+       0.35387991114111694
+      ]
+     }
+    }
+   },
+   "supported_cases": 34,
+   "supported_overall": {
+    "n": 34,
+    "tp": 21,
+    "fp": 3,
+    "fn": 4,
+    "tn": 6,
+    "errors": 4,
+    "recall": [
+     0.84,
+     0.6534637839282114,
+     0.9359654854332355
+    ],
+    "specificity": [
+     0.6666666666666666,
+     0.3542021355803963,
+     0.879416181613089
+    ],
+    "precision": [
+     0.875,
+     0.6899611872949993,
+     0.9565566591987655
+    ],
+    "f1": 0.8571428571428571,
+    "balanced_accuracy": 0.7533333333333333,
+    "mcc": 0.49057789051960615,
+    "rate_by_label": {
+     "agent": [
+      0.8181818181818182,
+      22
+     ],
+     "llm": [
+      1.0,
+      3
+     ],
+     "none": [
+      0.3333333333333333,
+      9
+     ]
+    }
+   },
+   "estate": {
+    "recall": [
+     0.84,
+     0.6534637839282114,
+     0.9359654854332355
+    ],
+    "specificity": [
+     0.6666666666666666,
+     0.3542021355803963,
+     0.879416181613089
+    ],
+    "n": 34
+   }
+  },
+  "grep-baseline": {
+   "surfaces": {
+    "repo": {
+     "n": 34,
+     "tp": 25,
+     "fp": 2,
+     "fn": 0,
+     "tn": 7,
+     "errors": 0,
+     "recall": [
+      1.0,
+      0.8668077490609515,
+      0.9999999999999999
+     ],
+     "specificity": [
+      0.7777777777777778,
+      0.45258896910698887,
+      0.9367748928821533
+     ],
+     "precision": [
+      0.9259259259259259,
+      0.7663040731697686,
+      0.9794453459390113
+     ],
+     "f1": 0.9615384615384616,
+     "balanced_accuracy": 0.8888888888888888,
+     "mcc": 0.848625128695526,
+     "rate_by_label": {
+      "agent": [
+       1.0,
+       22
+      ],
+      "llm": [
+       1.0,
+       3
+      ],
+      "none": [
+       0.2222222222222222,
+       9
+      ]
+     },
+     "f1_ci": [
+      0.8936170212765957,
+      1.0
+     ],
+     "median_seconds": 4.171,
+     "agent_tier": {
+      "agent_recall": [
+       0.8636363636363636,
+       0.6666501283342828,
+       0.9525099628594474
+      ],
+      "agent_false_alarm_on_non_agent": [
+       0.16666666666666666,
+       0.04696514218385378,
+       0.4480308622529734
+      ]
+     }
+    }
+   },
+   "supported_cases": 34,
+   "supported_overall": {
+    "n": 34,
+    "tp": 25,
+    "fp": 2,
+    "fn": 0,
+    "tn": 7,
+    "errors": 0,
+    "recall": [
+     1.0,
+     0.8668077490609515,
+     0.9999999999999999
+    ],
+    "specificity": [
+     0.7777777777777778,
+     0.45258896910698887,
+     0.9367748928821533
+    ],
+    "precision": [
+     0.9259259259259259,
+     0.7663040731697686,
+     0.9794453459390113
+    ],
+    "f1": 0.9615384615384616,
+    "balanced_accuracy": 0.8888888888888888,
+    "mcc": 0.848625128695526,
+    "rate_by_label": {
+     "agent": [
+      1.0,
+      22
+     ],
+     "llm": [
+      1.0,
+      3
+     ],
+     "none": [
+      0.2222222222222222,
+      9
+     ]
+    }
+   },
+   "estate": {
+    "recall": [
+     1.0,
+     0.8668077490609515,
+     0.9999999999999999
+    ],
+    "specificity": [
+     0.7777777777777778,
+     0.45258896910698887,
+     0.9367748928821533
+    ],
+    "n": 34
+   }
+  },
+  "safedep-vet": {
+   "surfaces": {
+    "repo": {
+     "n": 34,
+     "tp": 18,
+     "fp": 0,
+     "fn": 7,
+     "tn": 9,
+     "errors": 1,
+     "recall": [
+      0.72,
+      0.5242339480963842,
+      0.8571614614904344
+     ],
+     "specificity": [
+      1.0,
+      0.7008549515804559,
+      1.0
+     ],
+     "precision": [
+      1.0,
+      0.8241207763533425,
+      1.0
+     ],
+     "f1": 0.8372093023255814,
+     "balanced_accuracy": 0.86,
+     "mcc": 0.6363961030678927,
+     "rate_by_label": {
+      "agent": [
+       0.8181818181818182,
+       22
+      ],
+      "llm": [
+       0.0,
+       3
+      ],
+      "none": [
+       0.0,
+       9
+      ]
+     },
+     "f1_ci": [
+      0.6896551724137931,
+      0.9387755102040817
+     ],
+     "median_seconds": 12.191,
+     "agent_tier": {
+      "agent_recall": [
+       0.7142857142857143,
+       0.5004361928391441,
+       0.8618613704787788
+      ],
+      "agent_false_alarm_on_non_agent": [
+       0.0,
+       2.7755575615628914e-17,
+       0.24249400665524085
+      ]
+     }
+    }
+   },
+   "supported_cases": 34,
+   "supported_overall": {
+    "n": 34,
+    "tp": 18,
+    "fp": 0,
+    "fn": 7,
+    "tn": 9,
+    "errors": 1,
+    "recall": [
+     0.72,
+     0.5242339480963842,
+     0.8571614614904344
+    ],
+    "specificity": [
+     1.0,
+     0.7008549515804559,
+     1.0
+    ],
+    "precision": [
+     1.0,
+     0.8241207763533425,
+     1.0
+    ],
+    "f1": 0.8372093023255814,
+    "balanced_accuracy": 0.86,
+    "mcc": 0.6363961030678927,
+    "rate_by_label": {
+     "agent": [
+      0.8181818181818182,
+      22
+     ],
+     "llm": [
+      0.0,
+      3
+     ],
+     "none": [
+      0.0,
+      9
+     ]
+    }
+   },
+   "estate": {
+    "recall": [
+     0.72,
+     0.5242339480963842,
+     0.8571614614904344
+    ],
+    "specificity": [
+     1.0,
+     0.7008549515804559,
+     1.0
+    ],
+    "n": 34
+   }
+  },
+  "shadowscan-tuned": {
+   "surfaces": {
+    "repo": {
+     "n": 34,
+     "tp": 16,
+     "fp": 1,
+     "fn": 9,
+     "tn": 8,
+     "errors": 12,
+     "recall": [
+      0.64,
+      0.44518497748164865,
+      0.7975211922554178
+     ],
+     "specificity": [
+      0.8888888888888888,
+      0.5650002944233439,
+      0.9801091123614551
+     ],
+     "precision": [
+      0.9411764705882353,
+      0.7301796936242461,
+      0.9895395990150025
+     ],
+     "f1": 0.7619047619047619,
+     "balanced_accuracy": 0.7644444444444445,
+     "mcc": 0.4666666666666667,
+     "rate_by_label": {
+      "agent": [
+       0.5909090909090909,
+       22
+      ],
+      "llm": [
+       1.0,
+       3
+      ],
+      "none": [
+       0.1111111111111111,
+       9
+      ]
+     },
+     "f1_ci": [
+      0.6,
+      0.8888888888888888
+     ],
+     "median_seconds": 3.426,
+     "agent_tier": {
+      "agent_recall": [
+       0.6923076923076923,
+       0.42369343180549035,
+       0.8731929634428948
+      ],
+      "agent_false_alarm_on_non_agent": [
+       0.1111111111111111,
+       0.019890887638544907,
+       0.434999705576656
+      ]
+     }
+    }
+   },
+   "supported_cases": 34,
+   "supported_overall": {
+    "n": 34,
+    "tp": 16,
+    "fp": 1,
+    "fn": 9,
+    "tn": 8,
+    "errors": 12,
+    "recall": [
+     0.64,
+     0.44518497748164865,
+     0.7975211922554178
+    ],
+    "specificity": [
+     0.8888888888888888,
+     0.5650002944233439,
+     0.9801091123614551
+    ],
+    "precision": [
+     0.9411764705882353,
+     0.7301796936242461,
+     0.9895395990150025
+    ],
+    "f1": 0.7619047619047619,
+    "balanced_accuracy": 0.7644444444444445,
+    "mcc": 0.4666666666666667,
+    "rate_by_label": {
+     "agent": [
+      0.5909090909090909,
+      22
+     ],
+     "llm": [
+      1.0,
+      3
+     ],
+     "none": [
+      0.1111111111111111,
+      9
+     ]
+    }
+   },
+   "estate": {
+    "recall": [
+     0.64,
+     0.44518497748164865,
+     0.7975211922554178
+    ],
+    "specificity": [
+     0.8888888888888888,
+     0.5650002944233439,
+     0.9801091123614551
+    ],
+    "n": 34
+   }
+  },
+  "shadowscan": {
+   "surfaces": {
+    "repo": {
+     "n": 34,
+     "tp": 14,
+     "fp": 1,
+     "fn": 11,
+     "tn": 8,
+     "errors": 15,
+     "recall": [
+      0.56,
+      0.3706733186979878,
+      0.7333436111893266
+     ],
+     "specificity": [
+      0.8888888888888888,
+      0.5650002944233439,
+      0.9801091123614551
+     ],
+     "precision": [
+      0.9333333333333333,
+      0.7018347012621998,
+      0.9881331045067315
+     ],
+     "f1": 0.7,
+     "balanced_accuracy": 0.7244444444444444,
+     "mcc": 0.3988482443577889,
+     "rate_by_label": {
+      "agent": [
+       0.5,
+       22
+      ],
+      "llm": [
+       1.0,
+       3
+      ],
+      "none": [
+       0.1111111111111111,
+       9
+      ]
+     },
+     "f1_ci": [
+      0.5161290322580645,
+      0.8444444444444444
+     ],
+     "median_seconds": 2.773,
+     "agent_tier": {
+      "agent_recall": [
+       0.6363636363636364,
+       0.35380117450784887,
+       0.8483352890463243
+      ],
+      "agent_false_alarm_on_non_agent": [
+       0.125,
+       0.02241749145005667,
+       0.4708881822128535
+      ]
+     }
+    }
+   },
+   "supported_cases": 34,
+   "supported_overall": {
+    "n": 34,
+    "tp": 14,
+    "fp": 1,
+    "fn": 11,
+    "tn": 8,
+    "errors": 15,
+    "recall": [
+     0.56,
+     0.3706733186979878,
+     0.7333436111893266
+    ],
+    "specificity": [
+     0.8888888888888888,
+     0.5650002944233439,
+     0.9801091123614551
+    ],
+    "precision": [
+     0.9333333333333333,
+     0.7018347012621998,
+     0.9881331045067315
+    ],
+    "f1": 0.7,
+    "balanced_accuracy": 0.7244444444444444,
+    "mcc": 0.3988482443577889,
+    "rate_by_label": {
+     "agent": [
+      0.5,
+      22
+     ],
+     "llm": [
+      1.0,
+      3
+     ],
+     "none": [
+      0.1111111111111111,
+      9
+     ]
+    }
+   },
+   "estate": {
+    "recall": [
+     0.56,
+     0.3706733186979878,
+     0.7333436111893266
+    ],
+    "specificity": [
+     0.8888888888888888,
+     0.5650002944233439,
+     0.9801091123614551
+    ],
+    "n": 34
+   }
+  }
+ },
+ "paired": {
+  "agent-bom": {
+   "repo": {
+    "n": 34,
+    "shadowscan_right_other_wrong": 8,
+    "other_right_shadowscan_wrong": 11,
+    "mcnemar_p": 0.6476058959960938
+   }
+  },
+  "agentdiscover": {
+   "repo": {
+    "n": 34,
+    "shadowscan_right_other_wrong": 9,
+    "other_right_shadowscan_wrong": 12,
+    "mcnemar_p": 0.6636238098144531
+   }
+  },
+  "agentic-radar": {
+   "repo": {
+    "n": 34,
+    "shadowscan_right_other_wrong": 11,
+    "other_right_shadowscan_wrong": 3,
+    "mcnemar_p": 0.057373046875
+   }
+  },
+  "cisco-aibom": {
+   "repo": {
+    "n": 34,
+    "shadowscan_right_other_wrong": 3,
+    "other_right_shadowscan_wrong": 8,
+    "mcnemar_p": 0.2265625
+   }
+  },
+  "grep-baseline": {
+   "repo": {
+    "n": 34,
+    "shadowscan_right_other_wrong": 2,
+    "other_right_shadowscan_wrong": 12,
+    "mcnemar_p": 0.012939453125
+   }
+  },
+  "safedep-vet": {
+   "repo": {
+    "n": 34,
+    "shadowscan_right_other_wrong": 6,
+    "other_right_shadowscan_wrong": 11,
+    "mcnemar_p": 0.332305908203125
+   }
+  },
+  "shadowscan-tuned": {
+   "repo": {
+    "n": 34,
+    "shadowscan_right_other_wrong": 0,
+    "other_right_shadowscan_wrong": 2,
+    "mcnemar_p": 0.5
+   }
+  }
+ },
+ "families": {
+  "agent-bom": {
+   "repo|a2a|agent": [
+    1,
+    1
+   ],
+   "repo|app-agent-engine|agent": [
+    1,
+    1
+   ],
+   "repo|app-assistants|agent": [
+    1,
+    2
+   ],
+   "repo|app-chat-ext|llm": [
+    1,
+    1
+   ],
+   "repo|app-chat|llm": [
+    1,
+    1
+   ],
+   "repo|app-crewai|agent": [
+    1,
+    1
+   ],
+   "repo|app-functionz|agent": [
+    1,
+    1
+   ],
+   "repo|app-mixed|agent": [
+    1,
+    1
+   ],
+   "repo|app-researcher|agent": [
+    1,
+    1
+   ],
+   "repo|app-swarm|agent": [
+    1,
+    1
+   ],
+   "repo|app-vercel-ai|agent": [
+    1,
+    1
+   ],
+   "repo|catalog|none": [
+    1,
+    2
+   ],
+   "repo|clean-js|none": [
+    1,
+    1
+   ],
+   "repo|clean-python-gitlab|none": [
+    0,
+    1
+   ],
+   "repo|clean-python|none": [
+    1,
+    1
+   ],
+   "repo|coding-agent-config|agent": [
+    1,
+    1
+   ],
+   "repo|framework-source-ts|agent": [
+    1,
+    1
+   ],
+   "repo|framework-source|agent": [
+    5,
+    5
+   ],
+   "repo|iac-bedrock|agent": [
+    1,
+    1
+   ],
+   "repo|lookalike-agent|none": [
+    1,
+    1
+   ],
+   "repo|lookalike-bedrock|none": [
+    1,
+    1
+   ],
+   "repo|lookalike-strings|none": [
+    1,
+    1
+   ],
+   "repo|lowcode-n8n|llm": [
+    0,
+    1
+   ],
+   "repo|mcp-client-gitlab|agent": [
+    1,
+    1
+   ],
+   "repo|mcp-server-source|agent": [
+    1,
+    1
+   ],
+   "repo|ml-not-llm|none": [
+    1,
+    1
+   ],
+   "repo|sdk-source|agent": [
+    2,
+    2
+   ]
+  },
+  "agentdiscover": {
+   "repo|a2a|agent": [
+    1,
+    1
+   ],
+   "repo|app-agent-engine|agent": [
+    1,
+    1
+   ],
+   "repo|app-assistants|agent": [
+    1,
+    2
+   ],
+   "repo|app-chat-ext|llm": [
+    0,
+    1
+   ],
+   "repo|app-chat|llm": [
+    0,
+    1
+   ],
+   "repo|app-crewai|agent": [
+    1,
+    1
+   ],
+   "repo|app-functionz|agent": [
+    1,
+    1
+   ],
+   "repo|app-mixed|agent": [
+    1,
+    1
+   ],
+   "repo|app-researcher|agent": [
+    1,
+    1
+   ],
+   "repo|app-swarm|agent": [
+    1,
+    1
+   ],
+   "repo|app-vercel-ai|agent": [
+    0,
+    1
+   ],
+   "repo|catalog|none": [
+    1,
+    2
+   ],
+   "repo|clean-js|none": [
+    0,
+    1
+   ],
+   "repo|clean-python-gitlab|none": [
+    1,
+    1
+   ],
+   "repo|clean-python|none": [
+    0,
+    1
+   ],
+   "repo|coding-agent-config|agent": [
+    1,
+    1
+   ],
+   "repo|framework-source-ts|agent": [
+    1,
+    1
+   ],
+   "repo|framework-source|agent": [
+    5,
+    5
+   ],
+   "repo|iac-bedrock|agent": [
+    0,
+    1
+   ],
+   "repo|lookalike-agent|none": [
+    0,
+    1
+   ],
+   "repo|lookalike-bedrock|none": [
+    0,
+    1
+   ],
+   "repo|lookalike-strings|none": [
+    0,
+    1
+   ],
+   "repo|lowcode-n8n|llm": [
+    0,
+    1
+   ],
+   "repo|mcp-client-gitlab|agent": [
+    1,
+    1
+   ],
+   "repo|mcp-server-source|agent": [
+    1,
+    1
+   ],
+   "repo|ml-not-llm|none": [
+    1,
+    1
+   ],
+   "repo|sdk-source|agent": [
+    2,
+    2
+   ]
+  },
+  "agentic-radar": {
+   "repo|a2a|agent": [
+    1,
+    1
+   ],
+   "repo|app-agent-engine|agent": [
+    0,
+    1
+   ],
+   "repo|app-assistants|agent": [
+    0,
+    2
+   ],
+   "repo|app-chat-ext|llm": [
+    0,
+    1
+   ],
+   "repo|app-chat|llm": [
+    0,
+    1
+   ],
+   "repo|app-crewai|agent": [
+    1,
+    1
+   ],
+   "repo|app-functionz|agent": [
+    0,
+    1
+   ],
+   "repo|app-mixed|agent": [
+    1,
+    1
+   ],
+   "repo|app-researcher|agent": [
+    0,
+    1
+   ],
+   "repo|app-swarm|agent": [
+    1,
+    1
+   ],
+   "repo|app-vercel-ai|agent": [
+    0,
+    1
+   ],
+   "repo|catalog|none": [
+    0,
+    2
+   ],
+   "repo|clean-js|none": [
+    0,
+    1
+   ],
+   "repo|clean-python-gitlab|none": [
+    0,
+    1
+   ],
+   "repo|clean-python|none": [
+    0,
+    1
+   ],
+   "repo|coding-agent-config|agent": [
+    0,
+    1
+   ],
+   "repo|framework-source-ts|agent": [
+    0,
+    1
+   ],
+   "repo|framework-source|agent": [
+    1,
+    5
+   ],
+   "repo|iac-bedrock|agent": [
+    0,
+    1
+   ],
+   "repo|lookalike-agent|none": [
+    0,
+    1
+   ],
+   "repo|lookalike-bedrock|none": [
+    0,
+    1
+   ],
+   "repo|lookalike-strings|none": [
+    0,
+    1
+   ],
+   "repo|lowcode-n8n|llm": [
+    0,
+    1
+   ],
+   "repo|mcp-client-gitlab|agent": [
+    0,
+    1
+   ],
+   "repo|mcp-server-source|agent": [
+    0,
+    1
+   ],
+   "repo|ml-not-llm|none": [
+    0,
+    1
+   ],
+   "repo|sdk-source|agent": [
+    0,
+    2
+   ]
+  },
+  "cisco-aibom": {
+   "repo|a2a|agent": [
+    1,
+    1
+   ],
+   "repo|app-agent-engine|agent": [
+    1,
+    1
+   ],
+   "repo|app-assistants|agent": [
+    2,
+    2
+   ],
+   "repo|app-chat-ext|llm": [
+    1,
+    1
+   ],
+   "repo|app-chat|llm": [
+    1,
+    1
+   ],
+   "repo|app-crewai|agent": [
+    1,
+    1
+   ],
+   "repo|app-functionz|agent": [
+    1,
+    1
+   ],
+   "repo|app-mixed|agent": [
+    1,
+    1
+   ],
+   "repo|app-researcher|agent": [
+    1,
+    1
+   ],
+   "repo|app-swarm|agent": [
+    1,
+    1
+   ],
+   "repo|app-vercel-ai|agent": [
+    1,
+    1
+   ],
+   "repo|catalog|none": [
+    0,
+    2
+   ],
+   "repo|clean-js|none": [
+    0,
+    1
+   ],
+   "repo|clean-python-gitlab|none": [
+    0,
+    1
+   ],
+   "repo|clean-python|none": [
+    0,
+    1
+   ],
+   "repo|coding-agent-config|agent": [
+    1,
+    1
+   ],
+   "repo|framework-source-ts|agent": [
+    1,
+    1
+   ],
+   "repo|framework-source|agent": [
+    2,
+    5
+   ],
+   "repo|iac-bedrock|agent": [
+    1,
+    1
+   ],
+   "repo|lookalike-agent|none": [
+    1,
+    1
+   ],
+   "repo|lookalike-bedrock|none": [
+    1,
+    1
+   ],
+   "repo|lookalike-strings|none": [
+    0,
+    1
+   ],
+   "repo|lowcode-n8n|llm": [
+    1,
+    1
+   ],
+   "repo|mcp-client-gitlab|agent": [
+    1,
+    1
+   ],
+   "repo|mcp-server-source|agent": [
+    1,
+    1
+   ],
+   "repo|ml-not-llm|none": [
+    1,
+    1
+   ],
+   "repo|sdk-source|agent": [
+    1,
+    2
+   ]
+  },
+  "grep-baseline": {
+   "repo|a2a|agent": [
+    1,
+    1
+   ],
+   "repo|app-agent-engine|agent": [
+    1,
+    1
+   ],
+   "repo|app-assistants|agent": [
+    2,
+    2
+   ],
+   "repo|app-chat-ext|llm": [
+    1,
+    1
+   ],
+   "repo|app-chat|llm": [
+    1,
+    1
+   ],
+   "repo|app-crewai|agent": [
+    1,
+    1
+   ],
+   "repo|app-functionz|agent": [
+    1,
+    1
+   ],
+   "repo|app-mixed|agent": [
+    1,
+    1
+   ],
+   "repo|app-researcher|agent": [
+    1,
+    1
+   ],
+   "repo|app-swarm|agent": [
+    1,
+    1
+   ],
+   "repo|app-vercel-ai|agent": [
+    1,
+    1
+   ],
+   "repo|catalog|none": [
+    2,
+    2
+   ],
+   "repo|clean-js|none": [
+    0,
+    1
+   ],
+   "repo|clean-python-gitlab|none": [
+    0,
+    1
+   ],
+   "repo|clean-python|none": [
+    0,
+    1
+   ],
+   "repo|coding-agent-config|agent": [
+    1,
+    1
+   ],
+   "repo|framework-source-ts|agent": [
+    1,
+    1
+   ],
+   "repo|framework-source|agent": [
+    5,
+    5
+   ],
+   "repo|iac-bedrock|agent": [
+    1,
+    1
+   ],
+   "repo|lookalike-agent|none": [
+    0,
+    1
+   ],
+   "repo|lookalike-bedrock|none": [
+    0,
+    1
+   ],
+   "repo|lookalike-strings|none": [
+    0,
+    1
+   ],
+   "repo|lowcode-n8n|llm": [
+    1,
+    1
+   ],
+   "repo|mcp-client-gitlab|agent": [
+    1,
+    1
+   ],
+   "repo|mcp-server-source|agent": [
+    1,
+    1
+   ],
+   "repo|ml-not-llm|none": [
+    0,
+    1
+   ],
+   "repo|sdk-source|agent": [
+    2,
+    2
+   ]
+  },
+  "safedep-vet": {
+   "repo|a2a|agent": [
+    1,
+    1
+   ],
+   "repo|app-agent-engine|agent": [
+    1,
+    1
+   ],
+   "repo|app-assistants|agent": [
+    1,
+    2
+   ],
+   "repo|app-chat-ext|llm": [
+    0,
+    1
+   ],
+   "repo|app-chat|llm": [
+    0,
+    1
+   ],
+   "repo|app-crewai|agent": [
+    1,
+    1
+   ],
+   "repo|app-functionz|agent": [
+    0,
+    1
+   ],
+   "repo|app-mixed|agent": [
+    1,
+    1
+   ],
+   "repo|app-researcher|agent": [
+    1,
+    1
+   ],
+   "repo|app-swarm|agent": [
+    1,
+    1
+   ],
+   "repo|app-vercel-ai|agent": [
+    1,
+    1
+   ],
+   "repo|catalog|none": [
+    0,
+    2
+   ],
+   "repo|clean-js|none": [
+    0,
+    1
+   ],
+   "repo|clean-python-gitlab|none": [
+    0,
+    1
+   ],
+   "repo|clean-python|none": [
+    0,
+    1
+   ],
+   "repo|coding-agent-config|agent": [
+    1,
+    1
+   ],
+   "repo|framework-source-ts|agent": [
+    0,
+    1
+   ],
+   "repo|framework-source|agent": [
+    5,
+    5
+   ],
+   "repo|iac-bedrock|agent": [
+    0,
+    1
+   ],
+   "repo|lookalike-agent|none": [
+    0,
+    1
+   ],
+   "repo|lookalike-bedrock|none": [
+    0,
+    1
+   ],
+   "repo|lookalike-strings|none": [
+    0,
+    1
+   ],
+   "repo|lowcode-n8n|llm": [
+    0,
+    1
+   ],
+   "repo|mcp-client-gitlab|agent": [
+    1,
+    1
+   ],
+   "repo|mcp-server-source|agent": [
+    1,
+    1
+   ],
+   "repo|ml-not-llm|none": [
+    0,
+    1
+   ],
+   "repo|sdk-source|agent": [
+    2,
+    2
+   ]
+  },
+  "shadowscan-tuned": {
+   "repo|a2a|agent": [
+    1,
+    1
+   ],
+   "repo|app-agent-engine|agent": [
+    0,
+    1
+   ],
+   "repo|app-assistants|agent": [
+    2,
+    2
+   ],
+   "repo|app-chat-ext|llm": [
+    1,
+    1
+   ],
+   "repo|app-chat|llm": [
+    1,
+    1
+   ],
+   "repo|app-crewai|agent": [
+    1,
+    1
+   ],
+   "repo|app-functionz|agent": [
+    1,
+    1
+   ],
+   "repo|app-mixed|agent": [
+    1,
+    1
+   ],
+   "repo|app-researcher|agent": [
+    0,
+    1
+   ],
+   "repo|app-swarm|agent": [
+    1,
+    1
+   ],
+   "repo|app-vercel-ai|agent": [
+    1,
+    1
+   ],
+   "repo|catalog|none": [
+    0,
+    2
+   ],
+   "repo|clean-js|none": [
+    0,
+    1
+   ],
+   "repo|clean-python-gitlab|none": [
+    0,
+    1
+   ],
+   "repo|clean-python|none": [
+    0,
+    1
+   ],
+   "repo|coding-agent-config|agent": [
+    1,
+    1
+   ],
+   "repo|framework-source-ts|agent": [
+    0,
+    1
+   ],
+   "repo|framework-source|agent": [
+    2,
+    5
+   ],
+   "repo|iac-bedrock|agent": [
+    1,
+    1
+   ],
+   "repo|lookalike-agent|none": [
+    0,
+    1
+   ],
+   "repo|lookalike-bedrock|none": [
+    0,
+    1
+   ],
+   "repo|lookalike-strings|none": [
+    1,
+    1
+   ],
+   "repo|lowcode-n8n|llm": [
+    1,
+    1
+   ],
+   "repo|mcp-client-gitlab|agent": [
+    0,
+    1
+   ],
+   "repo|mcp-server-source|agent": [
+    1,
+    1
+   ],
+   "repo|ml-not-llm|none": [
+    0,
+    1
+   ],
+   "repo|sdk-source|agent": [
+    0,
+    2
+   ]
+  },
+  "shadowscan": {
+   "repo|a2a|agent": [
+    1,
+    1
+   ],
+   "repo|app-agent-engine|agent": [
+    0,
+    1
+   ],
+   "repo|app-assistants|agent": [
+    2,
+    2
+   ],
+   "repo|app-chat-ext|llm": [
+    1,
+    1
+   ],
+   "repo|app-chat|llm": [
+    1,
+    1
+   ],
+   "repo|app-crewai|agent": [
+    0,
+    1
+   ],
+   "repo|app-functionz|agent": [
+    1,
+    1
+   ],
+   "repo|app-mixed|agent": [
+    1,
+    1
+   ],
+   "repo|app-researcher|agent": [
+    0,
+    1
+   ],
+   "repo|app-swarm|agent": [
+    1,
+    1
+   ],
+   "repo|app-vercel-ai|agent": [
+    1,
+    1
+   ],
+   "repo|catalog|none": [
+    0,
+    2
+   ],
+   "repo|clean-js|none": [
+    0,
+    1
+   ],
+   "repo|clean-python-gitlab|none": [
+    0,
+    1
+   ],
+   "repo|clean-python|none": [
+    0,
+    1
+   ],
+   "repo|coding-agent-config|agent": [
+    1,
+    1
+   ],
+   "repo|framework-source-ts|agent": [
+    0,
+    1
+   ],
+   "repo|framework-source|agent": [
+    1,
+    5
+   ],
+   "repo|iac-bedrock|agent": [
+    1,
+    1
+   ],
+   "repo|lookalike-agent|none": [
+    0,
+    1
+   ],
+   "repo|lookalike-bedrock|none": [
+    0,
+    1
+   ],
+   "repo|lookalike-strings|none": [
+    1,
+    1
+   ],
+   "repo|lowcode-n8n|llm": [
+    1,
+    1
+   ],
+   "repo|mcp-client-gitlab|agent": [
+    0,
+    1
+   ],
+   "repo|mcp-server-source|agent": [
+    1,
+    1
+   ],
+   "repo|ml-not-llm|none": [
+    0,
+    1
+   ],
+   "repo|sdk-source|agent": [
+    0,
+    2
+   ]
+  }
+ }
+}

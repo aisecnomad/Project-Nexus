@@ -1,0 +1,1788 @@
+{
+  "schema": 1,
+  "provenance": "Written by the benchmark author from public package registries and vendor documentation for the real-world benchmark. ShadowScan signature packs (shadowscan/signatures/data) were not opened while writing it, and no tool under test supplied any entry. Gaps are expected: see PROTOCOL.md, threats to validity.",
+  "classes": {
+    "agent": [
+      "agent_framework",
+      "agent_runtime",
+      "mcp",
+      "a2a",
+      "coding_agent"
+    ],
+    "llm": [
+      "llm_sdk",
+      "llm_local",
+      "llm_gateway"
+    ],
+    "ml": [
+      "ml_framework"
+    ],
+    "adjacent": [
+      "ai_adjacent"
+    ]
+  },
+  "technologies": [
+    {
+      "id": "langgraph",
+      "name": "LangGraph",
+      "tier": "agent_framework",
+      "pypi": [
+        "langgraph",
+        "langgraph-sdk",
+        "langgraph-checkpoint",
+        "langgraph-prebuilt",
+        "langgraph-supervisor",
+        "langgraph-swarm",
+        "langgraph-cli"
+      ],
+      "pypi_prefixes": [
+        "langgraph-"
+      ],
+      "py_imports": [
+        "langgraph"
+      ],
+      "npm": [
+        "@langchain/langgraph",
+        "@langchain/langgraph-sdk",
+        "@langchain/langgraph-checkpoint"
+      ]
+    },
+    {
+      "id": "langchain",
+      "name": "LangChain",
+      "tier": "agent_framework",
+      "pypi": [
+        "langchain",
+        "langchain-core",
+        "langchain-community",
+        "langchain-classic",
+        "langchain-experimental",
+        "langchain-text-splitters"
+      ],
+      "pypi_prefixes": [
+        "langchain-"
+      ],
+      "py_import_prefixes": [
+        "langchain"
+      ],
+      "npm": [
+        "langchain"
+      ],
+      "npm_prefixes": [
+        "@langchain/"
+      ]
+    },
+    {
+      "id": "langchain4j",
+      "name": "LangChain4j",
+      "tier": "agent_framework",
+      "maven_groups": [
+        "dev.langchain4j"
+      ],
+      "java_imports": [
+        "dev.langchain4j"
+      ]
+    },
+    {
+      "id": "langchaingo",
+      "name": "LangChainGo",
+      "tier": "agent_framework",
+      "go": [
+        "github.com/tmc/langchaingo"
+      ]
+    },
+    {
+      "id": "llamaindex",
+      "name": "LlamaIndex",
+      "tier": "agent_framework",
+      "pypi": [
+        "llama-index",
+        "llama-index-core"
+      ],
+      "pypi_prefixes": [
+        "llama-index-"
+      ],
+      "py_imports": [
+        "llama_index"
+      ],
+      "npm": [
+        "llamaindex"
+      ],
+      "npm_prefixes": [
+        "@llamaindex/"
+      ]
+    },
+    {
+      "id": "crewai",
+      "name": "CrewAI",
+      "tier": "agent_framework",
+      "pypi": [
+        "crewai",
+        "crewai-tools"
+      ],
+      "py_imports": [
+        "crewai"
+      ]
+    },
+    {
+      "id": "autogen",
+      "name": "AutoGen / AG2",
+      "tier": "agent_framework",
+      "pypi": [
+        "autogen",
+        "pyautogen",
+        "ag2",
+        "autogen-agentchat",
+        "autogen-core",
+        "autogen-ext",
+        "autogenstudio"
+      ],
+      "pypi_prefixes": [
+        "autogen-",
+        "ag2-"
+      ],
+      "py_imports": [
+        "autogen",
+        "autogen_agentchat",
+        "autogen_core",
+        "autogen_ext",
+        "autogenstudio"
+      ],
+      "nuget": [
+        "AutoGen",
+        "Microsoft.AutoGen.Core"
+      ],
+      "nuget_prefixes": [
+        "AutoGen.",
+        "Microsoft.AutoGen."
+      ],
+      "cs_namespaces": [
+        "AutoGen",
+        "Microsoft.AutoGen"
+      ]
+    },
+    {
+      "id": "openai-agents",
+      "name": "OpenAI Agents SDK",
+      "tier": "agent_framework",
+      "pypi": [
+        "openai-agents"
+      ],
+      "py_imports": [
+        "agents"
+      ],
+      "py_import_requires_dep": true,
+      "npm": [
+        "@openai/agents"
+      ],
+      "npm_prefixes": [
+        "@openai/agents-"
+      ]
+    },
+    {
+      "id": "pydantic-ai",
+      "name": "Pydantic AI",
+      "tier": "agent_framework",
+      "pypi": [
+        "pydantic-ai",
+        "pydantic-ai-slim"
+      ],
+      "py_imports": [
+        "pydantic_ai"
+      ]
+    },
+    {
+      "id": "smolagents",
+      "name": "smolagents",
+      "tier": "agent_framework",
+      "pypi": [
+        "smolagents"
+      ],
+      "py_imports": [
+        "smolagents"
+      ]
+    },
+    {
+      "id": "google-adk",
+      "name": "Google ADK",
+      "tier": "agent_framework",
+      "pypi": [
+        "google-adk"
+      ],
+      "py_imports": [
+        "google.adk"
+      ],
+      "npm": [
+        "@google/adk"
+      ],
+      "maven_groups": [
+        "com.google.adk"
+      ],
+      "java_imports": [
+        "com.google.adk"
+      ],
+      "go": [
+        "google.golang.org/adk"
+      ]
+    },
+    {
+      "id": "strands-agents",
+      "name": "AWS Strands Agents",
+      "tier": "agent_framework",
+      "pypi": [
+        "strands-agents",
+        "strands-agents-tools",
+        "strands-agents-builder"
+      ],
+      "py_imports": [
+        "strands"
+      ],
+      "py_import_requires_dep": true,
+      "npm": [
+        "@strands-agents/sdk"
+      ]
+    },
+    {
+      "id": "semantic-kernel",
+      "name": "Semantic Kernel",
+      "tier": "agent_framework",
+      "pypi": [
+        "semantic-kernel"
+      ],
+      "py_imports": [
+        "semantic_kernel"
+      ],
+      "nuget_prefixes": [
+        "Microsoft.SemanticKernel"
+      ],
+      "cs_namespaces": [
+        "Microsoft.SemanticKernel"
+      ],
+      "maven_groups": [
+        "com.microsoft.semantic-kernel"
+      ],
+      "java_imports": [
+        "com.microsoft.semantickernel"
+      ]
+    },
+    {
+      "id": "ms-agent-framework",
+      "name": "Microsoft Agent Framework / Agents SDK",
+      "tier": "agent_framework",
+      "pypi": [
+        "agent-framework"
+      ],
+      "pypi_prefixes": [
+        "agent-framework-",
+        "microsoft-agents-"
+      ],
+      "py_imports": [
+        "agent_framework",
+        "microsoft_agents"
+      ],
+      "nuget_prefixes": [
+        "Microsoft.Agents."
+      ],
+      "cs_namespaces": [
+        "Microsoft.Agents"
+      ]
+    },
+    {
+      "id": "haystack",
+      "name": "Haystack",
+      "tier": "agent_framework",
+      "pypi": [
+        "haystack-ai",
+        "farm-haystack"
+      ],
+      "py_imports": [
+        "haystack"
+      ],
+      "py_import_requires_dep": true
+    },
+    {
+      "id": "dspy",
+      "name": "DSPy",
+      "tier": "agent_framework",
+      "pypi": [
+        "dspy",
+        "dspy-ai"
+      ],
+      "py_imports": [
+        "dspy"
+      ]
+    },
+    {
+      "id": "agno",
+      "name": "Agno / Phidata",
+      "tier": "agent_framework",
+      "pypi": [
+        "agno",
+        "phidata"
+      ],
+      "py_imports": [
+        "agno",
+        "phi"
+      ],
+      "py_import_requires_dep": true
+    },
+    {
+      "id": "letta",
+      "name": "Letta",
+      "tier": "agent_framework",
+      "pypi": [
+        "letta",
+        "letta-client"
+      ],
+      "py_imports": [
+        "letta",
+        "letta_client"
+      ],
+      "npm": [
+        "@letta-ai/letta-client"
+      ]
+    },
+    {
+      "id": "mem0",
+      "name": "Mem0",
+      "tier": "agent_framework",
+      "pypi": [
+        "mem0ai"
+      ],
+      "py_imports": [
+        "mem0"
+      ],
+      "npm": [
+        "mem0ai"
+      ]
+    },
+    {
+      "id": "py-agent-misc",
+      "name": "Other Python agent frameworks",
+      "tier": "agent_framework",
+      "pypi": [
+        "metagpt",
+        "camel-ai",
+        "griptape",
+        "langroid",
+        "agentscope",
+        "swarms",
+        "beeai-framework",
+        "atomic-agents",
+        "marvin",
+        "mirascope",
+        "qwen-agent",
+        "praisonai",
+        "praisonaiagents",
+        "openhands-ai",
+        "openhands-sdk",
+        "open-interpreter",
+        "browser-use",
+        "stagehand",
+        "babyagi",
+        "dapr-agents",
+        "pipecat-ai",
+        "livekit-agents",
+        "controlflow",
+        "magentic",
+        "ell-ai"
+      ],
+      "py_imports": [
+        "metagpt",
+        "camel",
+        "griptape",
+        "langroid",
+        "agentscope",
+        "swarms",
+        "beeai_framework",
+        "atomic_agents",
+        "marvin",
+        "mirascope",
+        "qwen_agent",
+        "praisonai",
+        "praisonaiagents",
+        "openhands",
+        "interpreter",
+        "browser_use",
+        "stagehand",
+        "babyagi",
+        "dapr_agents",
+        "pipecat",
+        "livekit.agents",
+        "controlflow",
+        "magentic",
+        "ell"
+      ],
+      "py_import_requires_dep": true,
+      "npm": [
+        "beeai-framework",
+        "@browserbasehq/stagehand",
+        "@livekit/agents",
+        "@pipecat-ai/client-js"
+      ]
+    },
+    {
+      "id": "mastra",
+      "name": "Mastra",
+      "tier": "agent_framework",
+      "npm": [
+        "mastra"
+      ],
+      "npm_prefixes": [
+        "@mastra/"
+      ]
+    },
+    {
+      "id": "vercel-ai-sdk",
+      "name": "Vercel AI SDK",
+      "tier": "agent_framework",
+      "npm": [
+        "ai"
+      ],
+      "npm_prefixes": [
+        "@ai-sdk/"
+      ],
+      "npm_import_requires_dep": [
+        "ai"
+      ]
+    },
+    {
+      "id": "copilotkit",
+      "name": "CopilotKit",
+      "tier": "agent_framework",
+      "npm_prefixes": [
+        "@copilotkit/"
+      ],
+      "pypi": [
+        "copilotkit"
+      ],
+      "py_imports": [
+        "copilotkit"
+      ]
+    },
+    {
+      "id": "ag-ui",
+      "name": "AG-UI",
+      "tier": "agent_framework",
+      "npm_prefixes": [
+        "@ag-ui/"
+      ],
+      "pypi": [
+        "ag-ui-protocol"
+      ],
+      "py_imports": [
+        "ag_ui"
+      ]
+    },
+    {
+      "id": "genkit",
+      "name": "Firebase Genkit",
+      "tier": "agent_framework",
+      "npm": [
+        "genkit"
+      ],
+      "npm_prefixes": [
+        "@genkit-ai/"
+      ],
+      "pypi": [
+        "genkit"
+      ],
+      "py_imports": [
+        "genkit"
+      ],
+      "go": [
+        "github.com/firebase/genkit",
+        "github.com/genkit-ai/genkit"
+      ]
+    },
+    {
+      "id": "eino",
+      "name": "CloudWeGo Eino",
+      "tier": "agent_framework",
+      "go": [
+        "github.com/cloudwego/eino"
+      ]
+    },
+    {
+      "id": "lingoose",
+      "name": "LinGoose",
+      "tier": "agent_framework",
+      "go": [
+        "github.com/henomis/lingoose"
+      ]
+    },
+    {
+      "id": "rust-agent-misc",
+      "name": "Rust LLM application frameworks",
+      "tier": "agent_framework",
+      "crates": [
+        "rig-core",
+        "swiftide",
+        "langchain-rust",
+        "llm-chain",
+        "kalosm",
+        "autoagents"
+      ],
+      "rs_imports": [
+        "rig",
+        "swiftide",
+        "langchain_rust",
+        "llm_chain",
+        "kalosm"
+      ]
+    },
+    {
+      "id": "spring-ai",
+      "name": "Spring AI",
+      "tier": "agent_framework",
+      "maven_groups": [
+        "org.springframework.ai"
+      ],
+      "java_imports": [
+        "org.springframework.ai"
+      ]
+    },
+    {
+      "id": "koog",
+      "name": "JetBrains Koog",
+      "tier": "agent_framework",
+      "maven_groups": [
+        "ai.koog"
+      ],
+      "java_imports": [
+        "ai.koog"
+      ]
+    },
+    {
+      "id": "embabel",
+      "name": "Embabel",
+      "tier": "agent_framework",
+      "maven_groups": [
+        "com.embabel.agent"
+      ],
+      "java_imports": [
+        "com.embabel.agent"
+      ]
+    },
+    {
+      "id": "claude-agent-sdk",
+      "name": "Claude Agent SDK / Claude Code SDK",
+      "tier": "agent_runtime",
+      "pypi": [
+        "claude-agent-sdk",
+        "claude-code-sdk"
+      ],
+      "py_imports": [
+        "claude_agent_sdk",
+        "claude_code_sdk"
+      ],
+      "npm": [
+        "@anthropic-ai/claude-agent-sdk",
+        "@anthropic-ai/claude-code",
+        "@anthropic-ai/claude-code-sdk"
+      ]
+    },
+    {
+      "id": "coding-agent-clis",
+      "name": "Coding-agent CLIs and SDKs",
+      "tier": "agent_runtime",
+      "npm": [
+        "@openai/codex",
+        "@openai/codex-sdk",
+        "@google/gemini-cli",
+        "@google/gemini-cli-core",
+        "opencode-ai",
+        "@opencode-ai/sdk"
+      ],
+      "pypi": [
+        "opencode-ai"
+      ]
+    },
+    {
+      "id": "bedrock-agentcore",
+      "name": "Amazon Bedrock AgentCore",
+      "tier": "agent_runtime",
+      "pypi": [
+        "bedrock-agentcore",
+        "bedrock-agentcore-starter-toolkit"
+      ],
+      "py_imports": [
+        "bedrock_agentcore"
+      ],
+      "npm": [
+        "bedrock-agentcore"
+      ]
+    },
+    {
+      "id": "azure-ai-agents",
+      "name": "Azure AI Agents / Foundry projects",
+      "tier": "agent_runtime",
+      "pypi": [
+        "azure-ai-agents",
+        "azure-ai-projects"
+      ],
+      "py_imports": [
+        "azure.ai.agents",
+        "azure.ai.projects"
+      ],
+      "npm": [
+        "@azure/ai-agents",
+        "@azure/ai-projects"
+      ],
+      "nuget": [
+        "Azure.AI.Agents.Persistent",
+        "Azure.AI.Projects"
+      ]
+    },
+    {
+      "id": "mcp-sdk",
+      "name": "Model Context Protocol SDKs",
+      "tier": "mcp",
+      "pypi": [
+        "mcp",
+        "fastmcp",
+        "mcp-use",
+        "fastapi-mcp",
+        "mcp-agent"
+      ],
+      "py_imports": [
+        "mcp",
+        "fastmcp",
+        "mcp_use",
+        "fastapi_mcp",
+        "mcp_agent"
+      ],
+      "py_import_requires_dep": true,
+      "npm": [
+        "@modelcontextprotocol/sdk",
+        "fastmcp",
+        "mcp-framework",
+        "mcp-use"
+      ],
+      "npm_prefixes": [
+        "@modelcontextprotocol/"
+      ],
+      "go": [
+        "github.com/modelcontextprotocol/go-sdk",
+        "github.com/mark3labs/mcp-go",
+        "github.com/metoro-io/mcp-golang",
+        "github.com/ThinkInAIXYZ/go-mcp"
+      ],
+      "maven_groups": [
+        "io.modelcontextprotocol.sdk",
+        "io.modelcontextprotocol"
+      ],
+      "java_imports": [
+        "io.modelcontextprotocol"
+      ],
+      "nuget": [
+        "ModelContextProtocol",
+        "ModelContextProtocol.AspNetCore",
+        "ModelContextProtocol.Core"
+      ],
+      "cs_namespaces": [
+        "ModelContextProtocol"
+      ],
+      "crates": [
+        "rmcp",
+        "mcp-sdk",
+        "rust-mcp-sdk",
+        "mcp-server",
+        "rust-mcp-schema"
+      ],
+      "rs_imports": [
+        "rmcp",
+        "rust_mcp_sdk"
+      ],
+      "gems": [
+        "mcp",
+        "fast-mcp"
+      ],
+      "composer": [
+        "mcp/sdk",
+        "php-mcp/server",
+        "php-mcp/client"
+      ],
+      "pub": [
+        "mcp_dart",
+        "dart_mcp"
+      ]
+    },
+    {
+      "id": "a2a-sdk",
+      "name": "Agent2Agent (A2A) SDKs",
+      "tier": "a2a",
+      "pypi": [
+        "a2a-sdk"
+      ],
+      "py_imports": [
+        "a2a"
+      ],
+      "py_import_requires_dep": true,
+      "npm": [
+        "@a2a-js/sdk"
+      ],
+      "go": [
+        "github.com/a2aproject/a2a-go",
+        "trpc.group/trpc-go/trpc-a2a-go"
+      ],
+      "maven_groups": [
+        "io.github.a2asdk"
+      ],
+      "nuget": [
+        "A2A",
+        "A2A.AspNetCore"
+      ]
+    },
+    {
+      "id": "openai",
+      "name": "OpenAI SDKs",
+      "tier": "llm_sdk",
+      "pypi": [
+        "openai"
+      ],
+      "py_imports": [
+        "openai"
+      ],
+      "npm": [
+        "openai"
+      ],
+      "go": [
+        "github.com/sashabaranov/go-openai",
+        "github.com/openai/openai-go"
+      ],
+      "maven_groups": [
+        "com.openai",
+        "com.theokanning.openai-gpt3-java"
+      ],
+      "java_imports": [
+        "com.openai",
+        "com.theokanning.openai"
+      ],
+      "nuget": [
+        "OpenAI",
+        "Azure.AI.OpenAI",
+        "Betalgo.OpenAI"
+      ],
+      "cs_namespaces": [
+        "OpenAI",
+        "Azure.AI.OpenAI"
+      ],
+      "crates": [
+        "async-openai",
+        "openai-api-rs",
+        "openai_dive"
+      ],
+      "rs_imports": [
+        "async_openai",
+        "openai_api_rs",
+        "openai_dive"
+      ],
+      "gems": [
+        "ruby-openai",
+        "openai"
+      ],
+      "composer": [
+        "openai-php/client",
+        "openai-php/laravel"
+      ],
+      "pub": [
+        "dart_openai"
+      ]
+    },
+    {
+      "id": "anthropic",
+      "name": "Anthropic SDKs",
+      "tier": "llm_sdk",
+      "pypi": [
+        "anthropic"
+      ],
+      "py_imports": [
+        "anthropic"
+      ],
+      "npm": [
+        "@anthropic-ai/sdk",
+        "@anthropic-ai/bedrock-sdk",
+        "@anthropic-ai/vertex-sdk"
+      ],
+      "go": [
+        "github.com/anthropics/anthropic-sdk-go"
+      ],
+      "maven_groups": [
+        "com.anthropic"
+      ],
+      "java_imports": [
+        "com.anthropic"
+      ],
+      "nuget": [
+        "Anthropic.SDK",
+        "Anthropic"
+      ],
+      "cs_namespaces": [
+        "Anthropic"
+      ],
+      "crates": [
+        "anthropic",
+        "misanthropy",
+        "anthropic-ai-sdk"
+      ],
+      "rs_imports": [
+        "anthropic",
+        "misanthropy"
+      ],
+      "gems": [
+        "anthropic",
+        "ruby-anthropic"
+      ],
+      "composer": [
+        "anthropic-ai/sdk",
+        "claude-php/claude-3-api"
+      ]
+    },
+    {
+      "id": "google-genai",
+      "name": "Google Gemini / Vertex AI SDKs",
+      "tier": "llm_sdk",
+      "pypi": [
+        "google-genai",
+        "google-generativeai",
+        "google-ai-generativelanguage",
+        "vertexai",
+        "google-cloud-aiplatform"
+      ],
+      "py_imports": [
+        "google.genai",
+        "google.generativeai",
+        "google.ai.generativelanguage",
+        "vertexai",
+        "google.cloud.aiplatform"
+      ],
+      "npm": [
+        "@google/genai",
+        "@google/generative-ai",
+        "@google-cloud/vertexai",
+        "@google-cloud/aiplatform"
+      ],
+      "go": [
+        "google.golang.org/genai",
+        "github.com/google/generative-ai-go",
+        "cloud.google.com/go/vertexai",
+        "cloud.google.com/go/aiplatform"
+      ],
+      "maven_groups": [
+        "com.google.genai",
+        "com.google.cloud:google-cloud-vertexai"
+      ],
+      "java_imports": [
+        "com.google.genai",
+        "com.google.cloud.vertexai"
+      ],
+      "nuget": [
+        "Google.GenAI",
+        "Mscc.GenerativeAI",
+        "Google.Cloud.AIPlatform.V1"
+      ],
+      "pub": [
+        "google_generative_ai"
+      ]
+    },
+    {
+      "id": "aws-bedrock",
+      "name": "Amazon Bedrock SDKs",
+      "tier": "llm_sdk",
+      "npm": [
+        "@aws-sdk/client-bedrock-runtime",
+        "@aws-sdk/client-bedrock-agent-runtime",
+        "@aws-sdk/client-bedrock",
+        "@aws-sdk/client-bedrock-agent",
+        "@aws-sdk/client-bedrock-agentcore"
+      ],
+      "go": [
+        "github.com/aws/aws-sdk-go-v2/service/bedrockruntime",
+        "github.com/aws/aws-sdk-go-v2/service/bedrockagentruntime",
+        "github.com/aws/aws-sdk-go-v2/service/bedrockagent",
+        "github.com/aws/aws-sdk-go-v2/service/bedrock"
+      ],
+      "maven_groups": [
+        "software.amazon.awssdk:bedrockruntime",
+        "software.amazon.awssdk:bedrockagentruntime"
+      ],
+      "java_imports": [
+        "software.amazon.awssdk.services.bedrockruntime",
+        "software.amazon.awssdk.services.bedrockagentruntime"
+      ],
+      "nuget": [
+        "AWSSDK.BedrockRuntime",
+        "AWSSDK.BedrockAgentRuntime"
+      ],
+      "crates": [
+        "aws-sdk-bedrockruntime",
+        "aws-sdk-bedrockagentruntime"
+      ],
+      "rs_imports": [
+        "aws_sdk_bedrockruntime",
+        "aws_sdk_bedrockagentruntime"
+      ]
+    },
+    {
+      "id": "azure-inference",
+      "name": "Azure AI inference SDKs",
+      "tier": "llm_sdk",
+      "pypi": [
+        "azure-ai-inference"
+      ],
+      "py_imports": [
+        "azure.ai.inference"
+      ],
+      "npm": [
+        "@azure/openai",
+        "@azure-rest/ai-inference"
+      ],
+      "go": [
+        "github.com/Azure/azure-sdk-for-go/sdk/ai/azopenai"
+      ],
+      "nuget": [
+        "Azure.AI.Inference"
+      ]
+    },
+    {
+      "id": "llm-provider-misc",
+      "name": "Other hosted-LLM provider SDKs",
+      "tier": "llm_sdk",
+      "pypi": [
+        "mistralai",
+        "cohere",
+        "groq",
+        "together",
+        "fireworks-ai",
+        "openrouter",
+        "xai-sdk",
+        "ai21",
+        "cerebras-cloud-sdk",
+        "sambanova",
+        "writer-sdk",
+        "reka-api",
+        "zhipuai",
+        "dashscope",
+        "qianfan",
+        "volcengine-python-sdk",
+        "huggingface-hub-inference"
+      ],
+      "py_imports": [
+        "mistralai",
+        "cohere",
+        "groq",
+        "together",
+        "fireworks",
+        "openrouter",
+        "xai_sdk",
+        "ai21",
+        "cerebras",
+        "sambanova",
+        "writerai",
+        "reka",
+        "zhipuai",
+        "dashscope",
+        "qianfan",
+        "volcenginesdkarkruntime"
+      ],
+      "py_import_requires_dep": true,
+      "npm": [
+        "@mistralai/mistralai",
+        "cohere-ai",
+        "groq-sdk",
+        "together-ai",
+        "@openrouter/ai-sdk-provider",
+        "@openrouter/sdk",
+        "@perplexity-ai/perplexity_ai",
+        "@huggingface/inference",
+        "@cerebras/cerebras_cloud_sdk"
+      ],
+      "go": [
+        "github.com/cohere-ai/cohere-go",
+        "github.com/gage-technologies/mistral-go"
+      ]
+    },
+    {
+      "id": "llama-stack",
+      "name": "Llama Stack clients",
+      "tier": "llm_sdk",
+      "pypi": [
+        "llama-stack",
+        "llama-stack-client"
+      ],
+      "py_imports": [
+        "llama_stack",
+        "llama_stack_client"
+      ],
+      "npm": [
+        "llama-stack-client"
+      ]
+    },
+    {
+      "id": "ollama",
+      "name": "Ollama clients",
+      "tier": "llm_local",
+      "pypi": [
+        "ollama"
+      ],
+      "py_imports": [
+        "ollama"
+      ],
+      "npm": [
+        "ollama",
+        "ollama-js"
+      ],
+      "go": [
+        "github.com/ollama/ollama"
+      ],
+      "crates": [
+        "ollama-rs"
+      ],
+      "rs_imports": [
+        "ollama_rs"
+      ],
+      "maven_groups": [
+        "io.github.ollama4j"
+      ],
+      "nuget": [
+        "OllamaSharp"
+      ],
+      "composer": [
+        "ardagnsrn/ollama-php"
+      ],
+      "pub": [
+        "ollama_dart"
+      ]
+    },
+    {
+      "id": "llama-cpp",
+      "name": "llama.cpp bindings",
+      "tier": "llm_local",
+      "pypi": [
+        "llama-cpp-python",
+        "llama-cpp-agent"
+      ],
+      "py_imports": [
+        "llama_cpp"
+      ],
+      "npm": [
+        "node-llama-cpp"
+      ],
+      "crates": [
+        "llama-cpp-2",
+        "llama_cpp",
+        "llama-cpp-rs"
+      ],
+      "rs_imports": [
+        "llama_cpp_2",
+        "llama_cpp"
+      ],
+      "go": [
+        "github.com/go-skynet/go-llama.cpp",
+        "github.com/ggerganov/llama.cpp",
+        "github.com/ggml-org/llama.cpp"
+      ],
+      "nuget": [
+        "LLamaSharp"
+      ],
+      "cs_namespaces": [
+        "LLama"
+      ]
+    },
+    {
+      "id": "local-inference-misc",
+      "name": "Other local inference runtimes",
+      "tier": "llm_local",
+      "pypi": [
+        "vllm",
+        "sglang",
+        "lmdeploy",
+        "gpt4all",
+        "mlx-lm",
+        "lmstudio",
+        "exllamav2",
+        "ctransformers"
+      ],
+      "py_imports": [
+        "vllm",
+        "sglang",
+        "lmdeploy",
+        "gpt4all",
+        "mlx_lm",
+        "lmstudio",
+        "exllamav2",
+        "ctransformers"
+      ],
+      "py_import_requires_dep": true,
+      "npm": [
+        "@lmstudio/sdk"
+      ]
+    },
+    {
+      "id": "litellm",
+      "name": "LiteLLM",
+      "tier": "llm_gateway",
+      "pypi": [
+        "litellm"
+      ],
+      "py_imports": [
+        "litellm"
+      ],
+      "npm": [
+        "litellm"
+      ]
+    },
+    {
+      "id": "llm-gateway-misc",
+      "name": "Other LLM gateways and structured-output clients",
+      "tier": "llm_gateway",
+      "pypi": [
+        "portkey-ai",
+        "instructor",
+        "outlines",
+        "guidance",
+        "aisuite",
+        "any-llm-sdk"
+      ],
+      "py_imports": [
+        "portkey_ai",
+        "instructor",
+        "outlines",
+        "guidance",
+        "aisuite",
+        "any_llm"
+      ],
+      "py_import_requires_dep": true,
+      "npm": [
+        "portkey-ai",
+        "@instructor-ai/instructor"
+      ]
+    },
+    {
+      "id": "ml-frameworks",
+      "name": "Classical and deep-learning frameworks (not LLM/agent)",
+      "tier": "ml_framework",
+      "pypi": [
+        "scikit-learn",
+        "sklearn",
+        "torch",
+        "torchvision",
+        "torchaudio",
+        "tensorflow",
+        "tensorflow-cpu",
+        "keras",
+        "jax",
+        "jaxlib",
+        "flax",
+        "xgboost",
+        "lightgbm",
+        "catboost",
+        "transformers",
+        "sentence-transformers",
+        "diffusers",
+        "onnxruntime",
+        "onnx",
+        "pytorch-lightning",
+        "lightning",
+        "fastai",
+        "ultralytics",
+        "opencv-python",
+        "opencv-python-headless",
+        "nltk",
+        "spacy",
+        "gensim",
+        "statsmodels",
+        "mlflow",
+        "wandb",
+        "datasets",
+        "accelerate",
+        "peft",
+        "trl",
+        "gymnasium",
+        "gym",
+        "stable-baselines3",
+        "openai-whisper",
+        "faster-whisper",
+        "timm",
+        "pycaret",
+        "prophet",
+        "optuna",
+        "shap",
+        "imbalanced-learn"
+      ],
+      "py_imports": [
+        "sklearn",
+        "torch",
+        "torchvision",
+        "torchaudio",
+        "tensorflow",
+        "keras",
+        "jax",
+        "flax",
+        "xgboost",
+        "lightgbm",
+        "catboost",
+        "transformers",
+        "sentence_transformers",
+        "diffusers",
+        "onnxruntime",
+        "pytorch_lightning",
+        "lightning",
+        "fastai",
+        "ultralytics",
+        "cv2",
+        "nltk",
+        "spacy",
+        "gensim",
+        "statsmodels",
+        "mlflow",
+        "wandb",
+        "datasets",
+        "accelerate",
+        "peft",
+        "trl",
+        "gymnasium",
+        "gym",
+        "stable_baselines3",
+        "whisper",
+        "faster_whisper",
+        "timm",
+        "pycaret",
+        "prophet",
+        "optuna",
+        "shap",
+        "imblearn"
+      ],
+      "npm": [
+        "@tensorflow/tfjs",
+        "@tensorflow/tfjs-node",
+        "onnxruntime-node",
+        "onnxruntime-web",
+        "@xenova/transformers",
+        "@huggingface/transformers",
+        "brain.js",
+        "ml5",
+        "@mediapipe/tasks-vision"
+      ],
+      "go": [
+        "gorgonia.org/gorgonia",
+        "github.com/sjwhitworth/golearn",
+        "github.com/yalue/onnxruntime_go"
+      ],
+      "crates": [
+        "candle-core",
+        "candle-transformers",
+        "burn",
+        "tch",
+        "linfa",
+        "ort",
+        "smartcore"
+      ],
+      "rs_imports": [
+        "candle_core",
+        "candle_transformers",
+        "burn",
+        "tch",
+        "linfa",
+        "ort",
+        "smartcore"
+      ]
+    },
+    {
+      "id": "ai-adjacent",
+      "name": "AI-adjacent tooling (vector stores, tracing, evaluation, UI)",
+      "tier": "ai_adjacent",
+      "pypi": [
+        "chromadb",
+        "pinecone",
+        "pinecone-client",
+        "qdrant-client",
+        "weaviate-client",
+        "pymilvus",
+        "faiss-cpu",
+        "faiss-gpu",
+        "pgvector",
+        "lancedb",
+        "langfuse",
+        "langsmith",
+        "helicone",
+        "agentops",
+        "weave",
+        "tiktoken",
+        "gradio",
+        "streamlit",
+        "chainlit",
+        "e2b",
+        "e2b-code-interpreter",
+        "tavily-python",
+        "firecrawl-py",
+        "exa-py",
+        "serpapi",
+        "voyageai",
+        "unstructured",
+        "llama-parse",
+        "docling",
+        "ragas",
+        "deepeval",
+        "guardrails-ai",
+        "nemoguardrails",
+        "rasa",
+        "replicate",
+        "elevenlabs",
+        "deepgram-sdk",
+        "assemblyai"
+      ],
+      "py_imports": [
+        "chromadb",
+        "pinecone",
+        "qdrant_client",
+        "weaviate",
+        "pymilvus",
+        "faiss",
+        "pgvector",
+        "lancedb",
+        "langfuse",
+        "langsmith",
+        "agentops",
+        "weave",
+        "tiktoken",
+        "gradio",
+        "streamlit",
+        "chainlit",
+        "e2b",
+        "e2b_code_interpreter",
+        "tavily",
+        "firecrawl",
+        "exa_py",
+        "serpapi",
+        "voyageai",
+        "unstructured",
+        "docling",
+        "ragas",
+        "deepeval",
+        "guardrails",
+        "nemoguardrails",
+        "rasa",
+        "replicate",
+        "elevenlabs",
+        "deepgram",
+        "assemblyai"
+      ],
+      "py_import_requires_dep": true,
+      "npm": [
+        "@pinecone-database/pinecone",
+        "chromadb",
+        "@qdrant/js-client-rest",
+        "weaviate-client",
+        "langfuse",
+        "langsmith",
+        "tiktoken",
+        "@dqbd/tiktoken",
+        "gpt-tokenizer",
+        "promptfoo",
+        "@e2b/code-interpreter",
+        "e2b",
+        "@tavily/core",
+        "@mendable/firecrawl-js",
+        "replicate",
+        "elevenlabs"
+      ]
+    }
+  ],
+  "path_rules": [
+    {
+      "id": "claude-code",
+      "tier": "coding_agent",
+      "regex": "(^|/)(claude\\.md|claude\\.local\\.md|\\.claude/.+)$"
+    },
+    {
+      "id": "claude-plugin",
+      "tier": "coding_agent",
+      "regex": "(^|/)\\.claude-plugin/.+$"
+    },
+    {
+      "id": "agents-md",
+      "tier": "coding_agent",
+      "regex": "(^|/)agents\\.md$",
+      "case_sensitive_name": "AGENTS.md"
+    },
+    {
+      "id": "cursor",
+      "tier": "coding_agent",
+      "regex": "(^|/)(\\.cursorrules|\\.cursor/(rules|commands|mcp\\.json).*)$"
+    },
+    {
+      "id": "windsurf",
+      "tier": "coding_agent",
+      "regex": "(^|/)(\\.windsurfrules|\\.windsurf/.+|\\.codeium/.+)$"
+    },
+    {
+      "id": "copilot",
+      "tier": "coding_agent",
+      "regex": "(^|/)\\.github/(copilot-instructions\\.md|instructions/.+\\.instructions\\.md|prompts/.+\\.prompt\\.md|chatmodes/.+\\.chatmode\\.md|agents/.+\\.(agent\\.)?md)$"
+    },
+    {
+      "id": "gemini-cli",
+      "tier": "coding_agent",
+      "regex": "(^|/)(gemini\\.md|\\.gemini/.+)$"
+    },
+    {
+      "id": "codex-cli",
+      "tier": "coding_agent",
+      "regex": "(^|/)\\.codex/.+$"
+    },
+    {
+      "id": "cline-roo-kilo",
+      "tier": "coding_agent",
+      "regex": "(^|/)(\\.clinerules|\\.clinerules/.+|\\.roo/.+|\\.roomodes|\\.roorules|\\.kilocode/.+)$"
+    },
+    {
+      "id": "continue-dev",
+      "tier": "coding_agent",
+      "regex": "(^|/)\\.continue/.+$"
+    },
+    {
+      "id": "aider",
+      "tier": "coding_agent",
+      "regex": "(^|/)\\.aider\\.conf\\.ya?ml$"
+    },
+    {
+      "id": "amazonq-kiro-junie",
+      "tier": "coding_agent",
+      "regex": "(^|/)(\\.amazonq/.+|\\.kiro/.+|\\.junie/.+|\\.trae/.+)$"
+    },
+    {
+      "id": "agent-skills",
+      "tier": "coding_agent",
+      "regex": "(^|/)skill\\.md$",
+      "case_sensitive_name": "SKILL.md"
+    },
+    {
+      "id": "mcp-config",
+      "tier": "mcp",
+      "regex": "(^|/)(\\.mcp\\.json|mcp\\.json|mcp[_-]config\\.json|claude_desktop_config\\.json|smithery\\.ya?ml|\\.vscode/mcp\\.json)$"
+    },
+    {
+      "id": "a2a-card",
+      "tier": "a2a",
+      "regex": "(^|/)(agent-card\\.json|\\.well-known/agent(-card)?\\.json)$"
+    },
+    {
+      "id": "ai-review-bots",
+      "tier": "coding_agent",
+      "regex": "(^|/)(\\.coderabbit\\.ya?ml|\\.pr_agent\\.toml|greptile\\.json)$"
+    },
+    {
+      "id": "ollama-modelfile",
+      "tier": "llm_local",
+      "regex": "(^|/)modelfile$",
+      "case_sensitive_name": "Modelfile"
+    },
+    {
+      "id": "chatgpt-plugin",
+      "tier": "llm_sdk",
+      "regex": "(^|/)\\.well-known/ai-plugin\\.json$"
+    },
+    {
+      "id": "mcp-directory-manifest",
+      "tier": "mcp",
+      "regex": "(^|/)glama\\.json$"
+    }
+  ],
+  "content_markers": [
+    {
+      "id": "n8n-ai-agent",
+      "tier": "agent_framework",
+      "exts": [
+        ".json"
+      ],
+      "contains": [
+        "n8n-nodes-langchain.agent"
+      ]
+    },
+    {
+      "id": "n8n-ai-nodes",
+      "tier": "llm_sdk",
+      "exts": [
+        ".json"
+      ],
+      "contains": [
+        "n8n-nodes-langchain.lmChat",
+        "n8n-nodes-langchain.openAi",
+        "n8n-nodes-langchain.chainLlm"
+      ]
+    },
+    {
+      "id": "flowise-flow",
+      "tier": "agent_framework",
+      "exts": [
+        ".json"
+      ],
+      "contains": [
+        "\"toolAgent\"",
+        "\"conversationalAgent\"",
+        "\"agentflow\""
+      ]
+    },
+    {
+      "id": "langflow-flow",
+      "tier": "llm_sdk",
+      "exts": [
+        ".json"
+      ],
+      "contains": [
+        "\"OpenAIModel\"",
+        "\"LanguageModelComponent\"",
+        "\"AnthropicModel\""
+      ]
+    },
+    {
+      "id": "dify-dsl",
+      "tier": "agent_framework",
+      "exts": [
+        ".yml",
+        ".yaml"
+      ],
+      "regex": "(?m)^kind:\\s*app\\b[\\s\\S]*?mode:\\s*(agent-chat|advanced-chat|workflow)\\b"
+    },
+    {
+      "id": "bedrock-boto3",
+      "tier": "llm_sdk",
+      "exts": [
+        ".py"
+      ],
+      "regex": "client\\(\\s*['\"]bedrock-(agent-)?runtime['\"]"
+    },
+    {
+      "id": "bedrock-agent-iac",
+      "tier": "agent_framework",
+      "exts": [
+        ".tf",
+        ".yaml",
+        ".yml",
+        ".json",
+        ".bicep"
+      ],
+      "contains": [
+        "aws_bedrockagent_agent",
+        "AWS::Bedrock::Agent",
+        "aws_bedrockagentcore_"
+      ]
+    },
+    {
+      "id": "llm-service-iac",
+      "tier": "llm_sdk",
+      "exts": [
+        ".tf",
+        ".bicep",
+        ".yaml",
+        ".yml",
+        ".json"
+      ],
+      "contains": [
+        "azurerm_cognitive_deployment",
+        "Microsoft.CognitiveServices/accounts/deployments",
+        "google_vertex_ai_endpoint",
+        "aws_bedrock_model_invocation_logging_configuration",
+        "AWS::Bedrock::Guardrail"
+      ]
+    },
+    {
+      "id": "ci-ai-agent",
+      "tier": "coding_agent",
+      "path_regex": "(^|/)\\.github/workflows/.+\\.ya?ml$",
+      "contains": [
+        "anthropics/claude-code-action",
+        "anthropics/claude-code-base-action",
+        "google-github-actions/run-gemini-cli",
+        "openai/codex-action",
+        "All-Hands-AI/openhands"
+      ]
+    },
+    {
+      "id": "mcp-protocol-literal",
+      "tier": "mcp",
+      "exts": [
+        ".js",
+        ".mjs",
+        ".cjs",
+        ".ts",
+        ".tsx",
+        ".py",
+        ".go",
+        ".rs",
+        ".java",
+        ".kt",
+        ".cs"
+      ],
+      "contains": [
+        "\"tools/list\"",
+        "'tools/list'",
+        "\"notifications/initialized\"",
+        "'notifications/initialized'"
+      ]
+    },
+    {
+      "id": "mcp-registry-server-json",
+      "tier": "mcp",
+      "path_regex": "(^|/)server\\.json$",
+      "contains": [
+        "modelcontextprotocol.io/schemas",
+        "io.modelcontextprotocol"
+      ]
+    }
+  ],
+  "weak": {
+    "hosts": [
+      "api.openai.com",
+      "api.anthropic.com",
+      "generativelanguage.googleapis.com",
+      "aiplatform.googleapis.com",
+      "api.mistral.ai",
+      "api.cohere.com",
+      "api.cohere.ai",
+      "api.groq.com",
+      "api.together.xyz",
+      "api.together.ai",
+      "api.fireworks.ai",
+      "openrouter.ai/api",
+      "api.deepseek.com",
+      "api.x.ai",
+      "api.perplexity.ai",
+      "openai.azure.com",
+      "bedrock-runtime.",
+      "api.moonshot.cn",
+      "dashscope.aliyuncs.com",
+      "api.siliconflow.cn",
+      "localhost:11434",
+      "127.0.0.1:11434",
+      "host.docker.internal:11434"
+    ],
+    "env_vars": [
+      "OPENAI_API_KEY",
+      "ANTHROPIC_API_KEY",
+      "GEMINI_API_KEY",
+      "MISTRAL_API_KEY",
+      "COHERE_API_KEY",
+      "GROQ_API_KEY",
+      "TOGETHER_API_KEY",
+      "FIREWORKS_API_KEY",
+      "OPENROUTER_API_KEY",
+      "DEEPSEEK_API_KEY",
+      "XAI_API_KEY",
+      "PERPLEXITY_API_KEY",
+      "AZURE_OPENAI_API_KEY",
+      "AZURE_OPENAI_ENDPOINT",
+      "OLLAMA_HOST",
+      "OLLAMA_BASE_URL",
+      "OPENAI_BASE_URL",
+      "OPENAI_API_BASE",
+      "ANTHROPIC_BASE_URL",
+      "CLAUDE_CODE_OAUTH_TOKEN"
+    ]
+  },
+  "ignore_dirs": [
+    "node_modules",
+    "vendor",
+    "third_party",
+    "third-party",
+    "thirdparty",
+    "site-packages",
+    ".venv",
+    "venv",
+    "dist",
+    "build",
+    "target",
+    "out",
+    ".git",
+    "__pycache__",
+    ".next",
+    ".nuxt",
+    ".tox",
+    ".mypy_cache",
+    ".pytest_cache",
+    "bower_components",
+    "Pods",
+    ".gradle",
+    ".idea",
+    "coverage",
+    ".cache",
+    ".terraform",
+    "Carthage",
+    ".dart_tool"
+  ],
+  "context": {
+    "test_dirs": [
+      "test",
+      "tests",
+      "__tests__",
+      "spec",
+      "specs",
+      "e2e",
+      "testing",
+      "testdata",
+      "fixtures",
+      "fixture",
+      "__fixtures__",
+      "__mocks__",
+      "mocks",
+      "integration-tests",
+      "unit-tests"
+    ],
+    "docs_dirs": [
+      "docs",
+      "doc",
+      "documentation",
+      "website",
+      "wiki",
+      "book",
+      "guide",
+      "guides"
+    ],
+    "example_dirs": [
+      "examples",
+      "example",
+      "samples",
+      "sample",
+      "demo",
+      "demos",
+      "cookbook",
+      "cookbooks",
+      "tutorials",
+      "tutorial",
+      "playground",
+      "quickstart",
+      "quickstarts"
+    ],
+    "docs_exts": [
+      ".md",
+      ".mdx",
+      ".rst",
+      ".adoc",
+      ".txt"
+    ]
+  },
+  "dev_config_ids": [
+    "claude-code",
+    "claude-plugin",
+    "agents-md",
+    "cursor",
+    "windsurf",
+    "copilot",
+    "gemini-cli",
+    "codex-cli",
+    "cline-roo-kilo",
+    "continue-dev",
+    "aider",
+    "amazonq-kiro-junie",
+    "agent-skills",
+    "mcp-config",
+    "ai-review-bots",
+    "ci-ai-agent"
+  ],
+  "revision_log": [
+    "R0: initial registry written before any repository was sampled.",
+    "R1: after a manual review of frame/label mismatches on the sampled repositories and before any tool was run on a scored repository: added claude-plugin and mcp-directory-manifest path rules, raw MCP protocol and MCP registry server.json content markers (an MCP server written without the official SDK, and Claude Code plugin repositories, were labelled negative), and dev_config_ids so labels can separate application integration from developer-tooling configuration."
+  ]
+}

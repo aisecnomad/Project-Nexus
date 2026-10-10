@@ -16,6 +16,23 @@ for the common modes, permissions, options, fail-closed and evidence-limit
 references.
 
 ## `code.filesystem`
+
+Optional `diff_base` (`shadowscan code PATH --diff-base REF`) accepts a local
+Git branch, tag, or revision. It scans the files committed between the merge
+base and HEAD, plus every dependency manifest and `.env*` file for context. It
+does not scan uncommitted or untracked files, changes inside submodules, or any
+other unchanged file. Findings carry `diff-scan` and `metadata.diff_scan`, and
+the connector records a warning with the changed-file count even when nothing
+is found. This is a scoped change scan, not a complete repository inventory:
+the report's `collection_scope` is not comparable, so `shadowscan diff` lists
+earlier findings that are absent from it as unknown, never as resolved, and
+`--incremental` never reuses a diff-scoped result. Git paths retain their exact
+whitespace. The option needs Git 2.45 or later and applies only to local paths;
+`--github-*` and `--gitlab-group` repositories in the same run are scanned in
+full. If the revision cannot be resolved, the diff fails or times out, or a
+changed path is not valid UTF-8, collection falls back to a full scan with a
+warning.
+
 Scans a directory tree. Project roots are detected from manifests
 (`package.json`, `pyproject.toml`, `go.mod`, `pom.xml`, a `setup.py` that builds a
 package, …); by default each root yields one
@@ -77,6 +94,85 @@ corroboration before agent classification; uncorroborated lexical framework code
 is capped at 0.6 confidence. These are static candidate classifications, not proof
 that code ran or that a deployment is autonomous.
 
+A code pattern establishes its library only with corroboration. A lexical
+match (every code pattern in a language without an import binder, and in
+Python or JavaScript a framework pattern the binder did not claim) is a word
+other code can use too: Spring AI's `ToolCallback` is a Rust trait name,
+LangChain's `create_agent(` a Goose function, `AgentType.Validate(` a Semantic
+Kernel method. Such a match counts only when the same signature also has an
+import, a dependency, a file-name, container-image, IaC or model-id match, an
+import-bound call, a recognised configuration shape or a manifest artifact
+somewhere in the project, or a host, variable name or display name of weight
+0.3 or more (after the test-path discount): a C# `new OpenAIClient(new Uri(...))`
+against `contoso.openai.azure.com` is Azure OpenAI; a Rust `create_agent(`
+next to a documentation link is not LangChain. Otherwise the evidence is kept
+at its 0.6 cap in the `uncorroborated-lexical` confidence group, but the
+signature joins neither
+`frameworks[]` nor `model_providers[]`, adds no capability and no agent
+indicator; it is listed under `metadata.potential_frameworks` or
+`metadata.potential_providers`, and the title follows the established
+technologies. A project whose only evidence is such patterns yields no
+finding; the scan records a note naming up to five of the files (a warning
+that does not make the scan incomplete), so the evidence is never dropped
+silently. Python and JavaScript code patterns of provider, protocol, platform
+and cloud-service signatures are written for the idioms of generic SDKs
+(`boto3.client("bedrock-agent-runtime")`) and remain supporting evidence.
+
+The same holds for mentions too weak to establish anything. When every match
+of a signature in a project is a host, environment-variable name, display
+name, model identifier found in a data file or CI job image, and none of them
+weighs 0.3 or more after the test-path discount, the signature is potential,
+not established: the bare `huggingface.co` host (weight 0.15, a model-hub
+link in a comment, an OAuth endpoint, a gallery entry) beside an OpenAI
+import leaves `model_providers` as `provider.openai` with
+`potential_providers: [provider.huggingface]`; `api-inference.huggingface.co`
+or `router.huggingface.co` (weight 0.8) establish the provider as before. The
+two-tier domain weights were written as corroboration; the connector now
+honours that. The OpenAI request shape (`.chat.completions.create(`) in a
+project that installs or imports the OpenAI SDK describes that SDK and never
+adds `provider.openai-compatible` as a second provider; in a project whose
+only such library is a Hugging Face `InferenceClient`, the shape names neither.
+
+Model identifiers are medium-weight provider evidence. Quoted literals in
+source files and notebook code cells (comments are skipped where the lexer
+masks them) and quoted or bare values after a model-ish key (`model`,
+`model_id`, `model_name`, `default_model`, `deployment`, `llm`, `engine`,
+`OPENAI_MODEL=...`) in YAML, JSON, TOML, Terraform, Bicep, `.env`, `.cfg`,
+`.ini` and `.properties` files are handed to the anchored `model` signatures
+when they carry a vendor stem (`claude-`, `gpt-`, `gemini-1`/`-2`/`-pro`,
+`mistral-large`, `bedrock/`, `vertex_ai/`, `openrouter/`, `@cf/`, …). A route
+such as `bedrock/anthropic.claude-3-5-sonnet-20241022-v2:0` attributes both
+the route's provider and the model's vendor. Each match weighs at most 0.5
+(`model:provider.anthropic`), lists the whole id under `metadata.models`, and
+is recorded at most three times per signature per file; a file is read for
+its first 400 literals that carry a vendor stem, with incomplete coverage
+(exit 3) when it holds more. Ordinary strings do not count toward that limit.
+A model id in a source
+file or notebook can anchor a project finding (a Python file whose only
+evidence is `MODEL = "claude-3-5-sonnet-20241022"` is reported, tagged
+`model-ids-only`, with heuristics dropped and confidence capped at 0.6,
+`metadata.confidence_cap`); one in a data or configuration file is a mention,
+like a host or a variable name: it anchors nothing, and a leaderboard or
+pricing table that lists eight model ids stays a catalog. Markdown and text
+files are never read for model ids, and ordinary strings (`amazon.com`,
+`o1ne`, `tts-config`, `command-line`, `gemini-python/1.8.2`) match nothing.
+The last path segment of a value is matched only under a known route prefix
+(`bedrock/`, `openai/`, `azure/`, `vertex_ai/`, `openrouter/`, `groq/`,
+`@cf/`, …): `EleutherAI/gpt-neox-20b` is a namespace, not an OpenAI model.
+The open-ended families are held to the vendor's shape (`gpt-` followed by a
+digit or `oss-`, `o1-`/`o3-`/`o4-` by a variant such as `mini`, `pro` or
+`deep-research` or a release date) and an id with a segment that names
+tooling (`tokenizer`, `encoder`, `engineer`, `agent`, `formatter`, …) is
+rejected, so `gpt-tokenizer`, `gpt-3-encoder`, `gpt-4all`, `gpt-engineer`,
+`gpt-j-6b`, `o1-visa`, `o3-build`, `grok-1-formatter`, `qwen-agent` and
+`qwen-code` count for nothing while `gpt-5-codex`, `gpt-oss-120b`,
+`o3-deep-research`, `o1-2024-12-17`, `grok-code-fast-1` and
+`qwen2.5-coder-7b-instruct` still do. Dotted `.properties` keys
+(`spring.ai.openai.chat.options.model=gpt-4o`) are read like any other.
+A model id also corroborates the same vendor's code pattern, so
+`boto3.client("bedrock-runtime")` beside a Bedrock route in `config/agent.yaml`
+establishes both `provider.aws-bedrock` and `provider.anthropic`.
+
 Python exception handlers and pattern-match alternatives join only bindings
 that agree across possible paths. A binding from the last visited alternative
 does not prove an agent construction. A guarded optional import
@@ -102,14 +198,22 @@ reports remain confidential. See the [security policy](https://github.com/aisecn
 
 Rust ordinary strings and byte strings may span physical lines; their contents
 remain literal evidence, while code after the closing quote is still scanned.
+C raw strings (`cr"..."`, `cr#"..."#`) and character literals with a `\x7F` or
+`\u{201C}` escape are recognized, so a quote inside them does not open a string.
 For `.js`, `.mjs` and `.cjs` files, an incomplete plain JavaScript lexical pass
-is retried as JSX. That interpretation is accepted only when lexical analysis
-completes: JSX text stays masked and executable expressions remain visible.
-TypeScript files keep their generic/type-assertion behavior, and `.jsx`/`.tsx`
-files retain explicit JSX analysis. A JSX retry with unclosed multiline literals,
-unbalanced tags or ambiguous source is rejected, retaining incomplete coverage.
-This lexical filter does not validate every construct against the language's
-full grammar or reinterpret an already-complete plain JavaScript pass.
+is retried as JSX, and that reading is accepted only when it completes: JSX text
+stays masked and executable expressions remain visible. A file with a closing or
+self-closing tag is also read as JSX when the plain reading completes (element
+text such as `src/*.js` can open a comment that runs to a later `*/`); when both
+readings complete, only what both mask stays masked, and a JSX reading that
+exhausts its look-ahead budget leaves coverage incomplete. `.jsx` and `.tsx`
+files are always lexed with JSX. A `<` right after another `<` is part of a `<<`
+shift and never opens a JSX element,
+so `mask<<shift>limit` cannot hide code up to a later `</shift>`. TypeScript
+files (`.ts`, `.mts`, `.cts`) keep their generic/type-assertion behavior and are
+never read as JSX. Unclosed multiline literals, unbalanced tags or ambiguous
+source retain incomplete coverage. This lexical filter does not validate every
+construct against the language's full grammar.
 
 ### Separate source identities
 
@@ -159,9 +263,10 @@ capabilities and score without a source change; see [scanning](../scanning.md) a
 
 A list of products is not use of them. A data or prose file (YAML, JSON, TOML, INI,
 XML, CSV, text, Markdown) that names four or more different products through
-domains or environment-variable names, and holds no import, dependency, code,
-file-name, image, IaC, model or credential evidence, is a *catalog*: a proxy
-blocklist, an egress allowlist, a vendor policy, a copy of the signature packs.
+domains, environment-variable names or model identifiers, and holds no import,
+dependency, code, file-name, image, IaC or credential evidence and no model that
+a manifest or IaC file selects, is a *catalog*: a proxy blocklist, an egress
+allowlist, a vendor policy, a leaderboard, a copy of the signature packs.
 Its mentions establish a technology only when the same signature also has an
 import, a dependency or specific code evidence elsewhere in the project, like an
 ambiguous pattern. A project with nothing else yields no finding for them, and
@@ -177,11 +282,56 @@ what a project builds or runs with (dotenv files, Compose files, Helm
 `.buildkite/`, Spring `application*` and `bootstrap*` configuration, dependency
 manifests, IaC) are never catalogs. Neither is a configuration document: a
 Kubernetes-style resource (`apiVersion` and `kind`, also in a multi-document
-stream), an ECS task definition, or a data file that assigns a variable it
-names under an `env`, `environment`, `variables` or `secrets` key (as a key, or
-as the `name` or `key` of an item). A data file naming one to three products is
-configuration. The threshold of four is a judgement from the bundled corpora and
-fixtures: their multi-provider configurations name at most four products and are
+stream), an ECS task definition, a data file under `.devcontainer/` or under a
+`config/`, `conf/` or `settings/` directory at the top of the scan or of its
+project (not deeper, where the name says less), or a data file that assigns a
+variable it names: under an `env`, `environment`, `variables`, `secrets`,
+`containerEnv` or `remoteEnv` key (as a key, or as the `name` or `key` of an
+item), as a key with a scalar value at any depth, or on a line of its own
+(`OPENAI_API_KEY=...`, `export NAME=value`, `NAME: value`, with or without
+quotes, also in `.cfg`, `.ini`, `.conf` and `.properties` files, which have no
+parser). A vendor policy that names a variable as a value
+(`key_env: OPENAI_API_KEY`), keys a mapping or a list by it in any style
+(`OPENAI_API_KEY:` followed by an indented block, `OPENAI_API_KEY: {vendor:
+OpenAI}`, a JSON object or array value, a TOML inline table) or lists it as a
+key with no value (`OPENAI_API_KEY:` alone, `null`) assigns nothing: the
+verdict follows the shape, not the format. Nor is a
+data file that source code, a notebook or a shell script of the same project
+loads by name: a quoted path literal ending in a data suffix
+(`open("model-settings.yml")`, `include_str!("../provider_catalog.json")`,
+`source "$HOME/keys.cfg"`) exempts the file whose name or trailing path it
+names, unless the file sits under a documentation or website directory
+(`docs/`, `doc/`, `website/`, `site/`, `_data/`, `_posts/`, `_includes/`,
+`blog/`): a leaderboard or gallery table is published, not loaded, and stays a
+catalog even when a script writes it. The reference is by name and that
+directory list is fixed, which is the accepted cost: a quoted `"settings.yaml"`
+anywhere in code, in a docstring included, exempts every data file of that name
+in the project, and published data outside those directories (`public/`,
+`static/`, `assets/`) is configuration once a build script names it. Both
+passes are bounded: a data file is judged on its first 10,000 assignment lines
+and a loader is read for its first 2,000 quoted data-file literals (at most 400
+distinct names). If unread content could change the configuration classification,
+the limit is reported as incomplete coverage (exit 3), while observed evidence
+is retained. A truncated reference list can only lift a discount, so it is a
+gap only when the project discounts a data file outside documentation and
+website directories as a catalog; a test loader listing hundreds of fixture
+paths in a project without one leaves the scan complete. A
+model identifier found in a data file is
+a mention like a domain or a variable name (a pricing table of model ids is a
+catalog); one selected by a manifest or IaC file still anchors. A data file
+naming one to three products is configuration, unless its file name (split at
+`.`, `_` and `-`) names a deny list: a whole word, or two adjacent words, spell
+`blocklist`, `denylist` or `blacklist` (`ai-blocklist.yaml`, `deny_list.json`).
+Such a file is a catalog whatever it names, and the scan note says so. The name
+outweighs a configuration directory and a reference from code (a proxy keeps its
+deny list beside its configuration and loads it), not a file that assigns the
+variables it names or a Kubernetes or ECS resource. An allowlist, whitelist, egress or ingress
+policy, or a firewall or WAF rule set, is not a deny list: it permits traffic,
+often to exactly the hosts it names, so a short one is configuration and reports
+the products. A bare `block`, `deny`, `firewall` or `waf` in the name
+(`firewall-rules.json`, `default-deny.yaml`) does not make a deny list. The
+threshold of four is a judgement from the bundled corpora and fixtures: their
+multi-provider configurations name at most four products and are
 dotenv files, while blocklists and vendor policies name six to ten and the
 signature packs seven to thirty-six per file. A real routing table kept in a
 plain data file that names four or more providers by base URL, with no other
@@ -257,8 +407,33 @@ and local `use_git: true` also inventory committed gitlinks using the hardened
 metadata path. No submodule is initialized or fetched; see the detailed
 [coverage policy](../scanning.md#coverage-policy) for scope and limitations.
 
+Evidence found under a test or fixture path has half weight (see
+[scanning](../scanning.md#test-and-fixture-code)); unless `include_tests` is
+set, a mention there, a host, variable name, display name, model identifier
+or CI job image, anchors no project finding on its own: `huggingface.co`
+inside `test/data/ua/extension/crawler.json` once produced a 0.075-confidence
+provider finding. Imports, dependencies and code patterns in tests still
+anchor (tagged `test-code-only`). A project dropped for this reason is named
+in a note, like one whose evidence is only uncorroborated patterns.
+
+An `image:` line in a CI pipeline (`.github/workflows/`, `.gitlab-ci.yml`,
+`.circleci/`, `azure-pipelines.yml`, `bitbucket-pipelines.yml`, `.drone.yml`,
+`.woodpecker*`, `.buildkite/`, `.gitlab/`, `Jenkinsfile`) runs a job in that
+container rather than deploying it: its image match is recorded on the
+project at 0.3 of the image signal's weight, tagged `ci_image`, anchors no
+finding and produces no `infra` finding. A job that tests the MCP SDK in
+`modelcontextprotocol/python-sdk` is therefore a potential MCP mention, not
+"infrastructure provisions MCP"; the same image in a Compose or Kubernetes
+file keeps full weight and its infrastructure finding.
+
+.NET central package management is read as NuGet dependencies:
+`Directory.Packages.props` (`<PackageVersion Include=... />`),
+`Directory.Build.props` and other MSBuild imports (`<GlobalPackageReference
+Include=... />`, `<PackageReference Update=... />`) and project files whose
+`PackageReference` items carry no version of their own.
+
 Options: `path`/`paths`, `root_ids`, `exclude`, `default_excludes`, `max_file_size`, `max_files`, `max_entries`,
-`max_notebook_size`, `max_ast_nodes`, `agent_granularity`, `scan_secrets`, `strict_coverage`, `include_tests`, `use_git`, `label`. When using labeled `paths`, supply unique
+`max_notebook_size`, `max_ast_nodes`, `agent_granularity`, `scan_secrets`, `strict_coverage`, `include_tests`, `triage`, `use_git`, `label`. When using labeled `paths`, supply unique
 `root_ids` aligned with those paths for IDs that survive moving checkouts.
 
 `max_entries` defaults to 1,000,000 filesystem entries inspected during
@@ -300,12 +475,38 @@ them to `exclude` unless that is intended); version-control metadata (`.git`,
 same option is accepted by `code.github` and `code.gitlab` and forwarded to the
 scan of each checkout.
 Unread oversized source files and symlinks leaving the root make a scan incomplete
-by default, as do binary content (a NUL byte) in an analyzable file, non-regular
+by default, as do binary content (NUL bytes that are not stray ones in text, see
+[scan semantics](../scanning.md)) in an analyzable file, non-regular
 entries named like configuration files, and directory nesting deeper than the
 walker supports; `strict_coverage` promotes their diagnostics to errors. Declared
 oversize skip globs remain visible omissions, and directories skipped by the
 default excludes (`build`, `vendor`, `external`, …) are listed in one warning per
-root that does not affect completeness. See the coverage policy in
+root that does not affect completeness. Incomplete coverage is reserved for
+content the scan would have read. The default `oversize_skip_globs` name the
+remaining lockfiles (`gradle.lockfile`, `Package.resolved`,
+`Cartfile.resolved`, `deno.lock`, `pubspec.lock`, `mix.lock`, `bun.lock`,
+`*.lockb`, `flake.lock`) and generated files (`*.log`, `*.har`, `*.snap`).
+Change logs are not on the list, because a name glob such as `CHANGELOG*`
+also matches source files a scanned repository names freely
+(`history_store.py`, `changes.ts`). Credential detection reads every
+analyzable file, prose and fixtures included, so while `scan_secrets` is on
+(the default) an oversize `README.md`, `CHANGELOG.md` or recorded cassette is
+a coverage gap like any other unread file:
+a key planted in it is never lost to an exit 0. With `scan_secrets: false`
+two more kinds are skipped with a warning and the scan stays complete: a
+documentation file (`.md`, `.mdc`, `.mdx`, `.txt` that is not a manifest, a
+coding-agent instruction document such as `CLAUDE.md` or `AGENTS.md`, an
+agent definition under `.claude/agents/` and the like, or a file a file-name
+signature selects), whose body the technology passes never read (warning
+`documentation is matched by file name only and credential detection is
+off`), and, when `include_tests` is false and `strict_coverage` is not set, a
+file under a test or fixture path (a recorded cassette under
+`tests/cassettes/`, a `pkg/fixtures/*.json`), whose evidence is discounted and
+cannot establish a deployment (warning `skipped oversize test fixture`; the
+connector counts them in `skipped_oversize_test_fixtures` and reports the
+count in one summary warning per root). Instruction documents, agent
+definitions, source and configuration keep the gap in every mode. Every
+skipped file is still named. See the coverage policy in
 [scanning](../scanning.md#coverage-policy). Each root is opened once, and every
 file (including `CODEOWNERS`) is read relative to it without following a link in
 any path component. A directory replaced by a link while the scan runs therefore
@@ -389,14 +590,23 @@ framework patterns are kept as lexical evidence, which counts toward an agent
 only when the same library is imported or declared as a dependency, as in a
 language without a binder, and the scan records the warning `import-bound
 analysis skipped (source did not parse); lexical evidence retained` without
-becoming incomplete. The same lexical evidence stands in for a notebook cell
+becoming incomplete. The warning is recorded for a module that imports
+something a signature can bind; a module whose imports cannot bind any
+signature is not parsed (the binder could find nothing in it), so its syntax
+is not checked. The same lexical evidence stands in for a notebook cell
 that does not parse, and when a binder budget is exhausted; that scan is
 incomplete.
 
 Malformed YAML front matter in an agent
 definition, including a YAML value PyYAML cannot construct (an impossible date,
 an integer over 4,300 digits), is reported as `invalid agent definition YAML`;
-the definition is still listed by its file name.
+the definition is still listed by its file name. A one-line plain value that
+contains `: ` (`description: Use this agent when: ...`), as generated agent
+definitions write them, is not valid YAML but is read by coding agents, which
+quote it and parse again. So does the scanner, through the same strict loader:
+the definition is read and the warning `agent definition front matter quoted to
+parse (a plain value contained ': ')` records it. Repeated fields, explicit tags and
+structure that quoting cannot repair stay errors.
 
 A CrewAI `agents.yaml` or `langgraph.json` inside a reported project is folded
 into that project's finding and listed under `metadata.manifests`. MCP server
@@ -409,6 +619,48 @@ name limit makes coverage incomplete, and named tools cannot suppress
 separate execution-sink evidence. Empty, explicitly disabled or unverified
 provider tool options do not establish configured tool-use; supported
 import-bound requests and linked enabled dispatch provide that evidence.
+
+A project that implements an MCP server carries the `mcp-server` capability:
+it exposes tools to other agents, which is distinct from `tool-use` (the
+protocol signature's own capability, a project that calls tools) and never
+makes the project an agent. In Python and JavaScript the construction is
+import-bound (`FastMCP(`, `Server(` from `mcp.server` or
+`mcp.server.lowlevel`, `new McpServer(` or `new Server(` from
+`@modelcontextprotocol/sdk/server/*`, `fastmcp`, `mcp-framework`), so the
+low-level `Server` class is told apart from `http.server` and Node `http`
+servers, which produce nothing; the bound construction replaces the lexical
+pattern match of its line. Next to an MCP client import (`ClientSession`, the
+SDK's `client` modules) an `aiohttp`, `socketserver` or `socket.io` class
+constructed as `Server(` stays low-weight evidence of the ambiguous pattern
+and establishes neither the capability nor a server: only a bound
+construction, a specific idiom (`FastMCP(`, `new McpServer(`, a tool
+registration, a transport) counts. A lexical `FastMCP(` or `new McpServer(`
+that the binder did not resolve counts only in a file that imports an SDK
+server module (`mcp.server`, `fastmcp`, `@modelcontextprotocol/sdk/server`,
+`mcp-framework`, for example after `from mcp.server.fastmcp import *`); it is
+then listed with `bound: false`. Elsewhere the class may be a local one and the
+match stays evidence without the capability. In Go, Java, .NET and Rust the server idioms
+(`server.NewMCPServer(`, `mcp.NewServer(`, `McpServer.sync(`, `.AddMcpServer(`,
+`[McpServerTool`, `impl ServerHandler for`) are lexical patterns gated to their
+language; without the SDK's import or dependency anywhere in the project they
+stay capped `uncorroborated-lexical` evidence, the capability is listed under
+`metadata.potential_capabilities` and no server is reported. Constructions in
+test paths imply no server unless `include_tests` is set, like registered
+tools. The finding is titled `MCP server in <dir>: ...` and carries
+`metadata.mcp_server`: `constructions` (`file`, `line`, `construct`,
+`language`, `bound`, which is `false` for lexical Go, Java, .NET and Rust
+idioms and for a Python or JavaScript construction resolved by its file's
+server import rather than by the binder; at most 50, with
+`constructions_limited: true` when more exist, which is a listing bound and
+not a coverage gap), `languages` and the
+`transports` the code names (`stdio`, `http`). Tool registrations, transports
+and `run` calls are server evidence but are not listed as constructions. In an
+implemented server, vendor-neutral idioms (an agent loop, a memory variable)
+describe its tools rather than an agent and imply no capability, as they
+already did for a server with recognized tool names; execution sinks still
+count. An MCP client configuration (`.mcp.json` and the like) is a
+`mcp-server` finding but is not a server implementation and does not carry the
+capability.
 
 An MCP server entry that declares itself disabled (`disabled: true` or
 `enabled: false`) is still reported. The flag is client-specific (Cline and Roo

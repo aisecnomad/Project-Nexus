@@ -25,6 +25,16 @@ one permission class, several system prompts in one workflow) count once. A
 project that merely imports `openai` is not the same as a Bedrock Agent with a
 confirmed runtime status.
 
+A `code.filesystem` project finding whose evidence outside test code and
+heuristics spans independent signal types also gets one synthetic
+`corroboration:cross-signal` evidence item (`attributes.synthetic: true`,
+group `cross-signal-corroboration`): weight 0.10 when a library signal (an
+import or a dependency) and a code pattern agree, 0.15 when three or more of
+import, dependency, code, file, domain and environment-name signals are
+present. It points at one of the observations it summarizes, raises confidence
+and likelihood but never the finding's kind, and is described in
+`metadata.cross_signal_corroboration`.
+
 Confidence is a heuristic evidence score, not a calibrated probability of
 agent execution: the weights are authored in signature packs and connectors,
 not fitted to observed outcomes. The `likelihood` label is only a bucket of that
@@ -49,16 +59,24 @@ factory or an enabled executable tool definition, can support a capability;
 source evidence still does not prove that the code ran in production.
 
 A name is a mention, not use. Environment-variable names alone cap a project at
-confidence 0.8 (tag `env-names-only`, `metadata.confidence_cap`). A data file
+confidence 0.8 (tag `env-names-only`, `metadata.confidence_cap`). Evidence only
+in documentation or example directories inside a project, or only in generated
+files (`*_pb2.py`, `*.generated.*`), caps it at 0.85, 0.85 or 0.7 (tags
+`docs-only`, `example-code-only`, `generated-code-only`); see
+[Scanning](../scanning.md) for the paths. A data file
 that lists four or more products by domain or variable name, such as a proxy
 blocklist, a vendor policy or a copy of the signature packs, is a *catalog*:
 its mentions count only for a product that also has an import, a dependency or
 specific code evidence elsewhere in the project, and a project with nothing
 else yields no finding. Discounted files are listed in
-`metadata.catalog_mentions`. Source code, dotenv, Compose, Helm and CI files
-are never catalogs, and a file naming one to three products is configuration;
-see [Code connectors](../connectors/code.md) for the exact rule and the
-threshold.
+`metadata.catalog_mentions`. Source code, dotenv, Compose, Helm and CI files,
+files under `.devcontainer/` or a top-level `config/` directory, files that
+assign the variables they name and data files the project's own code loads are
+never catalogs, and a file naming one to three products is configuration unless
+its file name spells `blocklist`, `denylist` or `blacklist`, which also outweighs
+the directory and the reference (an allowlist, an egress policy or a firewall
+rule set is configuration); see
+[Code connectors](../connectors/code.md) for the exact rule and the threshold.
 
 ## Risk
 
@@ -94,12 +112,16 @@ include:
 | `tag:no-egress-policy` | AI workload namespace has no NetworkPolicy egress controls | 10 |
 | `capability:code-exec` | Can execute arbitrary code | 15 |
 | `capability:autonomous` | Operates without human approval | 10 |
+| `capability:tool-use` | Calls tools / functions | 5 |
+| `capability:mcp-server` | Exposes tools to other agents over MCP | 5 |
 | `tag:hidden-instructions` | Instruction file carries content hidden from the rendered view (an HTML comment holding sentences) | 20 |
 | `tag:remote-code-fetch` | Instruction file downloads and executes code in one step, or decodes an inline blob into an interpreter | 15 |
 | `tag:invisible-text` | Instruction file contains invisible or bidirectional control characters | 10 |
 | `tag:autonomy-understated` | The matched inventory entry declares an autonomy level below the observed floor ([autonomy tiers](autonomy.md)) | 10 |
 | `autonomy:L0` … `autonomy:L5` | Observed autonomy floor; weighted only through `options.risk_weights.autonomy` | 0 |
 | `tag:disabled` / `tag:inactive` / `tag:suspended` | Resource is not active | −10 |
+| `tag:test-code-only` / `tag:generated-code-only` | Code evidence is only in test or fixture code, or only in generated files | −10 |
+| `tag:docs-only` / `tag:example-code-only` | Code evidence is only in documentation or example directories inside the project | −8 |
 
 The `kind` base weight is 30 for `secret`; 15 for `agent` and `mcp-server`;
 10 for `agent-config`, `workflow`, `bot-app`, `oauth-grant`,
@@ -133,7 +155,8 @@ keys are checked, so a typo cannot silently change nothing: unknown groups,
 `kinds`, `governance` and `autonomy` keys are rejected (`autonomy` keys are `L0`
 to `L5`), `capabilities` keys must be one of
 the capability names (`code-exec`, `autonomous`, `saas-actions`, `data-access`,
-`browsing`, `memory`, `multi-agent`, `delegated-identity`, `tool-use`, `rag`),
+`browsing`, `memory`, `multi-agent`, `delegated-identity`, `tool-use`,
+`mcp-server`, `rag`),
 and `providers` keys must be the id of a provider signature in the loaded
 signature packs (for example `provider.deepseek`, or an id from your own pack).
 The error names the key and never echoes the value. `tags` is open-ended

@@ -1,0 +1,41 @@
+rw-01-claude-quickstarts	anthropics/claude-quickstarts	anthropics/claude-quickstarts	ai-app	agent	high	browser-toolset/python/run.py: tool-use loop; managed-agents/*/CLAUDE.md
+rw-02-open-deep-research	langchain-ai/open_deep_research	langchain-ai/open_deep_research	ai-app	agent	high	src/open_deep_research/deep_researcher.py: LangGraph agent; CLAUDE.md
+rw-03-gpt-researcher	assafelovic/gpt-researcher	assafelovic/gpt-researcher	ai-app	agent	high	gpt_researcher/utils/tools.py; gpt_researcher/retrievers/mcp/retriever.py; .mcp.json
+rw-04-swe-agent	princeton-nlp/swe-agent	princeton-nlp/SWE-agent	ai-app	agent	high	sweagent/agent/models.py: tool calls; config/*.yaml agent configs
+rw-05-quickstart-resources	modelcontextprotocol/quickstart-resources	modelcontextprotocol/quickstart-resources	ai-app	agent	high	mcp-client-typescript/index.ts: MCP client; mcp-client-rust/src/main.rs
+rw-06-github-mcp-server	github/github-mcp-server	github/github-mcp-server	ai-app	agent	high	agent-plugin/mcp.json; .github/copilot-instructions.md; MCP server implementation
+rw-07-crewai-examples	crewaiinc/crewai-examples	crewAIInc/crewai-examples	ai-app	agent	high	flows/write_a_book_with_flows/**/crews/*.py: crews and agents
+rw-08-web-ui	browser-use/web-ui	browser-use/web-ui	ai-app	agent	high	src/agent/browser_use/browser_use_agent.py; src/agent/deep_research/deep_research_agent.py
+rw-09-aider	aider-ai/aider	Aider-AI/aider	ai-app	agent	medium	aider/coders/wholefile_func_coder.py: function-call edit loop; aider/llm.py
+rw-10-anything-llm	mintplex-labs/anything-llm	Mintplex-Labs/anything-llm	ai-app	agent	high	server/utils/agents/aibitat/: agent framework
+rw-11-chatbot-ui	mckaywrigley/chatbot-ui	mckaywrigley/chatbot-ui	ai-app	agent	medium	app/api/chat/tools/route.ts: model tool_calls executed by the server
+rw-12-shell-gpt	ther1d/shell_gpt	TheR1D/shell_gpt	ai-app	agent	medium	sgpt/handlers/handler.py: handle_function_call executes model-selected function
+rw-13-llm-app	pathwaycom/llm-app	pathwaycom/llm-app	ai-app	agent	medium	cookbooks/self-rag-agents/*.ipynb: LangGraph agents (samples)
+rw-14-flask	pallets/flask	pallets/flask	ordinary	none	high	no provider SDK or agent pattern in tree
+rw-15-requests	psf/requests	psf/requests	ordinary	none	high	no provider SDK or agent pattern in tree
+rw-16-node-exporter	prometheus/node_exporter	prometheus/node_exporter	hard-negative	llm	medium	AGENTS.md: coding-agent instructions (no AI API use)
+rw-17-ublock-ai-blocklist	laylavish/ublockorigin-huge-ai-blocklist	laylavish/uBlockOrigin-HUGE-AI-Blocklist	hard-negative	none	high	AI-domain blocklist; no AI use in code
+rw-18-uap-core	ua-parser/uap-core	ua-parser/uap-core	hard-negative	none	high	user-agent regex database; no AI use
+rw-19-mcpconfig	minecraftforge/mcpconfig	MinecraftForge/MCPConfig	hard-negative	none	high	Minecraft Coder Pack mappings: MCP name collision
+rw-20-awesome-chatgpt-prompts	f/awesome-chatgpt-prompts	f/awesome-chatgpt-prompts	ai-app	agent	medium	src/app/api/prompt-builder/chat/route.ts: tool calls executed; plugins/claude/prompts.chat/.mcp.json
+rw-21-nanogpt	karpathy/nanogpt	karpathy/nanoGPT	hard-negative	none	medium	model training and sampling code; no provider API call
+rw-22-awesome-mcp-servers	punkpeye/awesome-mcp-servers	punkpeye/awesome-mcp-servers	hard-negative	none	high	curated list (docs only)
+rw-23-nextchat	chatgptnextweb/nextchat	ChatGPTNextWeb/NextChat	ai-app	agent	high	app/mcp/client.ts: MCP client
+rw-24-openai-cs-agents-demo	openai/openai-cs-agents-demo	openai/openai-cs-agents-demo	ai-app	agent	high	ui/components/agents-list.tsx; multi-agent triage with tool calls (README)
+rw-25-mcp-servers	modelcontextprotocol/servers	modelcontextprotocol/servers	ai-app	agent	high	.mcp.json; src/everything/ MCP server
+rw-26-autogpt	significant-gravitas/autogpt	Significant-Gravitas/AutoGPT	ai-app	agent	high	classic/forge agent code; CLAUDE.md files
+rw-27-openhands	all-hands-ai/openhands	All-Hands-AI/OpenHands	ai-app	agent	high	AGENTS.md; src/types/agent-server/ event types
+rw-28-chatgpt-web	chanzhaoyu/chatgpt-web	Chanzhaoyu/chatgpt-web	ai-app	llm	high	service/src/chatgpt/index.ts: provider API calls; no tool loop
+rw-29-open-insure	daxaxelrod/open_insure	daxaxelrod/open_insure	hard-negative	none	high	insurance policy management; no AI use
+rw-30-real-estate	skynette/real-estate	skynette/real-estate	hard-negative	none	high	Django real-estate app; agent is a human role
+rw-31-gemini-api	eliasbenaddou/gemini_api	eliasbenaddou/gemini_api	hard-negative	none	high	Gemini crypto-exchange client; no AI use
+rw-32-fastapi	tiangolo/fastapi	tiangolo/fastapi	ordinary	none	high	framework source; docs_src has no LLM usage
+rw-33-open-webui	open-webui/open-webui	open-webui/open-webui	ai-app	agent	medium	backend/open_webui/utils/middleware.py: tool function execution
+rw-34-ai-chatbot	vercel/ai-chatbot	vercel/ai-chatbot	ai-app	agent	high	lib/ai/tools/request-suggestions.ts; app/(chat)/api/chat/route.ts: streamText with tools
+rw-35-private-gpt	zylon-ai/private-gpt	zylon-ai/private-gpt	ai-app	llm	medium	RAG pipeline; no tool loop found
+rw-36-azure-search-openai-demo	azure-samples/azure-search-openai-demo	Azure-Samples/azure-search-openai-demo	ai-app	ambiguous	medium	app/backend/approaches/*.py: tools= use; app/frontend AgentPlan component
+rw-37-openai-quickstart-python	openai/openai-quickstart-python	openai/openai-quickstart-python	ai-app	agent	medium	examples/assistant-functions/functions.py: function calls executed
+rw-38-langchain-tutorials	gkamradt/langchain-tutorials	gkamradt/langchain-tutorials	ai-app	agent	medium	agents/Agents.ipynb: LangChain agent tools (samples)
+rw-39-streamlit-llm-examples	streamlit/llm-examples	streamlit/llm-examples	ai-app	llm	medium	Chatbot.py: provider calls; pages/4_Langchain_PromptTemplate.py
+rw-40-pdfgpt	bhaskatripathi/pdfgpt	bhaskatripathi/pdfgpt	ai-app	llm	medium	api.py / app.py: provider calls; no tool loop found
+rw-41-llms-from-scratch	rasbt/llms-from-scratch	rasbt/llms-from-scratch	hard-negative	none	medium	model implementation and training code; no provider API call

@@ -26,7 +26,7 @@ from collections.abc import Callable, Iterable, Iterator
 from pathlib import Path, PurePosixPath
 from typing import Any, ClassVar
 
-from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
+from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError, failure_summary
 from shadowscan.connectors.code.filesystem import FilesystemConnector
 from shadowscan.connectors.code.manifests import is_manifest_name
 from shadowscan.models import Finding
@@ -418,7 +418,7 @@ class RemoteRepositoryConnector(BaseConnector):
         except HttpError as exc:
             self.ctx.warn(f"{self.name}: {full}: {exc}", incomplete=True)
         except Exception as exc:  # noqa: BLE001 - one repository's failure is an error, not the scan's end
-            self.ctx.error(f"{self.name}: {full}: {type(exc).__name__}: {exc}")
+            self.ctx.error(f"{self.name}: {full}: {failure_summary(exc)}")
             self.log.debug("%s failure (%s)", self.record_noun, type(exc).__name__)
         finally:
             if tmp:

@@ -119,6 +119,7 @@ nav:
       - Tenant canaries: canaries.md
       - CI integration: operations/ci.md
       - AI bill of materials: operations/ai-bom.md
+      - OCSF events: operations/ocsf.md
       - LLM triage: operations/llm-triage.md
       - Merge policy enforcement: operations/merge-policy.md
       - Publishing a release: operations/publishing.md

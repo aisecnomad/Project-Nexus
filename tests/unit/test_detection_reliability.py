@@ -351,9 +351,36 @@ def test_n8n_export_is_one_workflow_with_its_model_provider(run_connector, tmp_p
         ),
     )
     findings, _ = scan(run_connector, tmp_path)
-    assert [f.kind for f in findings] == [Kind.WORKFLOW]
+    # The export holds a verified agent node, so it classifies as an agent,
+    # matching lowcode.n8n; identity is unchanged (resource_type stays
+    # workflow-export).
+    assert [f.kind for f in findings] == [Kind.AGENT]
     assert "provider.openai" in findings[0].model_providers
+    assert findings[0].title.startswith("Exported agent workflow (n8n)")
+    assert findings[0].metadata["agent_flow"] is True
+
+
+def test_n8n_chain_export_without_agent_node_stays_a_workflow(run_connector, tmp_path):
+    """An LLM chain with no agent node is AI use, not an agent (real-world benchmark case)."""
+    write(
+        tmp_path,
+        "workflow.json",
+        json.dumps(
+            {
+                "name": "demo",
+                "nodes": [
+                    {"parameters": {}, "name": "T", "type": "@n8n/n8n-nodes-langchain.chatTrigger"},
+                    {"parameters": {}, "name": "C", "type": "@n8n/n8n-nodes-langchain.chainLlm"},
+                    {"parameters": {}, "name": "M", "type": "@n8n/n8n-nodes-langchain.lmChatOllama"},
+                ],
+                "connections": {},
+            }
+        ),
+    )
+    findings, _ = scan(run_connector, tmp_path)
+    assert [f.kind for f in findings] == [Kind.WORKFLOW]
     assert findings[0].title.startswith("Exported AI workflow (n8n)")
+    assert findings[0].metadata["agent_flow"] is False
 
 
 # ------------------------------------------------------------ test code & fake credentials
@@ -479,7 +506,9 @@ def test_external_symlinks_make_coverage_incomplete_by_default(run_connector, tm
 
 
 def test_oversize_files_make_coverage_incomplete_by_default(run_connector, tmp_path):
-    write(tmp_path, "fixtures/cassette.yaml", "x: " + "y" * 400 + "\n")
+    # Analyzable configuration outside test paths (an oversize fixture under
+    # tests/ is disclosed without a gap unless include_tests is set).
+    write(tmp_path, "recordings/cassette.yaml", "x: " + "y" * 400 + "\n")
     _, stats = scan(run_connector, tmp_path, max_file_size=100)
     assert stats.warnings and not stats.errors and stats.incomplete
     _, stats = scan(run_connector, tmp_path, max_file_size=100, strict_coverage=True)
@@ -609,7 +638,7 @@ def test_workflow_export_tagged_mcp_keeps_its_finding(run_connector, tmp_path):
         ),
     )
     findings, stats = scan(run_connector, tmp_path)
-    assert [f.kind for f in findings] == [Kind.WORKFLOW]
+    assert [f.kind for f in findings] == [Kind.AGENT]
     assert not stats.errors
 
 

@@ -1,0 +1,10 @@
+[
+{"card": "A001", "ai": "no", "app": "no", "agent": "no", "reason": "Minecraft Coder Pack 'MCP' name collision; no LLM SDK, agent, or coding-agent configuration."},
+{"card": "A002", "ai": "no", "app": "no", "agent": "no", "reason": "Distributed orchestration toolkit (raft, task scheduling); 'agent/' name is not an AI agent; no LLM or coding-agent config."},
+{"card": "A003", "ai": "yes", "app": "yes", "agent": "yes", "reason": "Uses pydantic_ai Agent and LLM APIs in first-party src/grit/ai.py; .gemini.md and skills-lock.json are coding-agent configs."},
+{"card": "A004", "ai": "no", "app": "no", "agent": "no", "reason": "AMP HTML framework; only 'llm' hit is binary PNG noise; no LLM, agent, or coding-agent config."},
+{"card": "A005", "ai": "yes", "app": "yes", "agent": "yes", "reason": "Client SDK for Rapida voice-agent platform (assistants, knowledge bases); source's message handler covers LLM pipeline events."},
+{"card": "A006", "ai": "no", "app": "no", "agent": "no", "reason": "Gradient-boosting ML library; scikit-learn is only an ML dependency; no LLM or agent integration."},
+{"card": "A007", "ai": "yes", "app": "yes", "agent": "yes", "reason": "MCP server (Model Context Protocol SDK imported in src/index.ts) with server.json registry manifest."},
+{"card": "A008", "ai": "no", "app": "no", "agent": "no", "reason": "Deep transfer-learning research code in PyTorch; no LLM or agent integration; only a CLIP-named test module."}
+]

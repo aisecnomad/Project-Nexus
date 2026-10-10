@@ -219,3 +219,29 @@ def test_project_isolation_error_names_the_project(tmp_path, index, monkeypatch)
     findings, ctx = _run_configured(index, tmp_path)
     assert findings == []
     assert any("project analysis incomplete (RuntimeError)" in error for error in ctx.stats.errors)
+
+
+def test_the_scan_root_descriptor_is_closed_after_emit_even_when_emit_fails(tmp_path, index, monkeypatch):
+    import os
+
+    from shadowscan.connectors.code import filesystem as filesystem_module
+
+    (tmp_path / "agent.py").write_text("from crewai import Agent\n")
+    opened: list[int] = []
+    original = filesystem_module.open_confined_directory
+
+    def recording(base):
+        opened.append(fd := original(base))
+        return fd
+
+    monkeypatch.setattr(filesystem_module, "open_confined_directory", recording)
+
+    def boom(self, *args, **kwargs):
+        raise RuntimeError("synthetic")
+        yield  # pragma: no cover - generator shape
+
+    monkeypatch.setattr(FilesystemConnector, "_emit_project", boom)
+    _run_configured(index, tmp_path)
+    assert len(opened) == 1
+    with pytest.raises(OSError):
+        os.fstat(opened[0])  # closed once the findings were emitted

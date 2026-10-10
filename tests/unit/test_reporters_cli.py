@@ -53,9 +53,18 @@ def test_all_formats_render(fixtures, index):
     script_hash = base64.b64encode(hashlib.sha256(_JS.encode("utf-8")).digest()).decode("ascii")
     assert f"script-src 'sha256-{script_hash}'" in html
     assert "default-src 'none'" in html and "name='referrer' content='no-referrer'" in html
-    assert set(FORMATS) == {"table", "csv", "cyclonedx", "html", "json", "markdown", "sarif"}
+    assert set(FORMATS) == {"table", "csv", "cyclonedx", "html", "json", "markdown", "ocsf", "sarif"}
     cdx = json.loads(render(result, "cyclonedx"))
     assert cdx["bomFormat"] == "CycloneDX" and cdx["specVersion"] == "1.6"
+    ocsf = json.loads(render(result, "ocsf"))
+    assert len(ocsf["events"]) == len(result.findings)
+    assert {event["class_uid"] for event in ocsf["events"]} == {2004}
+    assert all(event["severity_id"] in {1, 2, 3, 4, 5} for event in ocsf["events"])
+    severity_ids = {"info": 1, "low": 2, "medium": 3, "high": 4, "critical": 5}
+    assert [event["severity_id"] for event in ocsf["events"]] == [
+        severity_ids[f.risk.level.value] for f in result.findings
+    ]
+    assert ocsf["scan"]["status"] == "complete"
 
 
 def test_reports_name_the_top_confidence_bucket_strong():

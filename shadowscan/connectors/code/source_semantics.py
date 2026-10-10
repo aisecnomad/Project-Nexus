@@ -24,7 +24,7 @@ import builtins
 import re
 import threading
 import weakref
-from bisect import bisect_right
+from bisect import bisect_left, bisect_right
 from collections import ChainMap
 from collections.abc import Callable, Collection, Mapping, MutableMapping, Sequence
 from dataclasses import dataclass, field, replace
@@ -77,6 +77,30 @@ _BUDGET_CHECK_NODES = 256
 # attribute of an imported module; a file needing more keeps the binder.
 _MAX_PROOF_MATCHES = 4096
 _MAX_PROOF_STATEMENTS = 512
+# Binder gates: a file whose import statements name no module that can bind a
+# signature skips the Python AST and the JavaScript call scan (see
+# python_may_bind). Tests turn the gates off to compare against the full binder.
+_GATE_BINDERS = True
+# An import statement longer than this (or a parenthesized name list left open
+# within it) is not read by the gate; the binder then decides.
+_IMPORT_STATEMENT_CHARS = 4000
+# One import statement: ``from M import <rest>`` or ``import <rest>``, where the
+# rest is a parenthesized name list or the statement up to a newline, ``;`` or
+# ``#``. Backslash continuations and form feeds are whitespace wherever a
+# space is (``from openai \\<newline> import OpenAI``). Strings and comments
+# match too, which only widens the gate.
+_PYTHON_IMPORT_RX = re.compile(
+    r"\b(?:from(?:[ \t\f]|\\\r?\n)+([A-Za-z_][\w.]*)(?:[ \t\f]|\\\r?\n)+import(?:[ \t\f]|\\\r?\n)*"
+    r"|import(?:[ \t\f]|\\\r?\n)+)"
+    r"(\([^)]{0,4000}\)?|(?:[^\n;#\\]|\\\r?\n){0,4000})"
+)
+_PYTHON_NAME_RX = re.compile(r"[A-Za-z_][\w.]*")
+# Layouts the statement regex does not fully model: a line continued with a
+# backslash, a form feed, or a ``;`` joining statements. A line holding one of
+# these and an ``import``/``from`` keyword keeps the binder (conservative).
+_PYTHON_UNMODELLED_RX = re.compile(r"\\\r?\n|[\f;]")
+_PYTHON_IMPORT_KEYWORD_RX = re.compile(r"\b(?:import|from)\b")
+_PYTHON_ATTRIBUTE_RX = re.compile(r"\.([A-Za-z_]\w*)")
 
 
 class SourceBudgetExceeded(MatchTimeoutError):
@@ -236,6 +260,65 @@ def _symbol_tail(symbol: str) -> str:
     # Module paths may precede the exported class/function. Keep class methods.
     parts = symbol.split(".")
     return ".".join(parts[-2:]) if len(parts) > 1 and parts[-2][:1].isupper() else parts[-1]
+
+
+# The server classes of the MCP SDKs, by the module path that exports them. An
+# import-bound call of one of these constructs a server the project implements,
+# evidence the lexical patterns cannot give for the low-level ``Server`` class,
+# which shares its name with every HTTP server class.
+_MCP_SERVER_CLASSES = frozenset({"FastMCP", "Server", "MCPServer", "McpServer"})
+_MCP_PYTHON_SERVER_MODULES = ("mcp.server", "fastmcp")
+_MCP_JAVASCRIPT_SERVER_MODULES = frozenset({"@modelcontextprotocol/sdk/server", "fastmcp", "mcp-framework"})
+_MCP_SERVER_CONSTRUCTION = "import-bound MCP server construction"
+
+
+def _mcp_server_construction(language: str, call: _Call) -> tuple[str, str] | None:
+    """The (class, module) an import-bound MCP server construction names, else None.
+
+    Python resolves the qualified name (``mcp.server.Server`` through ``import
+    mcp`` as well as ``from mcp.server import Server``); JavaScript binds the
+    imported class to its module specifier. A method on a constructed server
+    (``mcp.tool``, ``server.run``) is not a construction.
+    """
+    binding = call.binding
+    if binding.constructed:
+        return None
+    if language == "python":
+        qualified = ".".join(filter(None, (binding.module, binding.symbol)))
+        module, _, symbol = qualified.rpartition(".")
+        if symbol not in _MCP_SERVER_CLASSES or not module:
+            return None
+        if any(module == root or module.startswith(root + ".") for root in _MCP_PYTHON_SERVER_MODULES):
+            return symbol, module
+        return None
+    symbol = binding.symbol.rpartition(".")[2]
+    if symbol not in _MCP_SERVER_CLASSES:
+        return None
+    module = binding.module
+    if module in _MCP_JAVASCRIPT_SERVER_MODULES or module.startswith("@modelcontextprotocol/sdk/server/"):
+        return symbol, module
+    return None
+
+
+def _mcp_server_match(signature: Signature, call: _Call, symbol: str, module: str) -> Match:
+    """The bound evidence of one MCP server construction (see ``_mcp_server_construction``)."""
+    return Match(
+        signature,
+        Signal(
+            type="code",
+            weight=0.9,
+            capabilities=["mcp-server"],
+            description=_MCP_SERVER_CONSTRUCTION,
+        ),
+        sanitize_text(f"{module}:{symbol}("),
+        0.9,
+        line=call.line,
+        extra={
+            "verified_agent": False,
+            "bound_call_span": (call.start, call.end),
+            "mcp_server_construction": {"symbol": symbol, "module": module},
+        },
+    )
 
 
 class _PythonBindings(ast.NodeVisitor):
@@ -1191,6 +1274,90 @@ def _attribute_statements(
     return statements
 
 
+def _python_unmodelled_import_line(text: str) -> bool:
+    """Whether a line mentioning ``import``/``from`` has a layout the gate regex does not model.
+
+    Each line is searched for the keywords at most once, so the check stays
+    linear in the text.
+    """
+    searched = -1
+    for found in _PYTHON_UNMODELLED_RX.finditer(text):
+        start = text.rfind("\n", 0, found.start()) + 1
+        if start == searched:
+            continue
+        searched = start
+        end = text.find("\n", found.start())
+        if _PYTHON_IMPORT_KEYWORD_RX.search(text, start, len(text) if end < 0 else end):
+            return True
+    return False
+
+
+def python_may_bind(index: SignatureIndex, text: str) -> bool:
+    """Whether an import statement of ``text`` can bind a signature; False proves the binder finds nothing.
+
+    The binder's bindings come from ``import M`` and ``from M import A``
+    statements, matched as the synthesized statements ``_python_bindable``
+    describes: ``import M``, ``import <root of M>``, ``from M import A`` and,
+    for an attribute ``M.A`` of an imported module, ``from M import A``. Each
+    import pattern's required literals (``_python_import_hints``) hold no
+    space and lie outside ``from`` and ``import``, so every one of them is
+    within M or within A. One bounded regex collects the modules every import
+    statement of the text names (a superset of the AST's: strings and
+    comments count too) and the names it imports; A is one of those names or
+    an attribute name of the text. A pattern can match only when each of its
+    literal groups has an alternative inside some module (a dotted literal
+    must) or inside a name. No such pattern, or no import at all, proves the
+    file unbindable without parsing it. A statement the regex cannot bound
+    keeps the binder, as does an index whose patterns have no usable literals.
+    """
+    if not _GATE_BINDERS:
+        return True
+    hints = _python_import_hints(index)
+    if hints is None:
+        return True
+    if _python_unmodelled_import_line(text):
+        return True
+    modules: set[str] = set()
+    names: list[str] = []
+    for found in _PYTHON_IMPORT_RX.finditer(text):
+        module, rest = found.group(1), found.group(2)
+        if len(rest) >= _IMPORT_STATEMENT_CHARS or (rest.startswith("(") and not rest.endswith(")")):
+            return True
+        tokens = _PYTHON_NAME_RX.findall(rest)
+        if module is not None:
+            modules.update((module, module.partition(".")[0]))
+            names.extend(tokens)
+        else:
+            for token in tokens:
+                modules.update((token, token.partition(".")[0]))
+    if not modules:
+        return False
+    module_text = "\n".join(sorted(modules))
+    name_text: str | None = None
+    held: dict[str, bool] = {}
+    for groups in hints:
+        for group in groups:
+            for alternative in group:
+                present = held.get(alternative)
+                if present is None:
+                    if "\n" in alternative or alternative in module_text:
+                        present = True
+                    elif "." in alternative:
+                        present = False
+                    else:
+                        if name_text is None:
+                            name_text = "\n".join((*names, *_PYTHON_ATTRIBUTE_RX.findall(text)))
+                        present = alternative in name_text
+                    held[alternative] = present
+                if present:
+                    break
+            else:
+                break  # a group no module and no name holds: this pattern cannot match
+        else:
+            return True
+    return False
+
+
 def _python_bindable(index: SignatureIndex, tree: ast.AST) -> bool:
     """Whether a binding ``_PythonBindings`` can create for ``tree`` has signature matches.
 
@@ -1290,13 +1457,6 @@ def _javascript_bindings(
         pos = bisect_right(starts, offset) - 1
         return pos >= 0 and offset < ignored[pos][1]
 
-    pieces: list[str] = []
-    previous = 0
-    for start, end in ignored:
-        pieces.extend((text[previous:start], re.sub(r"[^\r\n]", " ", text[start:end])))
-        previous = end
-    pieces.append(text[previous:])
-    masked = "".join(pieces)
     bindings: dict[str, _Binding] = {}
     binding_positions: dict[str, int] = {}
     imports: list[tuple[_Binding, int]] = []
@@ -1356,6 +1516,19 @@ def _javascript_bindings(
     # reports every relevant import through its own signature lookup.
     if relevant is not None:
         bindings = {name: binding for name, binding in bindings.items() if relevant(binding)}
+        if not bindings and _GATE_BINDERS:
+            # No import can carry evidence: the call scan, the Genkit pass and
+            # the reachability analysis would all return nothing, so the text
+            # is not masked. The imports are still returned for their own
+            # (empty) signature lookup.
+            return [], imports
+    pieces: list[str] = []
+    previous = 0
+    for start, end in ignored:
+        pieces.extend((text[previous:start], re.sub(r"[^\r\n]", " ", text[start:end])))
+        previous = end
+    pieces.append(text[previous:])
+    masked = "".join(pieces)
     # Even a dead var/function declaration can shadow a name through JavaScript
     # hoisting. Keep the conservative shadow check over the original code mask.
     shadow_masked = masked
@@ -1530,6 +1703,7 @@ def _drop_uncertain_bindings(
     for start, end in declaration_spans:
         declaration_mask[start:end] = " " * (end - start)
     rest = "".join(declaration_mask)
+    marks: tuple[list[int], list[int]] | None = None
     for name in list(bindings):
         escaped = re.escape(name)
         patterns = [
@@ -1540,12 +1714,83 @@ def _drop_uncertain_bindings(
             rf"(?<![\w$.]){escaped}\s*=>",
             rf"(?<![\w$.]){escaped}\s*\.\s*[\w$]+\s*=(?!=)",
             rf"\bcatch\s*\(\s*{escaped}\b",
-            rf"(?:^|[;{{}}\n])\s*(?:async\s+)?[\w$]+\s*\([^)]*\b{escaped}\b[^)]*\)\s*(?::[^{{}};]+)?\{{",
         ]
         if any(
             regex.search(pattern, rest, timeout=pattern_timeout(), concurrent=False) for pattern in patterns
         ):
             del bindings[name]
+            continue
+        if marks is None:
+            marks = (
+                [match.start() for match in re.finditer(r"\)", rest)],
+                [match.start() for match in re.finditer(r"[{};]", rest)],
+            )
+        if _named_as_method_parameter(rest, escaped, *marks):
+            del bindings[name]
+
+
+def _named_as_method_parameter(rest: str, escaped: str, parentheses: list[int], terminals: list[int]) -> bool:
+    r"""Whether a method declaration lists the name (``escaped``) among its parameters.
+
+    This is ``(?:^|[;{}\n])\s*(?:async\s+)?[\w$]+\s*\([^)]*\bNAME\b[^)]*\)\s*(?::[^{};]+)?\{``
+    run against the whole source, which is quadratic: every statement start that opens a
+    parenthesis rescans the text up to the next ``)`` for the name. It took more than the
+    0.1 s pattern budget on a 22 KB TypeScript file and cost the file all its analysis. The
+    windowed form does not rescan the source for each statement start; the work per use of the
+    name is bounded by the text between two ``)`` and the next brace, not by the whole source.
+    The match cannot contain a ``)`` other than its last, so it lies between the last ``)``
+    before the name and the ``{`` that ends the first ``)``'s tail (the first of ``{``, ``}``
+    and ``;`` after it). The pattern is run on that window alone, anchored at the real start
+    of the text, and only for windows around an occurrence of the name whose ``)`` is followed by
+    something that can open a body (see ``_body_after_parameters``). ``parentheses`` and
+    ``terminals`` are the sorted offsets of ``)`` and of ``{``, ``}`` and ``;`` in ``rest``.
+    """
+    method = regex.compile(
+        rf"(?:^|[;{{}}\n])\s*(?:async\s+)?[\w$]+\s*\([^)]*\b{escaped}\b[^)]*\)\s*(?::[^{{}};]+)?\{{"
+    )
+    seen: set[tuple[int, int]] = set()
+    opens_body: dict[int, int] = {}  # offset of a ")" -> offset of the "{" its tail leads to, or -1
+    for named in regex.finditer(rf"\b{escaped}\b", rest, timeout=pattern_timeout(), concurrent=False):
+        after = bisect_left(parentheses, named.end())
+        if after == len(parentheses):
+            return False  # no ")" follows this occurrence or any later one
+        close = parentheses[after]
+        if close not in opens_body:
+            opens_body[close] = _body_after_parameters(rest, close, terminals)
+        terminal = opens_body[close]
+        if terminal < 0:
+            continue
+        before = bisect_left(parentheses, named.start()) - 1
+        window = (parentheses[before] + 1 if before >= 0 else 0, terminal + 1)
+        if window in seen:
+            continue
+        seen.add(window)
+        if method.search(rest, window[0], window[1], timeout=pattern_timeout(), concurrent=False):
+            return True
+    return False
+
+
+def _body_after_parameters(rest: str, close: int, terminals: list[int]) -> int:
+    r"""The offset of the ``{`` that opens a body right after the ``)`` at ``close``, or -1.
+
+    Only ``\s*(?::[^{};]+)?\{`` may follow: blanks, then optionally ``:`` and a return type with at
+    least one character and none of ``{``, ``}`` or ``;``, then the brace. Anything else cannot
+    complete the pattern, so the occurrences before this ``)`` need no window at all.
+    """
+    size = len(rest)
+    position = close + 1
+    while position < size and rest[position].isspace():
+        position += 1
+    if position >= size:
+        return -1
+    if rest[position] == "{":
+        return position
+    if rest[position] != ":":
+        return -1
+    ending = bisect_left(terminals, position + 1)
+    if ending < len(terminals) and rest[terminals[ending]] == "{" and terminals[ending] > position + 1:
+        return terminals[ending]
+    return -1
 
 
 def _javascript_calls(text: str, masked: str, bindings: dict[str, _Binding]) -> list[_Call]:
@@ -1732,6 +1977,16 @@ def bound_source_matches(
     module_matches = _ModuleMatches(index, language, is_local_module)
     tree = None
     try:
+        if language == "python" and resolve_import is None and not python_may_bind(index, text):
+            # No import statement names a module that can bind a signature: the
+            # binder, the loop and dispatch recognizers that follow its calls
+            # and the tool-region analysis all yield nothing. The source must
+            # still parse: a file that does not has no bindings at all, and the
+            # caller treats it differently from one with none that match. A
+            # project-local re-export can bind through a module the gate cannot
+            # see, so a file analyzed with an import resolver keeps the binder.
+            compile(text, "<source>", "exec", ast.PyCF_ONLY_AST)
+            return []
         if language == "python":
             calls, imports, tree = _python_bindings(
                 text,
@@ -1798,6 +2053,20 @@ def bound_source_matches(
             tool_literals.get(id(call.node), {}),
             tool_literal_cache,
         )
+        construction = _mcp_server_construction(language, call) if "protocol.mcp" in signatures else None
+        if construction is not None:
+            # The bound construction stands for the pattern match of the same
+            # call; the caller drops the lexical match of its line as well.
+            evidence = [
+                match
+                for match in evidence
+                if not (
+                    match.signature_id == "protocol.mcp"
+                    and match.signal.type == "code"
+                    and "mcp-server" in match.signal.capabilities
+                )
+            ]
+            evidence.append(_mcp_server_match(signatures["protocol.mcp"], call, *construction))
         found.extend(evidence)
         if (
             language == "javascript"
@@ -1809,9 +2078,10 @@ def bound_source_matches(
             javascript_constructors.append((call.start, call.end))
         if (
             language == "javascript"
-            and call.binding.symbol == "McpServer"
+            and call.binding.symbol in {"McpServer", "Server"}
             and call.binding.module.startswith("@modelcontextprotocol/sdk/server/")
         ):
+            # registerTool/tool callbacks on the high-level and low-level servers
             mcp_constructors.append((call.start, call.end))
         if call.node is not None and any(match.extra.get("verified_agent") for match in evidence):
             symbol = _symbol_tail(call.binding.symbol)

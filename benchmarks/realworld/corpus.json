@@ -1,0 +1,593 @@
+{
+  "schema": 1,
+  "metadata": {
+    "name": "ShadowScan real-world repository benchmark",
+    "type": "real-world",
+    "surface": "repo",
+    "retrieved_at": "2026-10-08",
+    "provenance": "Public repositories pinned by commit; labels assigned by the benchmark author by inspecting each checkout at the pinned commit, before any tool ran on the corpus. Not an independent or field-adjudicated sample.",
+    "labels": {
+      "agent": 22,
+      "llm": 3,
+      "none": 9
+    }
+  },
+  "repos": [
+    {
+      "id": "crewai-examples",
+      "url": "https://github.com/crewAIInc/crewAI-examples",
+      "host": "github",
+      "sha": "da94a91e691e1cf5b3151416bb15b5b62729bea8",
+      "label": "agent",
+      "family": "app-crewai",
+      "difficulty": "easy",
+      "categories": [
+        "agent-framework-app"
+      ],
+      "rationale": "CrewAI example applications: crews, agents and tasks defined in code and YAML.",
+      "evidence": [
+        "multiple pyproject.toml with crewai",
+        "agents.yaml/tasks.yaml definitions"
+      ]
+    },
+    {
+      "id": "gpt-researcher",
+      "url": "https://github.com/assafelovic/gpt-researcher",
+      "host": "github",
+      "sha": "0957c301ed06c2a5857b834358c7227c739041d4",
+      "label": "agent",
+      "family": "app-researcher",
+      "difficulty": "easy",
+      "categories": [
+        "agent-framework-app",
+        "mcp-client",
+        "coding-agent-config"
+      ],
+      "rationale": "Autonomous research agent built on LangGraph with MCP support and repo coding-agent configs.",
+      "evidence": [
+        "langgraph usage",
+        "CLAUDE.md",
+        "mcp references in code"
+      ]
+    },
+    {
+      "id": "babyagi",
+      "url": "https://github.com/yoheinakajima/babyagi",
+      "host": "github",
+      "sha": "fa8930ebe72a82e5ad57b356e7cbec96290e5bb2",
+      "label": "agent",
+      "family": "app-functionz",
+      "difficulty": "medium",
+      "categories": [
+        "tool-loop-app"
+      ],
+      "rationale": "Self-building agent framework: LLM-driven function registration and execution over litellm.",
+      "evidence": [
+        "babyagi/functionz/core/framework.py",
+        "litellm execution loop"
+      ]
+    },
+    {
+      "id": "swarm",
+      "url": "https://github.com/openai/swarm",
+      "host": "github",
+      "sha": "6af0b4caf37dca4526dfd98e9fbd8ce36e7eeb22",
+      "label": "agent",
+      "family": "app-swarm",
+      "difficulty": "easy",
+      "categories": [
+        "agent-framework-app"
+      ],
+      "rationale": "OpenAI's archived multi-agent orchestration demo (agents, handoffs, routines).",
+      "evidence": [
+        "swarm package",
+        "examples with agents and handoffs"
+      ]
+    },
+    {
+      "id": "openai-agents-python",
+      "url": "https://github.com/openai/openai-agents-python",
+      "host": "github",
+      "sha": "26345c1e45ebede8e2fc9b0bc7341dedab5e01fc",
+      "label": "agent",
+      "family": "framework-source",
+      "difficulty": "easy",
+      "categories": [
+        "agent-framework-source",
+        "mcp-client",
+        "coding-agent-config"
+      ],
+      "rationale": "OpenAI Agents SDK source: agents, tools, handoffs, MCP support; AGENTS.md in root.",
+      "evidence": [
+        "src/agents",
+        "AGENTS.md",
+        "mcp support modules"
+      ]
+    },
+    {
+      "id": "smolagents",
+      "url": "https://github.com/huggingface/smolagents",
+      "host": "github",
+      "sha": "96f33faaf028479119ec8d34507b47694cf14e34",
+      "label": "agent",
+      "family": "framework-source",
+      "difficulty": "easy",
+      "categories": [
+        "agent-framework-source",
+        "coding-agent-config"
+      ],
+      "rationale": "Hugging Face smolagents framework source (CodeAgent, ToolCallingAgent).",
+      "evidence": [
+        "src/smolagents",
+        "AGENTS.md"
+      ]
+    },
+    {
+      "id": "pydantic-ai",
+      "url": "https://github.com/pydantic/pydantic-ai",
+      "host": "github",
+      "sha": "5274216031eeceef1523d78e835c34410e13b376",
+      "label": "agent",
+      "family": "framework-source",
+      "difficulty": "easy",
+      "categories": [
+        "agent-framework-source",
+        "mcp-client",
+        "coding-agent-config"
+      ],
+      "rationale": "Pydantic AI agent framework source with MCP, A2A and evals; CLAUDE.md and AGENTS.md present.",
+      "evidence": [
+        "pydantic_ai_slim",
+        "mcp integration",
+        "CLAUDE.md"
+      ]
+    },
+    {
+      "id": "autogen",
+      "url": "https://github.com/microsoft/autogen",
+      "host": "github",
+      "sha": "027ecf0a379bcc1d09956d46d12d44a3ad9cee14",
+      "label": "agent",
+      "family": "framework-source",
+      "difficulty": "easy",
+      "categories": [
+        "agent-framework-source",
+        "mcp-client"
+      ],
+      "rationale": "Microsoft AutoGen multi-agent framework source (autogen-agentchat, autogen-core).",
+      "evidence": [
+        "python/packages/autogen-agentchat",
+        "MCP tool adapters"
+      ]
+    },
+    {
+      "id": "langgraph",
+      "url": "https://github.com/langchain-ai/langgraph",
+      "host": "github",
+      "sha": "40a2e6d845054cc0cc17a6a169ca6e7394e5231c",
+      "label": "agent",
+      "family": "framework-source",
+      "difficulty": "easy",
+      "categories": [
+        "agent-framework-source",
+        "coding-agent-config"
+      ],
+      "rationale": "LangChain's LangGraph agent-orchestration framework source.",
+      "evidence": [
+        "libs/langgraph",
+        "prebuilt agents",
+        "AGENTS.md/CLAUDE.md"
+      ]
+    },
+    {
+      "id": "mastra",
+      "url": "https://github.com/mastra-ai/mastra",
+      "host": "github",
+      "sha": "ecd3761594a6ebf1a538b6a15e5ac5213ead9a73",
+      "label": "agent",
+      "family": "framework-source-ts",
+      "difficulty": "easy",
+      "categories": [
+        "agent-framework-source",
+        "mcp-client",
+        "a2a",
+        "coding-agent-config"
+      ],
+      "rationale": "Mastra TypeScript agent framework monorepo: agents, tools, MCP, A2A, workflows.",
+      "evidence": [
+        "packages/core agents",
+        "MCP docs/examples",
+        "CLAUDE.md files"
+      ]
+    },
+    {
+      "id": "ai-chatbot",
+      "url": "https://github.com/vercel/ai-chatbot",
+      "host": "github",
+      "sha": "c2f8235e1f3ea903ad8b7f61447c4f74164b5c58",
+      "label": "agent",
+      "family": "app-vercel-ai",
+      "difficulty": "medium",
+      "categories": [
+        "tool-loop-app"
+      ],
+      "rationale": "Vercel AI SDK chatbot with registered tools executed by the model (weather, artifacts).",
+      "evidence": [
+        "lib/ai/tools/get-weather.ts",
+        "streamText with tools in app/(chat)/api/chat/route.ts"
+      ]
+    },
+    {
+      "id": "chatbot-ui",
+      "url": "https://github.com/mckaywrigley/chatbot-ui",
+      "host": "github",
+      "sha": "81328b61d2a4ab597a7a057be70e785cf756d9f8",
+      "label": "agent",
+      "family": "app-assistants",
+      "difficulty": "medium",
+      "categories": [
+        "tool-loop-app"
+      ],
+      "rationale": "Chatbot UI 2.x: assistants with user-defined tools; executes OpenAI tool_calls server-side.",
+      "evidence": [
+        "app/api/chat/tools/route.ts",
+        "db/assistant-tools.ts",
+        "components/chat/tool-picker.tsx"
+      ]
+    },
+    {
+      "id": "mcp-servers",
+      "url": "https://github.com/modelcontextprotocol/servers",
+      "host": "github",
+      "sha": "5abed86c5317b833dd59907492d56c65981642aa",
+      "label": "agent",
+      "family": "mcp-server-source",
+      "difficulty": "easy",
+      "categories": [
+        "mcp-server-source",
+        "coding-agent-config"
+      ],
+      "rationale": "Model Context Protocol reference servers monorepo (TypeScript and Python servers).",
+      "evidence": [
+        "src/* servers using @modelcontextprotocol/sdk and mcp"
+      ]
+    },
+    {
+      "id": "wshobson-agents",
+      "url": "https://github.com/wshobson/agents",
+      "host": "github",
+      "sha": "46891e7e60da0e52baf1050b7b6391b64e84c6d9",
+      "label": "agent",
+      "family": "coding-agent-config",
+      "difficulty": "medium",
+      "categories": [
+        "coding-agent-config"
+      ],
+      "rationale": "Collection of Claude Code subagent and command definitions: configuration, not framework code.",
+      "evidence": [
+        ".claude-style agent markdown files",
+        "plugins of subagents"
+      ]
+    },
+    {
+      "id": "anthropic-quickstarts",
+      "url": "https://github.com/anthropics/anthropic-quickstarts",
+      "host": "github",
+      "sha": "9ec32b91df50b0d4906cae64b13c6298055ff40d",
+      "label": "agent",
+      "family": "app-mixed",
+      "difficulty": "easy",
+      "categories": [
+        "agent-framework-app",
+        "tool-loop-app",
+        "coding-agent-config"
+      ],
+      "rationale": "Anthropic quickstarts including the computer-use agent loop and tool-using demos.",
+      "evidence": [
+        "computer-use-demo agent loop",
+        "CLAUDE.md files"
+      ]
+    },
+    {
+      "id": "a2a-samples",
+      "url": "https://github.com/a2aproject/a2a-samples",
+      "host": "github",
+      "sha": "6603ba3f2c31a7ef33e70b9d8b5b5f8be42ac9a3",
+      "label": "agent",
+      "family": "a2a",
+      "difficulty": "easy",
+      "categories": [
+        "a2a",
+        "agent-framework-app",
+        "mcp-client"
+      ],
+      "rationale": "Google A2A protocol samples: agent cards plus agents in several frameworks and languages.",
+      "evidence": [
+        "agent cards",
+        "a2a-sdk usage across samples"
+      ]
+    },
+    {
+      "id": "n8n-ai-starter",
+      "url": "https://github.com/n8n-io/self-hosted-ai-starter-kit",
+      "host": "github",
+      "sha": "662bd8892476b41d9084417a569cc84013354674",
+      "label": "llm",
+      "family": "lowcode-n8n",
+      "difficulty": "medium",
+      "categories": [
+        "lowcode-flow",
+        "llm-app"
+      ],
+      "rationale": "n8n self-hosted AI starter kit: exported demo workflow is an LLM chain (chainLlm + lmChatOllama); the AI Agent node appears only as a README link.",
+      "evidence": [
+        "demo-data workflow json with @n8n/n8n-nodes-langchain.chainLlm",
+        "README.md links the AI Agent node docs (mention only)"
+      ]
+    },
+    {
+      "id": "terraform-aws-bedrock",
+      "url": "https://github.com/aws-ia/terraform-aws-bedrock",
+      "host": "github",
+      "sha": "4b74b7dd5110292cb34ca911448581153484f13f",
+      "label": "agent",
+      "family": "iac-bedrock",
+      "difficulty": "medium",
+      "categories": [
+        "iac-agent"
+      ],
+      "rationale": "AWS Terraform module provisioning Amazon Bedrock agents, action groups and guardrails.",
+      "evidence": [
+        "awscc_bedrock_agent resources in *.tf"
+      ]
+    },
+    {
+      "id": "private-gpt",
+      "url": "https://github.com/zylon-ai/private-gpt",
+      "host": "github",
+      "sha": "3cefd532cb6cccf65065af5e873c44bdca71e4d4",
+      "label": "agent",
+      "family": "app-agent-engine",
+      "difficulty": "medium",
+      "categories": [
+        "agent-framework-app",
+        "coding-agent-config"
+      ],
+      "rationale": "PrivateGPT with a chat agent engine, agent models, and Claude Code/Desktop integration docs.",
+      "evidence": [
+        "private_gpt/components/chat/models/agent_models.py",
+        "tests/engines/test_chat_agent_engine.py"
+      ]
+    },
+    {
+      "id": "anthropic-sdk-python",
+      "url": "https://github.com/anthropics/anthropic-sdk-python",
+      "host": "github",
+      "sha": "50b78d17a8a73bef97c3884102310344ac00f056",
+      "label": "agent",
+      "family": "sdk-source",
+      "difficulty": "medium",
+      "categories": [
+        "llm-sdk-source",
+        "coding-agent-config"
+      ],
+      "rationale": "Anthropic Python SDK source: provider SDK plus agent examples and a root CLAUDE.md.",
+      "evidence": [
+        "CLAUDE.md",
+        "examples/agents*.py",
+        "tool-use helpers"
+      ]
+    },
+    {
+      "id": "openai-python",
+      "url": "https://github.com/openai/openai-python",
+      "host": "github",
+      "sha": "9301e319ea33ef28fba380f39a289dedc14652c1",
+      "label": "agent",
+      "family": "sdk-source",
+      "difficulty": "medium",
+      "categories": [
+        "llm-sdk-source",
+        "coding-agent-config"
+      ],
+      "rationale": "OpenAI Python SDK source: provider SDK plus a root AGENTS.md coding-agent configuration.",
+      "evidence": [
+        "AGENTS.md",
+        "tool/function-calling helpers"
+      ]
+    },
+    {
+      "id": "gitlab-lsp",
+      "url": "https://gitlab.com/gitlab-org/editor-extensions/gitlab-lsp",
+      "host": "gitlab",
+      "sha": "be70beb5447f9945f376c79dafe7dd524ef7fcf3",
+      "label": "agent",
+      "family": "mcp-client-gitlab",
+      "difficulty": "medium",
+      "categories": [
+        "mcp-client",
+        "mcp-server-source",
+        "coding-agent-config"
+      ],
+      "rationale": "GitLab Duo language server (GitLab-hosted): MCP server/client code, ACP translation, AGENTS.md.",
+      "evidence": [
+        "packages/cli .../duo_mcp_server.ts",
+        "acp/translation/mcp_servers.ts"
+      ]
+    },
+    {
+      "id": "openai-quickstart-python",
+      "url": "https://github.com/openai/openai-quickstart-python",
+      "host": "github",
+      "sha": "ec8890d101bdc17d66512d94a76b5e7131d188a1",
+      "label": "agent",
+      "family": "app-assistants",
+      "difficulty": "hard",
+      "categories": [
+        "tool-loop-app"
+      ],
+      "rationale": "OpenAI quickstart examples; includes an Assistants function-calling example (registered tools).",
+      "evidence": [
+        "examples/assistant-functions/functions.py"
+      ]
+    },
+    {
+      "id": "chatgpt-web",
+      "url": "https://github.com/Chanzhaoyu/chatgpt-web",
+      "host": "github",
+      "sha": "7474b2c14971d2d9584c4b129396f9332ed87b7b",
+      "label": "llm",
+      "family": "app-chat",
+      "difficulty": "easy",
+      "categories": [
+        "llm-app"
+      ],
+      "rationale": "Archived ChatGPT web UI calling the OpenAI chat API; no tools, agents or MCP.",
+      "evidence": [
+        "service calling openai chat completions only"
+      ]
+    },
+    {
+      "id": "chatgpt-google-ext",
+      "url": "https://github.com/wong2/chatgpt-google-extension",
+      "host": "github",
+      "sha": "62ec83f51081cc9f9cf32acf2f88ddd7da50e05b",
+      "label": "llm",
+      "family": "app-chat-ext",
+      "difficulty": "medium",
+      "categories": [
+        "llm-app"
+      ],
+      "rationale": "2023-era browser extension sending search queries to ChatGPT/OpenAI; predates function calling.",
+      "evidence": [
+        "src background calling OpenAI, no tool registration"
+      ]
+    },
+    {
+      "id": "click",
+      "url": "https://github.com/pallets/click",
+      "host": "github",
+      "sha": "2247b35ea1c47c727d7a06e51fa280e12a863ff6",
+      "label": "none",
+      "family": "clean-python",
+      "difficulty": "medium",
+      "categories": [],
+      "rationale": "Python CLI library; no AI usage.",
+      "evidence": [
+        "no AI dependencies or configs"
+      ]
+    },
+    {
+      "id": "express",
+      "url": "https://github.com/expressjs/express",
+      "host": "github",
+      "sha": "9efc29e280018dafc1f0617f3a3d28f4e463b7be",
+      "label": "none",
+      "family": "clean-js",
+      "difficulty": "medium",
+      "categories": [],
+      "rationale": "Node.js web framework; no AI usage.",
+      "evidence": [
+        "no AI dependencies or configs"
+      ]
+    },
+    {
+      "id": "ua-parser-js",
+      "url": "https://github.com/faisalman/ua-parser-js",
+      "host": "github",
+      "sha": "bd7480198cd0d237b43a24a964f424727abb78e9",
+      "label": "none",
+      "family": "lookalike-strings",
+      "difficulty": "hard",
+      "categories": [],
+      "rationale": "User-agent parser whose data names AI crawlers/bots; names without AI usage.",
+      "evidence": [
+        "AI bot names appear only as UA detection strings"
+      ]
+    },
+    {
+      "id": "nginx-agent",
+      "url": "https://github.com/nginx/agent",
+      "host": "github",
+      "sha": "34910ee7aa2a1497132a8329ab4df1356c9a4f85",
+      "label": "none",
+      "family": "lookalike-agent",
+      "difficulty": "hard",
+      "categories": [],
+      "rationale": "NGINX management 'agent' daemon (Go); agent in the infrastructure sense, no AI.",
+      "evidence": [
+        "name and docs say agent; no AI dependencies"
+      ]
+    },
+    {
+      "id": "nukkit",
+      "url": "https://github.com/CloudburstMC/Nukkit",
+      "host": "github",
+      "sha": "b3caad67d86be34aeca3937e64e8176f6760a2d4",
+      "label": "none",
+      "family": "lookalike-bedrock",
+      "difficulty": "hard",
+      "categories": [],
+      "rationale": "Minecraft Bedrock Edition server (Java); 'bedrock' without AWS Bedrock.",
+      "evidence": [
+        "bedrock refers to the game edition"
+      ]
+    },
+    {
+      "id": "pytorch-examples",
+      "url": "https://github.com/pytorch/examples",
+      "host": "github",
+      "sha": "acc295dc7b90714f1bf47f06004fc19a7fe235c4",
+      "label": "none",
+      "family": "ml-not-llm",
+      "difficulty": "medium",
+      "categories": [],
+      "rationale": "Classic PyTorch training examples; machine learning without LLM APIs or agents.",
+      "evidence": [
+        "training scripts; no LLM SDKs, agents or AI SaaS"
+      ]
+    },
+    {
+      "id": "awesome-ai-agents",
+      "url": "https://github.com/e2b-dev/awesome-ai-agents",
+      "host": "github",
+      "sha": "9596ab1e69fbbb6c95291141c8dab5c181083216",
+      "label": "none",
+      "family": "catalog",
+      "difficulty": "hard",
+      "categories": [],
+      "rationale": "Curated markdown list naming hundreds of agent products; mentions without use.",
+      "evidence": [
+        "README-style lists only; no code, deps or configs"
+      ]
+    },
+    {
+      "id": "awesome-mcp-servers",
+      "url": "https://github.com/punkpeye/awesome-mcp-servers",
+      "host": "github",
+      "sha": "b45ea4f38973b700bcf36dd008cb4e29b71fea52",
+      "label": "none",
+      "family": "catalog",
+      "difficulty": "hard",
+      "categories": [],
+      "rationale": "Curated markdown list of MCP servers; mentions without use.",
+      "evidence": [
+        "README-style lists only; no code, deps or configs"
+      ]
+    },
+    {
+      "id": "fdroidserver",
+      "url": "https://gitlab.com/fdroid/fdroidserver",
+      "host": "gitlab",
+      "sha": "c21c177ff6d813697aaf9c988ca9fbb2b571b468",
+      "label": "none",
+      "family": "clean-python-gitlab",
+      "difficulty": "medium",
+      "categories": [],
+      "rationale": "F-Droid build/release tooling (GitLab-hosted); no AI usage.",
+      "evidence": [
+        "no AI dependencies or configs"
+      ]
+    }
+  ]
+}
