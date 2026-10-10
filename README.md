@@ -203,6 +203,7 @@ shadowscan jwt --file ./token.jwt --jwks-url https://acme.okta.com/oauth2/defaul
 shadowscan endpoint --list                                       # which AI client locations exist here
 shadowscan endpoint --format json -o laptop-$(hostname).json     # MCP configs, skills, rules, hooks
 shadowscan merge laptop-*.json --format json -o fleet.json       # one report for the fleet
+shadowscan dashboard fleet.json -o dashboard.html --inventory-json inventory.json   # static fleet dashboard
 
 # 7. Register what you found
 shadowscan inventory stubs report.json -o inventory/pending/    # capability-card stubs for shadow agents
@@ -370,7 +371,12 @@ heuristic risk level, never a CVSS `security-severity`, see
 filterable, with evidence drill-down), `cyclonedx` (a CycloneDX 1.6 AI bill
 of materials, see [AI-BOM](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/operations/ai-bom.md)), and `ocsf`
 (OCSF 1.1.0 Detection Finding events for SIEMs and security data lakes, see
-[OCSF](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/operations/ocsf.md)). Opt-in
+[OCSF](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/operations/ocsf.md)).
+`shadowscan dashboard` turns reports into a static fleet dashboard (coverage
+per source and connector first, autonomy against shadow status, registry
+reconciliation, threat and control reference counts, drift and history) and
+a versioned `shadowscan.inventory/v1` JSON export for BI and SIEM tools; see
+[fleet dashboard](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/operations/dashboard.md). Opt-in
 [LLM triage](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/operations/llm-triage.md) adds an advisory model verdict to
 the highest-risk findings; it is off by default and never changes scores.
 CSV inserts a literal `'` at the start of

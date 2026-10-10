@@ -5,6 +5,46 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## Unreleased
 
+### Fleet dashboard and inventory export
+
+- Add `shadowscan dashboard REPORTS... -o dashboard.html`: a static,
+  self-contained page with no external assets and one hashed script. The
+  coverage panel comes first (completeness per source and connector,
+  last scan and staleness); a connector a source did not run reads
+  "not collected", never 0. Then counts by inventory status, risk level,
+  surface, kind, provider, account and owner; autonomy floor against shadow
+  status with the shadow L4 and L5 cells marked and linked; vendor registry
+  reconciliation per registry; threat and control reference counts
+  ("Evidence references, not compliance determinations."); and the AI
+  systems table. Every table reads without JavaScript.
+- `--inventory-json FILE` writes the same data as the versioned
+  `shadowscan.inventory/v1` document for BI and SIEM tools. Credential
+  findings are counted and left out; records carry no evidence snippets,
+  evidence attributes, permissions or raw metadata.
+- `--baseline FILE` adds drift computed as `diff` computes it; missing
+  findings stay unknown unless the comparison is comparable.
+  `--history DIR` adds per-report totals and drift between comparable
+  consecutive reports (at most the newest 104; a non-comparable pair is a
+  gap, never zero). `--as-of TIME` sets the staleness reference, which
+  otherwise is the newest source's last scan, never the wall clock.
+- Exit 3 when an input or source is incomplete or the baseline comparison is
+  not comparable (the files are still written); exit 1 on invalid input.
+  Outputs are written with mode 0600 and never through a symbolic link.
+- `merge` now records `started_at`, `finished_at`, `inventory_present` and
+  each connector run's status for every source, under
+  `collection_scope.fleet.schema` `shadowscan.fleet-merge/v2`, and sets the
+  merged report's `inventory_present` when any source supplied an
+  inventory. The scope fingerprint is unchanged.
+- Fleet shadow status is three-valued. A finding no source reconciled
+  against an inventory is now `shadow: null` (no inventory) instead of
+  `true`. A finding sanctioned in one source and not reconciled in another
+  stays shadow and carries `metadata.fleet_inventory`
+  (`not-reconciled-in-every-source`).
+- Add authored tests for each view, escaping of hostile report values,
+  coverage, determinism, private outputs and a 20,000-finding linear-time
+  render budget.
+  They use synthetic reports and do not establish acceptance on a live fleet.
+
 ### Integration review corrections (#178)
 
 - Add optional Checkmarx One (#179) and Semgrep (#180) scan workflows that

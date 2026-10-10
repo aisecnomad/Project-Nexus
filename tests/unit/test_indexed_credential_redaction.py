@@ -11,8 +11,11 @@ import pytest
 from rich.console import Console
 
 from shadowscan.config import ConnectorSpec, ScanConfig
+from shadowscan.dashboard import build_inventory, render_inventory_json
 from shadowscan.engine import Engine
+from shadowscan.models import ScanResult
 from shadowscan.reporters.csv_ import render_csv
+from shadowscan.reporters.dashboard import render_dashboard
 from shadowscan.reporters.html import render_html
 from shadowscan.reporters.json_ import render_json
 from shadowscan.reporters.markdown import render_markdown
@@ -23,6 +26,14 @@ from shadowscan.utils.redaction import REDACTED, SanitizationLimitError, sanitiz
 
 SECRET = "opaque-sensitive-canary-123456789"
 TAIL = "additional-private-credential-fragment"
+
+
+def render_dashboard_page(result: ScanResult) -> str:
+    return render_dashboard(build_inventory(result))
+
+
+def render_inventory_document(result: ScanResult) -> str:
+    return render_inventory_json(build_inventory(result))
 
 
 @pytest.mark.parametrize(
@@ -158,7 +169,15 @@ def test_engine_reporters_never_export_indexed_credentials(tmp_path, scan_secret
         )
     ).run()
     assert result.complete and result.findings
-    for render in (render_json, render_sarif, render_html, render_markdown, render_csv):
+    for render in (
+        render_json,
+        render_sarif,
+        render_html,
+        render_markdown,
+        render_csv,
+        render_dashboard_page,
+        render_inventory_document,
+    ):
         output = render(result)
         assert SECRET not in output, render.__name__
         assert TAIL not in output, render.__name__

@@ -45,7 +45,23 @@ from shadowscan.models import FINDING_IDENTITY_SCHEMA, Finding, Risk, ScanResult
 from shadowscan.registry import clear_match_state
 
 MAX_SOURCES = 10_000
+FLEET_SCHEMA = "shadowscan.fleet-merge/v2"
+# What one connector run of a source amounted to, as every report prints it.
+CONNECTOR_STATUSES = ("complete", "cached", "incomplete", "skipped")
 _STATS_FIELDS = {f.name for f in fields(ScanStats)}
+
+
+def connector_status(stats: ScanStats) -> str:
+    """``skipped``, ``incomplete`` (errors or stopped early), ``cached`` or ``complete``."""
+    if stats.skipped:
+        return "skipped"
+    if stats.incomplete or stats.errors:
+        return "incomplete"
+    return "cached" if stats.cached else "complete"
+
+
+def _text(value: Any) -> str | None:
+    return value if isinstance(value, str) else None
 
 
 def _check(report: Any, name: str) -> dict[str, Any]:
@@ -194,7 +210,8 @@ def merge_reports(reports: list[tuple[str, dict[str, Any]]]) -> ScanResult:
             if "autonomy" in finding.metadata:
                 autonomy_by_id.setdefault(finding.id, []).append(finding.metadata["autonomy"])
             findings.append(finding)
-        stats.extend(_stats(report))
+        source_stats = _stats(report)
+        stats.extend(source_stats)
         if not complete:
             stats.append(
                 ScanStats(
@@ -223,6 +240,15 @@ def merge_reports(reports: list[tuple[str, dict[str, Any]]]) -> ScanResult:
                 "complete": complete,
                 "findings": len(report["findings"]),
                 "fingerprint": fingerprint,
+                # When and how each source was collected, so a fleet view can show staleness
+                # and per-source coverage instead of only the flattened statistics.
+                "started_at": _text(report.get("started_at")),
+                "finished_at": _text(report.get("finished_at")),
+                "inventory_present": report.get("inventory_present") is True,
+                "connectors": [
+                    {"connector": entry.connector, "status": connector_status(entry)}
+                    for entry in source_stats
+                ],
             }
         )
     merged = merge(findings)
@@ -246,7 +272,7 @@ def merge_reports(reports: list[tuple[str, dict[str, Any]]]) -> ScanResult:
         scope_out: dict[str, Any] = {"schema": _SCOPE_SCHEMA, "comparable": True, "fingerprint": digest}
     else:
         scope_out = {"schema": _SCOPE_SCHEMA, "comparable": False, "reason": "; ".join(reasons)}
-    scope_out["fleet"] = {"schema": "shadowscan.fleet-merge/v1", "sources": sources}
+    scope_out["fleet"] = {"schema": FLEET_SCHEMA, "sources": sources}
     result = ScanResult(
         findings=merged,
         stats=stats,
@@ -254,10 +280,47 @@ def merge_reports(reports: list[tuple[str, dict[str, Any]]]) -> ScanResult:
         inventory_size=inventory_size,
         inventory_present=inventory_present,
         collection_scope=scope_out,
+        inventory_present=inventory_present,
     )
     # The fleet started when its oldest source did, so a baseline age limit measures its oldest
     # evidence. One source without a valid start time leaves the fleet undated: dating it by the
     # merge would let an arbitrarily old baseline pass the limit.
     result.started_at = "" if undated else min(started, key=lambda item: item[0])[1]
     result.finished_at = max(finished) if finished else None
+    return result
+
+
+def report_result(name: str, raw: Any) -> ScanResult:
+    """One report, a scan or an earlier fleet merge, as a :class:`ScanResult` without merging it again.
+
+    The report is validated as :func:`merge_reports` validates a source, and its findings,
+    metadata and collection scope are kept as written, so a fleet report keeps its sources
+    and ``metadata.merged_from``. A report whose completion evidence is missing or does not
+    match its findings is incomplete, as such a fleet source would be.
+    """
+    report = _check(raw, name)
+    stats = _stats(report)
+    if not (_complete(report) and _summary_matches_findings(report)):
+        stats.append(
+            ScanStats(
+                connector="engine.fleet",
+                started_at=now_iso(),
+                incomplete=True,
+                errors=[f"{name}: source report is incomplete or has inconsistent completion evidence"],
+            )
+        )
+    size = report.get("inventory_size", 0)
+    if type(size) is not int or size < 0:
+        raise ValueError("report inventory size must be a nonnegative integer")
+    scope = report.get("collection_scope")
+    result = ScanResult(
+        findings=[Finding.from_dict(entry) for entry in report["findings"]],
+        stats=stats,
+        version=_text(report.get("version")) or "",
+        inventory_size=size,
+        collection_scope=scope if isinstance(scope, dict) else None,
+        inventory_present=report.get("inventory_present") is True,
+    )
+    result.started_at = _text(report.get("started_at")) or ""
+    result.finished_at = _text(report.get("finished_at"))
     return result

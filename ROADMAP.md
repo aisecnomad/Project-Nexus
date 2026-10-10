@@ -74,9 +74,13 @@ control mapping, then the fleet dashboard.
   Registry provenance and private MCP registry allowlists; A2A Agent Card
   collection. Vendor registry approval never confers sanctioned status unless
   the operator explicitly trusts that registry.
-- Enterprise inventory dashboard: a static, self-contained page built from
-  merged fleet reports that shows coverage before counts, plus a versioned
-  inventory export for BI and SIEM tools.
+- Enterprise inventory dashboard: implemented, unreleased. `shadowscan
+  dashboard` writes a static, self-contained page from fleet reports that
+  shows coverage before counts, with autonomy against shadow status,
+  registry reconciliation, reference counts, drift and history, plus the
+  versioned `shadowscan.inventory/v1` export for BI and SIEM tools; see
+  [docs/operations/dashboard.md](docs/operations/dashboard.md). Use on a
+  large live fleet remains to be validated.
 - Control mapping for ISO/IEC 42001, NIST AI RMF, the EU AI Act and AIUC-1,
   as evidence references labelled as author mappings until independently
   reviewed.

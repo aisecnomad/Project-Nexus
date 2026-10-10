@@ -999,6 +999,26 @@ Read them when you have baselines, reports or inventories produced
 by an earlier candidate build; a deployment that starts from a reviewed
 revision and a fresh baseline does not need them.
 
+### October 10 fleet dashboard, inventory export and fleet sources (unreleased)
+
+This candidate adds the [fleet dashboard](operations/dashboard.md) and its
+`shadowscan.inventory/v1` export, and changes what `merge` records. It does
+not change the published 0.1.2 artifact, create a release, or establish
+acceptance on a live fleet; the views are tested with synthetic,
+author-written reports.
+
+| Area | Changed behavior | Migration check |
+| --- | --- | --- |
+| Dashboard confidentiality | `shadowscan dashboard` writes a page and, with `--inventory-json`, a JSON document holding resource identifiers, owners, accounts and registry identifiers. Both are mode 0600 and never written through a symbolic link. Credential findings are left out, and no evidence, permissions or raw metadata is included. | Store and share both files as you store the reports behind them. Do not publish them to a public site or an unrestricted share. |
+| Dashboard exit code | Exit 3 when an input or source is incomplete or the `--baseline` comparison is not comparable; the files are still written. History never changes the exit code. | Treat exit 3 as "incomplete", as for `scan`, `merge` and `diff`; do not let a pipeline ignore it. |
+| Fleet source schema | `collection_scope.fleet.schema` is `shadowscan.fleet-merge/v2`. Each source adds `started_at`, `finished_at`, `inventory_present` and `connectors` (each run's `complete`, `cached`, `incomplete` or `skipped` status). The merged report's `inventory_present` is true when any source supplied an inventory. The scope fingerprint and comparability are unchanged. | Consumers that require an exact key set or the v1 schema string must accept v2. The dashboard reads a v1 fleet report and shows its connector coverage as unknown. |
+| Fleet shadow status | A merged finding no source reconciled against an inventory is `shadow: null` instead of `true`. A finding sanctioned in one source and not reconciled in another stays `true` and carries `metadata.fleet_inventory: not-reconciled-in-every-source`. | A fleet baseline merged by an earlier build reports `shadow` changes for findings without an inventory as non-adverse governance drift; regenerate the baseline fleet report. Filters that count `shadow: true` in fleets without inventories now count none, which is the intended meaning: nothing was reconciled. |
+
+The dashboard reads reports, not live systems. Its counts are what the
+sources recorded; a source that was not collected cannot be inferred, and the
+threat and control reference counts are evidence references, not compliance
+determinations.
+
 ### October 10 drift classes and baseline lifecycle (unreleased)
 
 This candidate adds drift classes, baseline pinning and expiry to

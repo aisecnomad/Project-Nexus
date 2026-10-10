@@ -13,8 +13,10 @@ from shadowscan.config import ConnectorSpec, ScanConfig
 from shadowscan.connectors.base import ConnectorContext
 from shadowscan.connectors.code.github import GitHubConnector
 from shadowscan.connectors.code.gitlab import GitLabConnector
+from shadowscan.dashboard import build_inventory, render_inventory_json
 from shadowscan.engine import Engine
 from shadowscan.reporters.csv_ import render_csv
+from shadowscan.reporters.dashboard import render_dashboard
 from shadowscan.reporters.html import render_html
 from shadowscan.reporters.json_ import render_json
 from shadowscan.reporters.markdown import render_markdown
@@ -191,6 +193,10 @@ def test_environment_credentials_never_reach_any_evidence_reporter(
         assert TAIL not in output, render.__name__
         if render is not render_csv:
             assert REDACTED in output, render.__name__
+    # The dashboard and its inventory export carry no evidence, so nothing is left to redact there.
+    inventory = build_inventory(result)
+    for output in (render_dashboard(inventory), render_inventory_json(inventory)):
+        assert SECRET not in output and TAIL not in output
 
 
 @pytest.mark.parametrize(

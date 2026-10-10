@@ -497,6 +497,11 @@ Rules:
 
 ## 4. Enterprise inventory dashboard (DASH)
 
+Status: DASH-0 to DASH-3 are implemented, unreleased, as `shadowscan
+dashboard` and its `shadowscan.inventory/v1` export; see
+[Fleet dashboard](../operations/dashboard.md). The tests use synthetic
+reports, not a live fleet.
+
 ### Constraint
 
 The roadmap does not plan a hosted scanning service. The dashboard is
