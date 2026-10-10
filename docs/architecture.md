@@ -103,7 +103,7 @@ defaults, which describe an ordinary connector.
 | hook | default | declared by | engine behaviour |
 |---|---|---|---|
 | `cache_roots_separately(roots, root_ids, *, labelled)` | `False` | `code.filesystem` | an incremental scan of several `paths` runs and caches one job per root; raising `ConnectorError` runs the connector once so its own validation reports the scan incomplete; any other exception marks the connector incomplete without running it |
-| `emits_registry_records` | `False` | none yet | the connector's findings may carry `metadata.registry_record` ([vendor registries](inventory.md#vendor-registries-as-inventory-sources)); the engine removes the key from every other connector's findings and records `registry record metadata ignored on N finding(s)` in that connector's stats, because an approved record of a trusted registry approves findings |
+| `emits_registry_records` | `False` | none yet | the connector's findings may carry `metadata.registry_record` ([vendor registries](inventory.md#vendor-registries-as-inventory-sources)); the engine removes the key from every other connector's findings and records `registry record metadata ignored on N finding(s)` in that connector's stats, because an approved record of a trusted registry approves findings. Only built-in connectors are honoured: a plugin that declares the hook has its records removed the same way (`only built-in connectors may emit registry records`) |
 | `inherits_instance_credentials_approval()` | `True` for a connector on the cloud surface or one whose `config_keys` documents `allow_instance_credentials` | every `cloud.*` connector, plugins included, through its surface: the registry holds `cloud.*` names to it | the connector's `allow_instance_credentials` is set from `options.allow_instance_credentials`, whether or not it documents the key; a value in any connector entry is replaced the same way, so it never takes effect; an exception from the hook marks the connector incomplete without running it |
 | `scanned_local_paths(config)` | `[]` | `code.filesystem`; `code.github` and `code.gitlab` through their shared base class | the local files or directories the entry scans: `code.filesystem` paths (none when it replays an `input` export) and the offline clone directory (`input`) of a remote repository connector, whose live clones stay in private temporary directories; an approval inventory inside one of them is reported in the `engine.inventory` stats entry, because scanned content could edit its own approvals. Only built-in connectors are asked: the lookup never imports a plugin |
 | `uses_run_identity_key` | `False` | `gateway.logs` | the connector's jobs share one private key per scan run (`ConnectorContext.gateway_identity_key`), so identical sources in one report share opaque caller and scope IDs that separate runs cannot link; when the operator sets `SHADOWSCAN_IDENTITY_KEY`, every run uses that stable key instead (`gateway_identity_key_stable`) and its IDs can be compared across runs |
@@ -113,7 +113,10 @@ these hooks from it. As in collection, the lookup, which imports an approved
 plugin, runs under the scan's private-origin policy and is skipped once the
 entry is out of time. When the lookup fails or is skipped the defaults apply
 and the entry is reported incomplete. Plugins run with scanner privileges, so a
-hook a plugin declares is trusted like the rest of its code.
+hook a plugin declares is trusted like the rest of its code, with two
+exceptions: `scanned_local_paths` is asked only of built-in connectors, and
+`emits_registry_records` is honoured only for them, because a registry record
+can approve other connectors' findings.
 
 ## Design principles
 

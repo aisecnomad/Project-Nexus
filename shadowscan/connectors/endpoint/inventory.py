@@ -611,8 +611,11 @@ class EndpointInventoryConnector(BaseConnector):
                 and p["id"] in POSTURE_DESCRIPTIONS
                 and all(isinstance(p.get(k), str) for k in ("client", "setting", "value"))
             ]
-            # A malformed approval entry is dropped (and reported): it can never gate an action.
-            rec["approval"] = [a for a in approvals if valid_approval(a)]
+            # An approval entry this scanner would not have written for this record's settings
+            # file is dropped (and reported): it can never gate an action.
+            rec["approval"] = [
+                a for a in approvals if valid_approval(a, client=rec.get("client"), file=rec.get("location"))
+            ]
             rec["models"] = [m for m in models if isinstance(m, str)]
             dropped = (
                 len(servers)

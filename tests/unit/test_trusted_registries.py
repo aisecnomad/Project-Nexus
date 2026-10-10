@@ -98,6 +98,7 @@ def _engine(
     records: Callable[[], list[Finding]],
     *,
     emits: bool = True,
+    builtin: bool = True,
     observed: Callable[[], list[Finding]] = lambda: [_runtime(), _runtime(SHADOW_RUNTIME)],
     **options: Any,
 ) -> Engine:
@@ -126,6 +127,9 @@ def _engine(
 
     classes = {"test.registry": Registry, "test.observed": Observed}
     monkeypatch.setattr(engine_module, "get_connector_class", lambda name: classes[name])
+    # The engine honours the registry-record hook only for built-in connectors.
+    names = frozenset(classes) if builtin else frozenset()
+    monkeypatch.setattr(engine_module, "builtin_connector_names", lambda: names)
     specs = [ConnectorSpec("test.registry"), ConnectorSpec("test.observed")]
     return Engine(ScanConfig(connectors=specs, **options), SignatureIndex([]))
 
@@ -241,6 +245,26 @@ def test_only_an_exact_binding_in_scope_sanctions_a_finding(monkeypatch, binding
     assert _by_resource(result)[RUNTIME].shadow is True
 
 
+def test_a_record_binding_one_resource_twice_registers_it_once(monkeypatch):
+    bindings = [
+        {
+            "resource": RUNTIME,
+            "provider": "aws",
+            "account": ACCOUNT,
+            "region": REGION,
+            "coverage": "in-scope",
+        },
+        {"resource": RUNTIME, "provider": "aws", "account": ACCOUNT, "coverage": "in-scope"},
+    ]
+    result = _engine(
+        monkeypatch, lambda: [_record_finding(_record(bindings=bindings))], trusted_registries=TRUSTED
+    ).run()
+    runtime = _by_resource(result)[RUNTIME]
+    assert (runtime.shadow, runtime.registry_match) == (False, "aws-agent-registry:rec-1")
+    assert "registry_match_reason" not in runtime.metadata
+    assert result.inventory_size == 1
+
+
 def test_a_revoked_approval_stops_applying_on_the_next_run(monkeypatch):
     state = {"status": "approved"}
     engine = _engine(
@@ -281,6 +305,33 @@ def test_records_from_a_connector_that_does_not_declare_them_are_ignored(monkeyp
     ]
     assert all(RECORD_KEY not in finding.metadata for finding in result.findings)
     assert {finding.shadow for finding in result.findings} == {True}
+
+
+@pytest.mark.parametrize("cached", [False, True])
+def test_a_plugin_that_declares_registry_records_cannot_approve(monkeypatch, cached):
+    # Regression: any class declaring the hook, a third-party plugin included, could emit an
+    # approved record naming a trusted registry and approve other connectors' resources.
+    if cached:
+
+        def reuse(self, spec, resolved, ctx, started_at, fs):
+            if spec.name == "test.registry":
+                fs.extend([_record_finding(_record())])
+            else:
+                fs.extend([_runtime(), _runtime(SHADOW_RUNTIME)])
+            return ScanStats(connector=spec.id, started_at=started_at, cached=True), True
+
+        monkeypatch.setattr(engine_module._ConnectorRunner, "_collect", reuse)
+    result = _engine(
+        monkeypatch, lambda: [_record_finding(_record())], builtin=False, trusted_registries=TRUSTED
+    ).run()
+    registry = _stats(result, "test.registry")
+    assert result.complete and registry is not None and not registry.incomplete
+    assert registry.warnings == [
+        "registry record metadata ignored on 1 finding(s): only built-in connectors may emit registry records"
+    ]
+    assert all(RECORD_KEY not in finding.metadata for finding in result.findings)
+    assert {finding.shadow for finding in result.findings} == {True}
+    assert result.inventory_size == 0
 
 
 def test_cached_results_are_also_held_to_the_declaration(monkeypatch):

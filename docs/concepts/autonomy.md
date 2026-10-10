@@ -60,9 +60,13 @@ in `metadata.autonomy`:
 - `declared` and `declared_source`: only when the finding matched an inventory
   entry that declares a level; see [Declared and observed levels](#declared-and-observed-levels).
 
-Gates and policies should read the ceiling, which never understates; reports
-show both bounds. The interval is not part of finding identity, so a change in
-autonomy keeps the finding id.
+Gates and policies should read the ceiling rather than the floor; reports show
+both bounds. Only a recorded approval setting lowers the ceiling (to L2), and
+such a setting describes configuration the scan read, not a given run: flags,
+settings in scopes the scan did not read, or an offline export that misstates
+them can let an agent do more. Treat an L2 ceiling as configuration evidence,
+not proof, and an L5 ceiling as "not ruled out". The interval is not part of
+finding identity, so a change in autonomy keeps the finding id.
 
 The classification is a pure function of the finding
 (`shadowscan.autonomy.classify`). The engine computes it after merging and
@@ -183,14 +187,24 @@ recorded without a setting; an unset option is not evidence.
 
 | Source | `every-action` | `some-actions` |
 |--------|----------------|----------------|
-| Claude Code settings (`code.filesystem`, `endpoint.inventory`) | `permissions.defaultMode` `default` or `plan` with no `permissions.allow` rules | `acceptEdits`, or `default`/`plan` with allow rules |
+| Claude Code settings (`code.filesystem`, `endpoint.inventory`) | `permissions.defaultMode` `default` or `plan` | `acceptEdits`; a nonempty `permissions.allow` list in any settings file the finding reports; and, only next to another setting, a sandbox that auto-allows Bash or a `PreToolUse` or `PermissionRequest` hook |
 | Codex `config.toml` | `approval_policy = "untrusted"` (a profile counts only when the top level is also `untrusted`) | `on-request`, `on-failure`, or an `untrusted` profile over another default |
 | Goose `config.yaml` | `GOOSE_MODE: approve` | `GOOSE_MODE: smart_approve` |
 | Bedrock agent action groups (`cloud.aws`) | Every enabled action group other than the user-input group defines functions, and each function sets `requireConfirmation: ENABLED` | Some functions require confirmation |
 
 A coding-agent finding is `every-action` only when every recorded setting is
 and no posture issue (`posture-permissions-bypassed`,
-`posture-unrestricted-shell`) lets an action run unapproved. Codex
+`posture-unrestricted-shell`) lets an action run unapproved. Settings are
+combined across the files the finding reports, so allow rules in
+`.claude/settings.local.json` make a `default` mode in `.claude/settings.json`
+partial. A Claude Code sandbox with `sandbox.enabled` and
+`autoAllowBashIfSandboxed` not `false` (the default is `true`) runs Bash
+commands without a prompt, and a `PreToolUse` or `PermissionRequest` hook can
+allow a call; each is a `some-actions` setting that makes the gate partial but
+records no gate on its own, because it configures no approval. A
+`permissions.allow` value that is not a list counts as allow rules, and a
+`permissions`, `sandbox` or `hooks` value that is not a mapping makes the gate
+partial in the same way. Codex
 `on-request` lets the model decide when to ask, so it gates only some actions.
 A settings file says how an agent is configured, not how a given run was
 started: command-line flags (for example `--dangerously-skip-permissions`) and
@@ -257,11 +271,21 @@ read from `metadata.autonomy`, and counts toward `danger_score`. See
 
 ## Merged reports
 
-`shadowscan merge` keeps the first source's `metadata.autonomy` for a finding,
-as it keeps the first source's other metadata and the highest source risk; it
-does not recompute the interval from the merged evidence. A source whose
-autonomy block is malformed is rejected ("rescan before merging"). Reports
-written before this field existed merge without it.
+`shadowscan merge` classifies each merged finding again from its merged
+capabilities, tags, evidence and metadata, then widens the interval so it
+admits at least what every source's block admits: the highest floor and the
+highest ceiling, oversight `bypassed` over `unknown` over `gated`, and
+initiation `schedule` over `event` over `unknown` over `human`. A widened bound
+keeps the basis rules of the source block that set it. Approval-bypass evidence
+that only a later source recorded therefore raises the merged interval, and an
+approval gate that only one source recorded cannot lower it below another
+source's block. The first declared level is kept while the merged finding is
+registered (every source matched it) and is compared with the merged interval
+again (`autonomy-understated`, `declared-above-ceiling`); a merged finding that
+any source left unregistered carries no declared level. Risk keeps the highest
+source score and is not rescored. A source whose autonomy block is malformed
+is rejected ("rescan before merging"). Findings from reports written before
+this field existed are classified from the merged finding alone.
 
 ## Limits
 

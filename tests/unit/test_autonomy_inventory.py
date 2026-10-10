@@ -376,13 +376,96 @@ def _report(tmp_path: Path, index) -> dict[str, Any]:
     return json.loads(result.to_json())
 
 
-def test_fleet_merge_keeps_the_first_source_autonomy_block(tmp_path, index):
-    report = _report(tmp_path, index)
+def _gated_report(tmp_path: Path, index, inventory: list[Path] | None = None) -> dict[str, Any]:
+    """A report whose Bedrock agent confirms every function: ceiling L2, oversight gated."""
+    config = ScanConfig(
+        connectors=[
+            ConnectorSpec(name="cloud.aws", config={"input": str(bedrock_export(tmp_path, "ENABLED"))})
+        ],
+        inventory=[str(path) for path in inventory or []],
+    )
+    report = json.loads(Engine(config, index=index).run().to_json())
+    autonomy = report["findings"][0]["metadata"]["autonomy"]
+    assert (autonomy["ceiling"], autonomy["oversight"]) == (2, "gated")
+    return report
+
+
+def _bypassed(report: dict[str, Any]) -> dict[str, Any]:
     later = json.loads(json.dumps(report))
-    later["findings"][0]["capabilities"].append("multi-agent")
-    merged = merge_reports([("first.json", report), ("later.json", later)])
+    later["findings"][0]["tags"].append("posture-permissions-bypassed")
+    later["findings"][0]["capabilities"].append("autonomous")
+    later["findings"][0]["metadata"]["autonomy"] = classify(Finding.from_dict(later["findings"][0]))
+    return later
+
+
+@pytest.mark.parametrize("bypass_first", [False, True])
+def test_fleet_merge_classifies_merged_evidence_in_either_order(tmp_path, index, bypass_first):
+    # Regression: the first source's block (L2, gated) survived approval-bypass evidence that
+    # only a later source recorded.
+    gated = _gated_report(tmp_path, index)
+    bypassed = _bypassed(gated)
+    sources = [("later.json", bypassed), ("first.json", gated)]
+    merged = merge_reports(sources if bypass_first else sources[::-1])
     [agent] = merged.findings
-    assert agent.metadata["autonomy"] == report["findings"][0]["metadata"]["autonomy"]
+    autonomy = agent.metadata["autonomy"]
+    assert valid_autonomy(autonomy)
+    assert "posture-permissions-bypassed" in agent.tags
+    assert (autonomy["ceiling"], autonomy["oversight"]) == (5, "bypassed")
+    expected = classify(agent)
+    assert expected is not None and (autonomy["floor"], autonomy["ceiling"]) == (
+        expected["floor"],
+        expected["ceiling"],
+    )
+
+
+def test_fleet_merge_never_admits_less_than_a_source_block(tmp_path, index):
+    gated = _gated_report(tmp_path, index)
+    # A source whose block admits more than its other fields show (an earlier classification).
+    wider = json.loads(json.dumps(gated))
+    wider["findings"][0]["metadata"]["autonomy"] = _bypassed(gated)["findings"][0]["metadata"]["autonomy"]
+    [agent] = merge_reports([("first.json", gated), ("wider.json", wider)]).findings
+    autonomy = agent.metadata["autonomy"]
+    block = wider["findings"][0]["metadata"]["autonomy"]
+    assert valid_autonomy(autonomy) and "posture-permissions-bypassed" not in agent.tags
+    assert (autonomy["floor"], autonomy["ceiling"], autonomy["oversight"]) == (
+        block["floor"],
+        block["ceiling"],
+        "bypassed",
+    )
+    # Each widened bound keeps the rules of the block that set it.
+    for bound in ("floor", "ceiling", "oversight"):
+        assert [item for item in autonomy["basis"] if item["bound"] == bound] == [
+            item for item in block["basis"] if item["bound"] == bound
+        ]
+    assert [item for item in autonomy["basis"] if item["bound"] == "initiation"] == [
+        {"bound": "initiation", "rule": "no-initiation-evidence", "value": "unknown"}
+    ]
+
+
+def test_fleet_merge_keeps_a_declared_level_only_for_registered_findings(tmp_path, index):
+    path = write(tmp_path, card(schema_version=2, autonomy_profile={"level": 2}))
+    registered = _gated_report(tmp_path, index, [path])
+    assert registered["findings"][0]["metadata"]["autonomy"]["declared"] == 2
+    bypassed = _bypassed(registered)
+    [agent] = merge_reports([("first.json", registered), ("later.json", bypassed)]).findings
+    autonomy = agent.metadata["autonomy"]
+    assert agent.shadow is False and valid_autonomy(autonomy)
+    assert (autonomy["declared"], autonomy["declared_source"]) == (2, "refunds-agent")
+    # The merged floor rose above the declared level.
+    assert autonomy["floor"] > 2 and UNDERSTATED_TAG in agent.tags
+    unregistered = _gated_report(tmp_path, index)
+    [agent] = merge_reports([("first.json", registered), ("other.json", unregistered)]).findings
+    assert agent.shadow is True and "declared" not in agent.metadata["autonomy"]
+    assert UNDERSTATED_TAG not in agent.tags
+
+
+def test_fleet_merge_notes_a_declared_level_above_the_merged_ceiling(tmp_path, index):
+    path = write(tmp_path, card(schema_version=2, autonomy_profile={"level": 4}))
+    registered = _gated_report(tmp_path, index, [path])
+    [agent] = merge_reports([("a.json", registered), ("b.json", registered)]).findings
+    autonomy = agent.metadata["autonomy"]
+    assert autonomy["ceiling"] == 2 and autonomy["declared"] == 4 and valid_autonomy(autonomy)
+    assert {"bound": "ceiling", "rule": "declared-above-ceiling", "value": 4} in autonomy["basis"]
 
 
 @pytest.mark.parametrize(
@@ -400,8 +483,16 @@ def test_fleet_merge_rejects_malformed_autonomy(tmp_path, index, damage):
         merge_reports([("broken.json", report)])
 
 
-def test_fleet_merge_accepts_reports_without_autonomy(tmp_path, index):
+def test_fleet_merge_classifies_findings_of_reports_without_autonomy(tmp_path, index):
     report = _report(tmp_path, index)
     del report["findings"][0]["metadata"]["autonomy"]
     [agent] = merge_reports([("older.json", report)]).findings
-    assert "autonomy" not in agent.metadata
+    assert agent.metadata["autonomy"] == classify(agent)
+
+
+def test_fleet_merge_drops_autonomy_for_a_kind_it_does_not_describe(tmp_path, index):
+    report = _report(tmp_path, index)
+    secret = json.loads(json.dumps(report))
+    secret["findings"][0]["kind"] = "secret"
+    [finding] = merge_reports([("secret.json", secret)]).findings
+    assert "autonomy" not in finding.metadata

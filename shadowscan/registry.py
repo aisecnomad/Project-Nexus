@@ -456,7 +456,9 @@ class Inventory:
         ``registry-identity-unverified`` tag.
 
         ``extra`` entries (approvals of trusted vendor registries for this run) are matched
-        together with the loaded entries, so an approval in both places is ambiguous. They
+        together with the loaded entries, so an approval in both places is ambiguous. Extra
+        entries with the same agent id and source are one approval: a record that binds a
+        resource twice (with and without a region, say) is not ambiguous with itself. They
         carry no names and produce no suggestions.
         """
         clear_match_state(finding)
@@ -479,12 +481,17 @@ class Inventory:
         if finding.metadata.get("identity_unresolved") is True:
             finding.metadata["registry_match_reason"] = "unresolved-resource-identity"
             return None
-        matches = [
-            entry
-            for entry in (*self.entries, *extra)
-            if self._scope_matches(entry, finding)
-            and any(fnmatch.fnmatchcase(finding.resource or "", pattern) for pattern in entry.resources)
-        ]
+
+        def approves(entry: InventoryEntry) -> bool:
+            return self._scope_matches(entry, finding) and any(
+                fnmatch.fnmatchcase(finding.resource or "", pattern) for pattern in entry.resources
+            )
+
+        added: dict[tuple[str, str | None], InventoryEntry] = {}
+        for entry in extra:
+            if approves(entry):
+                added.setdefault((entry.agent_id, entry.source), entry)
+        matches = [entry for entry in self.entries if approves(entry)] + list(added.values())
         if len(matches) == 1:
             finding.metadata.pop("registry_suggestions", None)
             assurance = _unauthenticated_caller_assurance(finding)

@@ -120,7 +120,16 @@ collection on each laptop can be analysed centrally.
 - A malformed offline record is ignored with a warning, and the scan is
   incomplete. So are malformed MCP server, posture, approval or model entries
   inside an otherwise valid record: they are dropped, and the rest of the
-  record is kept. A dropped approval entry never gates an action.
+  record is kept. A dropped approval entry never gates an action. A replayed
+  approval entry is kept only when this scanner could have written it for that
+  record: exactly the keys `client`, `setting`, `value`, `scope` and `file`;
+  a Claude Code, Codex or Goose client equal to the record's `client`; a `file`
+  equal to the record's `location` and naming a settings file of that client;
+  and a setting, value and scope the settings reader produces (for example
+  `every-action` only for `permissions.defaultMode` `default` or `plan`, Codex
+  `untrusted` or Goose `approve`). Anything else is dropped as malformed. An
+  export can still describe settings a home directory does not have: replay
+  exports only from hosts and storage you trust.
 
 Findings are owned by the home directory name and scoped to the device, so
 `owner` and `account` identify whose workstation a finding came from. An

@@ -172,14 +172,17 @@ def _retain_sanitizable(candidates: list[Finding]) -> tuple[list[Finding], int]:
     return retained, omitted
 
 
-def _withhold_registry_records(hooks: type[BaseConnector], findings: list[Finding], st: ScanStats) -> None:
-    """Keep registry records only from connectors that declare they read vendor registries.
+def _withhold_registry_records(
+    hooks: type[BaseConnector], builtin: bool, findings: list[Finding], st: ScanStats
+) -> None:
+    """Keep registry records only from built-in connectors that declare they read vendor registries.
 
-    A trusted registry's approved record approves findings. Any other connector that copies
-    record-shaped metadata from an export or a repository must not create an approval, so the
-    key is dropped and the drop is reported.
+    A trusted registry's approved record approves findings of any connector. Another connector
+    that copies record-shaped metadata from an export or a repository, or a plugin that declares
+    the hook, must not create an approval, so the key is dropped and the drop is reported.
     """
-    if getattr(hooks, "emits_registry_records", False) is True:
+    declared = getattr(hooks, "emits_registry_records", False) is True
+    if declared and builtin:
         return
     dropped = 0
     for finding in findings:
@@ -187,10 +190,12 @@ def _withhold_registry_records(hooks: type[BaseConnector], findings: list[Findin
             del finding.metadata[RECORD_KEY]
             dropped += 1
     if dropped:
-        st.warnings.append(
-            f"registry record metadata ignored on {dropped} finding(s): "
-            "the connector does not declare registry records"
+        reason = (
+            "only built-in connectors may emit registry records"
+            if declared
+            else "the connector does not declare registry records"
         )
+        st.warnings.append(f"registry record metadata ignored on {dropped} finding(s): {reason}")
 
 
 @dataclass
@@ -201,7 +206,7 @@ class _RegistryOutcome:
     warnings: list[str] = field(default_factory=list)
     # Trusted registries without records: advisory engine.inventory warnings.
     inventory_warnings: list[str] = field(default_factory=list)
-    # Inventory entries synthesized from approved records of trusted registries.
+    # Approved records of trusted registries: one inventory item each.
     approval_entries: int = 0
 
 
@@ -420,6 +425,8 @@ class _ConnectorRunner:
     ) -> _JobResult:
         self._engine._report_progress(spec.id, "starting")
         hooks = _hooks(resolved)
+        # Plugins cannot take a built-in name, so the name says whose hooks these are.
+        builtin = spec.name in builtin_connector_names()
         try:
             inherits_approval = hooks.inherits_instance_credentials_approval()
         except BaseException as exc:  # noqa: BLE001 - a failing plugin hook is a connector failure
@@ -446,7 +453,7 @@ class _ConnectorRunner:
         try:
             st, reused = self._collect(spec, resolved, ctx, started_at, fs)
             if reused:
-                _withhold_registry_records(hooks, fs, st)
+                _withhold_registry_records(hooks, builtin, fs, st)
                 return spec, fs, st
         except KeyboardInterrupt:
             raise
@@ -466,7 +473,7 @@ class _ConnectorRunner:
             reset_request_deadline(limits_token)
             reset_allow_private_origin(origin_token)
         st.findings = len(fs)
-        _withhold_registry_records(hooks, fs, st)
+        _withhold_registry_records(hooks, builtin, fs, st)
         _sanitize_diagnostics(st)
         if self._dump_directory and not state.cancelled.is_set():
             exported = ctx.dump_path == cfg.get("_dump_path") and ctx.dump_path is not None and not st.skipped

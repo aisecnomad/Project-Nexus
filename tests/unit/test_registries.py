@@ -515,6 +515,38 @@ def test_an_approval_in_two_places_is_ambiguous():
     assert agent.metadata["registry_suggestions"] == ["aws-agent-registry:rec-1", "card"]
 
 
+def test_bindings_of_one_record_that_cover_a_finding_are_one_approval():
+    # Regression: a record binding one resource with and without a region was ambiguous with
+    # itself, left its own agent shadow and counted twice in the inventory size.
+    rec = record_finding(record(bindings=[binding(), binding(region=None), binding(account=None)]))
+    agent = observed()
+    approvals = TrustedApprovals([rec, agent], TRUSTED)
+    assert approvals.entries == 1
+    entry = Inventory().match(agent, approvals.candidates(agent))
+    assert entry is not None and entry.agent_id == "aws-agent-registry:rec-1"
+    assert "registry_match_reason" not in agent.metadata
+    # The same record emitted twice (two connector entries, say) is still one approval.
+    again = record_finding(record(bindings=[binding(region=None)]))
+    approvals = TrustedApprovals([rec, again, agent], TRUSTED)
+    assert approvals.entries == 1
+    assert Inventory().match(agent, approvals.candidates(agent)) is not None
+
+
+def test_two_records_or_two_registries_binding_one_finding_stay_ambiguous():
+    agent = observed()
+    two_records = TrustedApprovals([record_finding(), record_finding(record_id="rec-2")], TRUSTED)
+    assert two_records.entries == 2
+    assert Inventory().match(agent, two_records.candidates(agent)) is None
+    assert agent.metadata["registry_suggestions"] == ["aws-agent-registry:rec-1", "aws-agent-registry:rec-2"]
+    other = record_finding(record(registry_id=OTHER_REGISTRY_ARN))
+    two_registries = TrustedApprovals(
+        [record_finding(), other], [*TRUSTED, TrustedRegistry(REGISTRY, OTHER_REGISTRY_ARN)]
+    )
+    assert two_registries.entries == 2
+    assert Inventory().match(agent, two_registries.candidates(agent)) is None
+    assert agent.metadata["registry_match_reason"] == "ambiguous-resource-approval"
+
+
 def test_a_trusted_registry_without_records_is_reported_by_a_short_sanitized_id():
     approvals = TrustedApprovals([observed()], [*TRUSTED, TrustedRegistry("microsoft-agent-365", "tenant")])
     assert approvals.warnings() == [

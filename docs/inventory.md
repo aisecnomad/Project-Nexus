@@ -233,12 +233,15 @@ malformed. It takes no part in reconciliation or approval, and the scan records
 `malformed registry record metadata on N finding(s)` under `engine.registries`
 and is incomplete (exit 3).
 
-Only a connector written to read vendor registries may emit records: its class
-declares the `emits_registry_records` [engine hook](architecture.md#engine-hooks).
-The engine removes `registry_record` from every other connector's findings and
-notes `registry record metadata ignored on N finding(s)` in that connector's
-stats, so metadata copied from an export or a repository cannot claim an
-approval.
+Only a built-in connector written to read vendor registries may emit records:
+its class declares the `emits_registry_records`
+[engine hook](architecture.md#engine-hooks). The engine removes
+`registry_record` from every other connector's findings and notes
+`registry record metadata ignored on N finding(s)` in that connector's stats,
+so metadata copied from an export or a repository cannot claim an approval. A
+third-party plugin cannot emit records even when it declares the hook (the
+reason given is `only built-in connectors may emit registry records`): an
+approved record of a trusted registry approves findings of every connector.
 
 ### Trusting a registry
 
@@ -271,13 +274,16 @@ enforced, no approval of redacted or unresolved identities, and never by name.
 When a card and a trusted record, or two trusted records, approve the same
 finding, the approval is ambiguous: the finding stays shadow with
 `registry_match_reason: ambiguous-resource-approval`. Approve each object in one
-place. Records with any other status never approve, and neither does any record
+place. Several bindings of one record that all cover a finding (the same
+resource with and without a region, say) are one approval, not an ambiguity.
+Records with any other status never approve, and neither does any record
 of a registry instance that is not listed, whatever its status.
 
 With `trusted_registries` set, a report has an inventory even without inventory
 files: `inventory_present` is true, every finding gets `shadow: true` or
-`false`, and `inventory_size` counts the file entries plus the entries made from
-trusted records. A trusted registry that produced no records in the scan (its
+`false`, and `inventory_size` counts the file entries plus the approved records
+of trusted registries (one each, whatever their bindings). A trusted registry
+that produced no records in the scan (its
 connector did not run or failed, or the id does not match what the connector
 reports) gets the advisory warning
 `trusted registry <type> <id> produced no records; its approvals were not applied`
@@ -286,9 +292,14 @@ last 16. The warning does not make the scan incomplete.
 
 Nothing is cached. Every scan rebuilds the approvals from that scan's records,
 so a record that is revoked, rejected or deleted, or a registry removed from
-`trusted_registries`, stops approving on the next scan. Records replayed from an
-offline export are as trustworthy as the export: keep exports of trusted
-registries where only operators can change them.
+`trusted_registries`, stops approving on the next scan.
+
+Records replayed from an offline export (a connector's `input`) are treated
+like live records: the engine cannot tell an export of a trusted registry from
+a forged one, and an approved record in it approves the resources it binds.
+Offline exports are untrusted input, so before trusting a registry whose
+records you replay, keep its exports where only operators can write them, or
+scan that registry live.
 
 ## Registry reconciliation statuses
 

@@ -15,9 +15,11 @@ summarizes each release for people who install and operate ShadowScan.
   incomplete (`engine.registries`, exit 3). Record evidence
   (`registry:<type>`, confidence group `registry-record`) has weight 0.5. No
   built-in connector emits records yet.
-- Only a connector that declares the new `emits_registry_records` engine hook
-  may emit records. The engine drops `registry_record` from other connectors'
-  findings, including cached ones, and notes the drop in their stats.
+- Only a built-in connector that declares the new `emits_registry_records`
+  engine hook may emit records. The engine drops `registry_record` from other
+  connectors' findings, including cached ones and those of a plugin that
+  declares the hook, and notes the drop in their stats. Records replayed from
+  an offline export count like live records.
 - The engine writes `metadata.registry_reconciliation`:
   `registered-and-observed` and `registered-not-observed` or `not-comparable`
   on records, and `registered-and-observed` or `observed-not-registered` on
@@ -31,12 +33,14 @@ summarizes each release for people who install and operate ShadowScan.
   for those registries does an approved record register its own finding and
   approve its exact bound resources (glob characters escaped) under the usual
   inventory rules. Other statuses and untrusted registries never approve, and a
-  card and a trusted record approving the same finding are ambiguous. Approvals
-  are rebuilt every scan, so revocation applies on the next run.
+  card and a trusted record approving the same finding are ambiguous, while
+  bindings of one record that cover the same finding are one approval.
+  Approvals are rebuilt every scan, so revocation applies on the next run.
   `inventory_present` is true when the option is set, `inventory_size` counts
-  the entries made from trusted records, and a trusted registry without records
-  gets an advisory `engine.inventory` warning.
-- `Inventory.match` accepts extra entries for a single call.
+  the approved records of trusted registries, and a trusted registry without
+  records gets an advisory `engine.inventory` warning.
+- `Inventory.match` accepts extra entries for a single call; extra entries with
+  the same agent id and source count once.
 - The records in the tests are synthetic; nothing was validated against a live
   registry.
 
@@ -72,10 +76,19 @@ summarizes each release for people who install and operate ShadowScan.
   Goose settings that make a person approve actions as
   `metadata.approval_gate`; `cloud.aws` records Bedrock action-group function
   confirmation the same way; `cloud.azure` Logic Apps record
-  `metadata.trigger_types`. Replayed endpoint records drop malformed approval
-  entries with a warning that makes the scan incomplete.
-- `merge` keeps the first source's autonomy block and rejects a source whose
-  block is malformed.
+  `metadata.trigger_types`. Claude Code allow rules in any settings file
+  (`settings.local.json` included), a sandbox that auto-allows Bash, and
+  `PreToolUse` or `PermissionRequest` hooks make the gate partial
+  (`some-actions`); the sandbox and hook settings never record a gate on
+  their own. Replayed endpoint records keep only approval entries the settings
+  reader could have written for that record's client and file, and drop any
+  other entry with a warning that makes the scan incomplete.
+- `merge` classifies each merged finding again and widens the interval to
+  admit what every source's block admits (highest floor and ceiling,
+  `bypassed` over `unknown` over `gated`); it rejects a source whose block is
+  malformed.
+- An L2 ceiling rests on recorded approval settings: it is configuration
+  evidence, not proof of how a run behaves.
 - The rules and fixtures are synthetic and author-written; they do not
   establish live tenant acceptance or measured precision.
 

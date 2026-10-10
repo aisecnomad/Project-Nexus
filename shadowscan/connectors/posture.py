@@ -18,10 +18,14 @@ choices that remove a safeguard:
 
 :func:`approval_settings` reports the opposite: settings that make a person
 approve actions. ``every-action`` means each side-effecting action waits for a
-person (Claude Code ``defaultMode`` ``default`` or ``plan`` with no allow
-rules, Codex ``approval_policy = "untrusted"``, Goose ``GOOSE_MODE: approve``);
+person (Claude Code ``defaultMode`` ``default`` or ``plan``, Codex
+``approval_policy = "untrusted"``, Goose ``GOOSE_MODE: approve``);
 ``some-actions`` means only some do (Claude Code ``acceptEdits`` or allow
-rules, Codex ``on-request`` or ``on-failure``, Goose ``smart_approve``).
+rules, Codex ``on-request`` or ``on-failure``, Goose ``smart_approve``). Claude
+Code settings that let actions run without a prompt but configure no approval
+themselves (a sandbox that auto-allows Bash, ``PreToolUse`` and
+``PermissionRequest`` hooks, which can allow a call) are reported as
+``some-actions`` too; they make a gate partial but never record one alone.
 :func:`record_approval` stores them as ``metadata.approval_gate``, which the
 autonomy classification reads. A settings file says how the agent is
 configured, not how a given run was started: command-line flags and other
@@ -85,6 +89,48 @@ APPROVAL_SCOPES = ("every-action", "some-actions")
 _UNGATED_ISSUES = frozenset({"posture-permissions-bypassed", "posture-unrestricted-shell"})
 MAX_APPROVAL_SETTINGS = 20
 
+_EVERY = frozenset({"every-action"})
+_SOME = frozenset({"some-actions"})
+_UNREADABLE = {"unreadable": _SOME}
+# Every (client, setting) an approval reader reports, each value it reports for it and the scopes
+# that value can carry. Replayed exports are held to it (:func:`valid_approval`).
+_APPROVAL_VALUES: dict[tuple[str, str], dict[str, frozenset[str]]] = {
+    ("claude-code", "permissions.defaultMode"): {"default": _EVERY, "plan": _EVERY, "acceptEdits": _SOME},
+    ("claude-code", "permissions.allow"): {"rules": _SOME, **_UNREADABLE},
+    ("claude-code", "permissions"): _UNREADABLE,
+    ("claude-code", "sandbox.autoAllowBashIfSandboxed"): {"true": _SOME},
+    ("claude-code", "sandbox"): _UNREADABLE,
+    ("claude-code", "hooks.PreToolUse"): {"configured": _SOME},
+    ("claude-code", "hooks.PermissionRequest"): {"configured": _SOME},
+    ("claude-code", "hooks"): _UNREADABLE,
+    ("codex", "approval_policy"): {"untrusted": _EVERY, "on-request": _SOME, "on-failure": _SOME},
+    # A profile is every-action only when the top level is untrusted too.
+    ("codex", "profiles.*.approval_policy"): {
+        "untrusted": _EVERY | _SOME,
+        "on-request": _SOME,
+        "on-failure": _SOME,
+    },
+    ("goose", "GOOSE_MODE"): {"approve": _EVERY, "smart_approve": _SOME},
+}
+# Settings that let some actions run without a prompt but do not themselves configure approval:
+# they make a gate partial and never record one on their own.
+_LOOSENING = frozenset(
+    {
+        ("claude-code", setting)
+        for setting in (
+            "permissions",
+            "sandbox.autoAllowBashIfSandboxed",
+            "sandbox",
+            "hooks.PreToolUse",
+            "hooks.PermissionRequest",
+            "hooks",
+        )
+    }
+)
+# Claude Code hook events whose hooks can allow a tool call without a prompt.
+_ALLOWING_HOOKS = ("PreToolUse", "PermissionRequest")
+_CODEX_PROFILE_POLICY = re.compile(r"profiles\..*\.approval_policy", re.DOTALL)
+
 
 @dataclass(frozen=True, slots=True)
 class ApprovalSetting:
@@ -129,9 +175,10 @@ def record_approval(finding: Finding, approvals: list[dict[str, str]]) -> None:
 
     Call after :func:`record_posture`. The gate covers every action only when every recorded
     setting does and no posture issue lets an action run unapproved; otherwise it covers some.
-    Nothing is recorded without a setting: absent configuration is not evidence of approval.
+    Nothing is recorded without a setting that configures approval: absent configuration is not
+    evidence of approval, and a setting that only lets actions run unprompted is not either.
     """
-    if not approvals:
+    if not any((item.get("client"), item.get("setting")) not in _LOOSENING for item in approvals):
         return
     every = all(item.get("scope") == "every-action" for item in approvals) and not (
         _UNGATED_ISSUES & set(finding.tags)
@@ -142,12 +189,33 @@ def record_approval(finding: Finding, approvals: list[dict[str, str]]) -> None:
     }
 
 
-def valid_approval(item: Any) -> bool:
-    """Whether ``item`` is an approval setting record, as replayed from an export."""
+def approval_scopes(client: str, setting: str, value: str) -> frozenset[str]:
+    """The scopes an approval reader can report for ``setting = value``; empty when it reports none."""
+    key = (
+        "profiles.*.approval_policy"
+        if client == "codex" and _CODEX_PROFILE_POLICY.fullmatch(setting)
+        else setting
+    )
+    return _APPROVAL_VALUES.get((client, key), {}).get(value, frozenset())
+
+
+def valid_approval(item: Any, *, client: Any, file: Any) -> bool:
+    """Whether ``item`` is an approval setting a reader reports, as replayed from an export.
+
+    It must hold exactly ``client``, ``setting``, ``value``, ``scope`` and ``file``, as
+    :func:`approval_settings` and its callers write them: a combination of setting, value and
+    scope a reader can produce, the given ``client`` and ``file`` of the record it came with, and
+    a ``file`` that is a settings file of that client.
+    """
+    if not isinstance(item, dict) or set(item) != {"client", "setting", "value", "scope", "file"}:
+        return False
+    if not all(isinstance(value, str) for value in item.values()):
+        return False
     return (
-        isinstance(item, dict)
-        and all(isinstance(item.get(key), str) for key in ("client", "setting", "value"))
-        and item.get("scope") in APPROVAL_SCOPES
+        item["client"] == client
+        and item["file"] == file
+        and posture_client(item["file"]) == client
+        and item["scope"] in approval_scopes(client, item["setting"], item["value"])
     )
 
 
@@ -290,18 +358,47 @@ def _mapping(value: Any) -> dict[str, Any]:
 
 
 def _claude_code_approval(data: dict[str, Any]) -> list[ApprovalSetting]:
+    settings: list[ApprovalSetting] = []
     permissions = data.get("permissions")
-    if not isinstance(permissions, dict):
-        return []
-    mode = permissions.get("defaultMode")
-    if mode in {"default", "plan"}:
-        # An allow rule (or an allow value this reader cannot interpret) pre-approves some tools.
+    if isinstance(permissions, dict):
+        mode = permissions.get("defaultMode")
+        if mode in {"default", "plan"}:
+            settings.append(ApprovalSetting("claude-code", "permissions.defaultMode", mode, "every-action"))
+        elif mode == "acceptEdits":
+            settings.append(ApprovalSetting("claude-code", "permissions.defaultMode", mode, "some-actions"))
+        # An allow rule (or an allow value this reader cannot interpret) pre-approves some tools,
+        # whichever settings file sets the mode.
         allow = permissions.get("allow")
-        scope = "every-action" if allow is None or allow == [] else "some-actions"
-        return [ApprovalSetting("claude-code", "permissions.defaultMode", mode, scope)]
-    if mode == "acceptEdits":
-        return [ApprovalSetting("claude-code", "permissions.defaultMode", mode, "some-actions")]
-    return []
+        if allow is not None and allow != []:
+            value = "rules" if isinstance(allow, list) else "unreadable"
+            settings.append(ApprovalSetting("claude-code", "permissions.allow", value, "some-actions"))
+    elif permissions is not None:
+        settings.append(ApprovalSetting("claude-code", "permissions", "unreadable", "some-actions"))
+    # A sandbox runs Bash commands without a prompt unless autoAllowBashIfSandboxed is false.
+    sandbox = data.get("sandbox")
+    if isinstance(sandbox, dict):
+        enabled = sandbox.get("enabled")
+        if (
+            enabled is not None
+            and enabled is not False
+            and sandbox.get("autoAllowBashIfSandboxed") is not False
+        ):
+            settings.append(
+                ApprovalSetting("claude-code", "sandbox.autoAllowBashIfSandboxed", "true", "some-actions")
+            )
+    elif sandbox is not None:
+        settings.append(ApprovalSetting("claude-code", "sandbox", "unreadable", "some-actions"))
+    # A PreToolUse or PermissionRequest hook can allow a call without asking anyone.
+    hooks = data.get("hooks")
+    if isinstance(hooks, dict):
+        for event in _ALLOWING_HOOKS:
+            if hooks.get(event) not in (None, [], {}):
+                settings.append(
+                    ApprovalSetting("claude-code", f"hooks.{event}", "configured", "some-actions")
+                )
+    elif hooks is not None:
+        settings.append(ApprovalSetting("claude-code", "hooks", "unreadable", "some-actions"))
+    return settings
 
 
 def _codex_approval(data: dict[str, Any]) -> list[ApprovalSetting]:

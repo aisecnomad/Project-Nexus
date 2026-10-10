@@ -24,10 +24,11 @@ only when the full record listing of that registry finished without truncation o
 Evidence for a record finding comes from :func:`registry_evidence`: a declaration, not proof that
 the agent runs.
 
-Only a connector class that declares ``emits_registry_records`` (a ``BaseConnector`` engine hook)
-may carry the key. The engine drops it from every other connector's findings: an approved record
-of a trusted registry approves findings, so a record copied from an untrusted export or
-repository must never reach reconciliation.
+Only a built-in connector class that declares ``emits_registry_records`` (a ``BaseConnector``
+engine hook) may carry the key. The engine drops it from every other connector's findings,
+including a plugin's that declares the hook: an approved record of a trusted registry approves
+findings, so a record copied from an untrusted export or repository, or emitted by third-party
+code, must never reach reconciliation.
 
 The engine then, keyed only on this metadata:
 
@@ -367,7 +368,10 @@ class TrustedApprovals:
     * the record finding itself is registered as ``<registry>:<record_id>``; and
     * each usable binding becomes an inventory entry for exactly that resource (glob
       metacharacters escaped) and the binding's provider, account and region, matched together
-      with the loaded inventory, so all of its fail-closed rules still apply.
+      with the loaded inventory, so all of its fail-closed rules still apply. Entries of one
+      record count as one approval there.
+
+    ``entries`` counts the approved records, one inventory item each, whatever their bindings.
     """
 
     def __init__(self, findings: Sequence[Finding], trusted: Sequence[TrustedRegistry]) -> None:
@@ -376,7 +380,8 @@ class TrustedApprovals:
         self._approved: dict[int, RegistryRecord] = {}
         self._by_resource: dict[str, list[InventoryEntry]] = {}
         self._produced: set[tuple[str, str]] = set()
-        seen: set[tuple[str, str, str | None, str | None, str | None]] = set()
+        approved: set[tuple[str, str]] = set()
+        seen: set[tuple[str, str, str, str | None, str | None, str | None]] = set()
         for finding in findings:
             record = registry_record(finding)
             if record is None or record.key not in keys:
@@ -385,9 +390,11 @@ class TrustedApprovals:
             if record.status != "approved" or not _usable(record.record_id):
                 continue
             self._approved[id(finding)] = record
+            approved.add((record.agent_id, record.registry_id))
             for binding in record.bindings:
                 identity = (
                     record.agent_id,
+                    record.registry_id,
                     binding.resource,
                     binding.provider,
                     binding.account,
@@ -407,7 +414,7 @@ class TrustedApprovals:
                         source=TRUSTED_SOURCE_PREFIX + record.registry_id,
                     )
                 )
-        self.entries = len(seen)
+        self.entries = len(approved)
 
     def approve_record(self, finding: Finding) -> bool:
         """Register an approved record finding of a trusted registry; False for any other finding."""

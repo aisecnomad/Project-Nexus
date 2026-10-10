@@ -12,8 +12,9 @@ L0 Chatbot to L5 Fully Autonomous scale:
 A scanner can prove that a capability exists but rarely that one is absent, so the floor rises
 only on evidence and the ceiling falls only on positive restriction evidence. Unknown never
 counts as low. :func:`classify` is a pure function of the finding; :func:`apply_autonomy` adds the
-level a matched inventory entry declares. The rules and the evidence behind them are documented
-in ``docs/concepts/autonomy.md``.
+level a matched inventory entry declares, and :func:`merge_autonomy` classifies a finding merged
+from several reports. The rules and the evidence behind them are documented in
+``docs/concepts/autonomy.md``.
 """
 
 from __future__ import annotations
@@ -25,6 +26,8 @@ from typing import TYPE_CHECKING, Any
 from shadowscan.models import Finding, Kind, Surface
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from shadowscan.registry import InventoryEntry
 
 SCHEMA = "shadowscan.autonomy/v1"
@@ -76,6 +79,10 @@ APPLICABLE_KINDS = frozenset(
 OVERSIGHT_VALUES = ("bypassed", "gated", "unknown")
 INITIATION_VALUES = ("schedule", "event", "human", "unknown")
 BOUNDS = ("floor", "ceiling", "oversight", "initiation")
+# How much autonomy each oversight and initiation value admits, for widening merged intervals:
+# an unknown gate admits more than a recorded one, and a trigger more than a person starting it.
+_OVERSIGHT_RANK = {"gated": 0, "unknown": 1, "bypassed": 2}
+_INITIATION_RANK = {"human": 0, "unknown": 1, "event": 2, "schedule": 3}
 
 # Every rule id that can appear in ``basis``, in report order, with the bound it explains.
 RULES: dict[str, str] = {
@@ -340,6 +347,56 @@ def apply_autonomy(finding: Finding, entry: InventoryEntry | None = None) -> Non
                     {"bound": "ceiling", "rule": "declared-above-ceiling", "value": declared},
                 ]
             )
+    finding.update_metadata(autonomy=autonomy)
+
+
+def _rank(bound: str, value: Any) -> int:
+    if bound == "oversight":
+        return _OVERSIGHT_RANK[value]
+    if bound == "initiation":
+        return _INITIATION_RANK[value]
+    return int(value)
+
+
+def merge_autonomy(finding: Finding, sources: Sequence[Any]) -> None:
+    """Record the autonomy interval of a finding merged from several reports.
+
+    ``sources`` are the finding's ``metadata.autonomy`` blocks in its source reports; malformed
+    ones are ignored. The interval is classified from the merged finding and then widened so it
+    admits at least what any source's block admits: the highest floor and ceiling, oversight
+    ``bypassed`` over ``unknown`` over ``gated`` and initiation ``schedule`` over ``event`` over
+    ``unknown`` over ``human``. A widened bound keeps the basis of the block that set it. The
+    first declared level is kept while the merged finding is registered, and is compared with
+    the merged interval as :func:`apply_autonomy` compares it.
+    """
+    finding.metadata.pop("autonomy", None)
+    if UNDERSTATED_TAG in finding.tags:
+        finding.tags = [tag for tag in finding.tags if tag != UNDERSTATED_TAG]
+    autonomy = classify(finding)
+    if autonomy is None:
+        return
+    blocks = [block for block in sources if valid_autonomy(block)]
+    basis = {bound: [item for item in autonomy["basis"] if item["bound"] == bound] for bound in BOUNDS}
+    for bound in BOUNDS:
+        # max() keeps the first of equal blocks, so the classified interval wins ties.
+        widest = max([autonomy, *blocks], key=lambda block: _rank(bound, block[bound]))
+        if _rank(bound, widest[bound]) > _rank(bound, autonomy[bound]):
+            autonomy[bound] = widest[bound]
+            basis[bound] = [item for item in widest["basis"] if item["bound"] == bound]
+    autonomy["floor_label"] = level_title(autonomy["floor"])
+    autonomy["ceiling_label"] = level_title(autonomy["ceiling"])
+    notes = [item for bound in BOUNDS for item in basis[bound] if item["rule"] != "declared-above-ceiling"]
+    declared = next((block for block in blocks if "declared" in block), None)
+    if declared is not None and finding.shadow is False:
+        autonomy["declared"] = declared["declared"]
+        autonomy["declared_source"] = declared["declared_source"]
+        if declared["declared"] < autonomy["floor"]:
+            finding.add_tag(UNDERSTATED_TAG)
+        elif declared["declared"] > autonomy["ceiling"]:
+            notes.append(
+                {"bound": "ceiling", "rule": "declared-above-ceiling", "value": declared["declared"]}
+            )
+    autonomy["basis"] = _ordered(notes)
     finding.update_metadata(autonomy=autonomy)
 
 
