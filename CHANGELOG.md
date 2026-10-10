@@ -57,6 +57,12 @@ summarizes each release for people who install and operate ShadowScan.
   MCP server entry in a file that parsed does not. The entry records no gate on
   its own and keeps a gate from the client's readable settings at
   `some-actions`, live and on replay.
+- Diff-scoped code scans (`--diff-base`) always read coding-agent settings
+  files, as they read dependency manifests and `.env*` files, so an unchanged
+  settings file still bounds a changed one's approval gate. A settings file
+  the code scan skips because the connector deadline was reached, and one that
+  a `code.github` or `code.gitlab` API snapshot does not include (a link, too
+  large, past the sample cap or not downloaded), counts as unreadable.
 
 ### Operational controls guide
 

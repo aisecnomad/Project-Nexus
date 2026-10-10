@@ -973,7 +973,8 @@ classification continues to require semantic verification or corroboration of
 lexical source matches even for signatures with an agent-indicator flag.
 
 `shadowscan code PATH --diff-base REF` scans only the files committed since the
-merge base with `REF`, plus dependency manifests and `.env*` files. Use it for
+merge base with `REF`, plus dependency manifests, `.env*` files and coding-agent
+settings files. Use it for
 pull-request feedback, not as an inventory: its report is not comparable, so a
 pipeline that keeps the last report as its `shadowscan diff` baseline sees
 earlier findings as unknown, never resolved, and `--incremental` does not reuse

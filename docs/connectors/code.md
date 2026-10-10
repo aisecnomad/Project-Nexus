@@ -19,7 +19,9 @@ references.
 
 Optional `diff_base` (`shadowscan code PATH --diff-base REF`) accepts a local
 Git branch, tag, or revision. It scans the files committed between the merge
-base and HEAD, plus every dependency manifest and `.env*` file for context. It
+base and HEAD, plus every dependency manifest, `.env*` file and coding-agent
+settings file (Claude Code, Codex, Goose, OpenClaw) for context, so an
+unchanged settings file still bounds a changed one's approval gate. It
 does not scan uncommitted or untracked files, changes inside submodules, or any
 other unchanged file. Findings carry `diff-scan` and `metadata.diff_scan`, and
 the connector records a warning with the changed-file count even when nothing

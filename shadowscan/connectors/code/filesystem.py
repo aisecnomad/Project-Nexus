@@ -2051,6 +2051,9 @@ class FilesystemConnector(BaseConnector):
         self._symlink_warnings: set[Path] = set()
         # (project root, path) of settings files the walk skipped (a link gap or a non-regular entry).
         self._unread_settings: list[tuple[str, str]] = []
+        # Settings files of the scanned tree that a remote API snapshot did not include (set by
+        # the code.github / code.gitlab connectors that delegate to this one).
+        self.unread_settings: list[str] = []
         self._checked_submodules: set[tuple[Path, str]] = set()
         self._gitlink_roots: set[Path] = set()
         # Oversize files under test paths skipped with a warning (include_tests false).
@@ -2914,12 +2917,14 @@ class FilesystemConnector(BaseConnector):
                             f"code.filesystem: {rel}: skipped; the remaining connector deadline cannot cover "
                             f"its {reserve:.0f}s matching budget",
                         )
+                        self._unread_settings.append((proj_root, rel))
                         continue
                     # Cooperative deadline: never start a file whose budget
                     # could run into the margin. Findings collected so far are
                     # returned and the engine keeps them; only a result that
                     # arrives after the deadline is discarded.
                     self._stop_at_deadline(scan.root, examined, len(entries) - index)
+                    self._unread_settings.extend((root, name) for name, _, root, _ in entries[index:])
                     break
             examined += 1
             with (
@@ -2928,6 +2933,9 @@ class FilesystemConnector(BaseConnector):
             ):
                 self._scan_file(scan, rel, path, proj_root)
         # A settings file the walk skipped can only loosen the gate of a project it read.
+        self._unread_settings.extend(
+            (_project_root(scan.root, rel), rel) for rel in self.unread_settings if scan.root.is_dir()
+        )
         for proj_root, rel in self._unread_settings:
             if (proj := scan.projects.get(proj_root)) is not None:
                 _note_unread_settings(proj, rel)
@@ -2937,10 +2945,12 @@ class FilesystemConnector(BaseConnector):
     def _diff_included(rel: str, diff_files: frozenset[str]) -> bool:
         """Whether a file should be scanned in diff mode.
 
-        Always included: files in the diff set, dependency manifests and
-        ``.env*`` files, whose content contextualizes code changes.
+        Always included: files in the diff set, dependency manifests,
+        ``.env*`` files and coding-agent settings files, whose content
+        contextualizes code changes. A settings file left out could loosen an
+        approval gate that a changed one sets.
         """
-        if rel in diff_files:
+        if rel in diff_files or posture_client(rel) is not None:
             return True
         name = rel.rsplit("/", 1)[-1]
         lower = name.lower()

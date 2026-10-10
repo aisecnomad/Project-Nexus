@@ -29,6 +29,7 @@ from typing import Any, ClassVar
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError, failure_summary
 from shadowscan.connectors.code.filesystem import FilesystemConnector
 from shadowscan.connectors.code.manifests import is_manifest_name
+from shadowscan.connectors.posture import posture_client
 from shadowscan.models import Finding
 from shadowscan.utils.git import (
     LFS_POINTER_MAX_BYTES,
@@ -467,6 +468,8 @@ class RemoteRepositoryConnector(BaseConnector):
             )
         )
         fs.ctx.stats = self.ctx.stats
+        unread = repo.get("_unread_settings")
+        fs.unread_settings = [p for p in unread if isinstance(p, str)] if isinstance(unread, list) else []
         # Share the diagnostic budget so repositories cannot each fill 1000 entries.
         fs.ctx._diagnostic_counts = self.ctx._diagnostic_counts
         if isinstance(snapshot, dict) and snapshot.get("capture_method") == "git-clone":
@@ -657,6 +660,7 @@ class RemoteRepositoryConnector(BaseConnector):
         selected: list[str],
         tmp: str,
         where: str = "",
+        tree_paths: Iterable[str] = (),
     ) -> tuple[str, int]:
         """Download the selected tree entries and write only verified bytes.
 
@@ -666,6 +670,7 @@ class RemoteRepositoryConnector(BaseConnector):
         dest = os.path.join(tmp, "repo")
         os.makedirs(dest, exist_ok=True)
         written = 0
+        written_paths: set[str] = set()
         lfs_pointers = False
         for p in selected:
             try:
@@ -697,10 +702,16 @@ class RemoteRepositoryConnector(BaseConnector):
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(content)
             written += 1
+            written_paths.add(p)
             if len(content) <= LFS_POINTER_MAX_BYTES and content.startswith(LFS_POINTER_PREFIX):
                 lfs_pointers = True
         if lfs_pointers:
             self._coverage_gap(
                 f"{self.name}: Git LFS pointer files{where} are not resolved; source coverage partial"
             )
+        # A coding-agent settings file of the tree that is not in the snapshot (a link, over the
+        # blob size limit, past the sample cap, or not downloaded) could loosen an approval gate
+        # that a fetched one sets; the filesystem scan records it as unreadable.
+        unread = sorted({p for p in tree_paths if posture_client(p) is not None} - written_paths)
+        repo["_unread_settings"] = unread
         return dest, written
