@@ -67,7 +67,7 @@ Connectors that page through a live API accept `max_pages`, a positive integer
 (default 1000; larger values are capped at 1000). Zero, a negative or fractional
 number, a boolean or non-numeric text is a configuration error, never a silent
 one-page scan; reaching the page bound marks coverage incomplete. The other
-integer limits (`max_lambda`, `max_ecs_api_calls`, `max_projects`,
+integer limits (`max_lambda`, `max_ecs_api_calls`, `max_registry_records`, `max_projects`,
 `min_events`, `max_teams`, `max_records`, `max_users`,
 `max_app_role_lookups`) follow the same rule, and the look-back windows
 `cloudtrail_days` and `audit_days` are non-negative integers, where 0 switches
@@ -855,8 +855,29 @@ definitions referenced by running tasks and service deployments, plus latest
 registered definitions, SageMaker endpoints (LLM containers), Step Functions with Bedrock
 states, Q Business, Lex, Secrets Manager / SSM names, IAM principals with LLM
 actions (via `get_account_authorization_details`), CloudTrail LLM callers.
-Options: `profile`, `role_arn`, `regions` (`all`), `services`, `cloudtrail_days`,
-`max_ecs_api_calls` (default 2000 per region). ECS uses exact task-definition ARNs
+Options: `profile`, `role_arn`, `regions` (`all`), `services` (default: every
+service except `registry`), `cloudtrail_days`, `max_ecs_api_calls` (default 2000
+per region), `max_registry_records`, `registry_arns`.
+
+Opt-in registry records (`services` including `registry`): AWS Agent Registry
+and AgentCore registry records of every status, from the control-plane APIs,
+each as a finding with `metadata.registry_record` (registry types
+`aws-agent-registry` and `aws-agentcore-registry`). Statuses map onto the
+contract, the `DETECTED_FROM` provenance of a record the registry created by
+auto-detection binds the exact AgentCore runtime or gateway ARN (provenance
+written through the API binds nothing), `approval_mode` comes from the
+registry's auto-approval settings at scan time, and
+`listing_complete` is set only for a listing that finished without denial,
+truncation or the `max_registry_records` cap (default 1000 per region and
+namespace). Descriptors are summarized during collection; raw documents and
+OAuth `customParameters` are never exported. `registry_arns` adds the approved
+records of other accounts' registries through the discovery API
+(`registry_coverage: approved-only`, never a complete listing). Auto-approval is
+not human review: such records approve through `trusted_registries` only with
+`allow_auto_approved`. See the
+[cloud guide](connectors/cloud.md#aws-agent-registry-and-agentcore-registry-records).
+
+ECS uses exact task-definition ARNs
 for deployed references, including referenced inactive revisions. Findings
 separate running-task/service references from registered-only definitions; a
 reference does not establish successful AI execution. Exhausted API budgets or
@@ -1063,7 +1084,7 @@ All connectors are read-only. Prefer dedicated audit credentials:
 | Auth0 | Management API v2 token with `read:clients`, `read:client_grants` |
 | Entra / Teams / Power Platform | app permissions `Application.Read.All`, `DelegatedPermissionGrant.Read.All`, `Directory.Read.All`, `AppCatalog.Read.All`, `Team.ReadBasic.All`, `TeamsAppInstallation.ReadForTeam.All`; Power Platform admin application user |
 | Google Workspace | DWD scopes `admin.directory.user.readonly`, `admin.directory.user.security`, `admin.directory.customer.readonly` |
-| AWS | `SecurityAudit` managed policy + `bedrock:List*/Get*`, `bedrock-agentcore:List*/Get*`, `cloudtrail:LookupEvents`; ECS additionally needs `ecs:ListClusters`, `ecs:ListTasks`, `ecs:DescribeTasks`, `ecs:ListServices`, `ecs:DescribeServices`, `ecs:ListTaskDefinitionFamilies`, `ecs:DescribeTaskDefinition` |
+| AWS | `SecurityAudit` managed policy + `bedrock:List*/Get*`, `bedrock-agentcore:List*/Get*`, `cloudtrail:LookupEvents`; ECS additionally needs `ecs:ListClusters`, `ecs:ListTasks`, `ecs:DescribeTasks`, `ecs:ListServices`, `ecs:DescribeServices`, `ecs:ListTaskDefinitionFamilies`, `ecs:DescribeTaskDefinition`; the opt-in `registry` service needs `agent-registry:ListRegistries`, `agent-registry:GetRegistry`, `agent-registry:ListRegistryRecords`, `agent-registry:GetRegistryRecord` (AgentCore registries are covered by `bedrock-agentcore:List*/Get*`), and `registry_arns` needs `agent-registry:ListDiscoverableRegistryRecords` and `agent-registry:GetDiscoverableRegistryRecord` on those registries. Do not grant `agent-registry:InvokeRegistryMcp` or `Search*` actions: the connector never calls them |
 | GCP | `roles/viewer` + `roles/iam.securityReviewer` (+ `roles/logging.privateLogViewer` for audit logs; with the opt-in catalogs, read access to Agent Registry and to Discovery Engine assistants and agents, for example Google's viewer roles for those APIs: verify the role names in your organization) |
 | Azure | `Reader` on subscriptions (+ `Cognitive Services OpenAI User`/`Azure AI User` to list Foundry agents; a narrowly scoped custom permission `Microsoft.Web/sites/config/list/Action` when sensitive app settings are needed) |
 | OCI | policy `Allow group audit to read all-resources in tenancy` |

@@ -116,6 +116,20 @@ def test_unknown_cloud_records_are_never_cached(tmp_path, index, cls, valid, ide
     [
         (AwsConnector, {"_kind": "account", "account": "123456789012"}),
         (AwsConnector, {"_kind": "bedrock-guardrail", "guardrailId": "known"}),
+        (
+            AwsConnector,
+            {
+                "_kind": "agent-registry",
+                "registryArn": "arn:aws:agent-registry:us-east-1:123456789012:registry/abcd1234abcd",
+            },
+        ),
+        (
+            AwsConnector,
+            {
+                "_kind": "agentcore-registry",
+                "registryArn": "arn:aws:bedrock-agentcore:us-east-1:123456789012:registry/efgh5678efgh",
+            },
+        ),
         (AzureConnector, {"_kind": "diagnostics", "_account": "/account", "settings": []}),
         (AzureConnector, {"_kind": "deployment", "_account": "/account", "properties": {}}),
         (GcpConnector, {"_kind": "project", "project": "test", "ai_services": []}),

@@ -530,7 +530,7 @@ Also accepted: `label`.
 
 ### `cloud.aws`
 
-Bedrock Agents / AgentCore, Lambda, ECS, SageMaker, Step Functions, Q Business, Lex, IAM grants, secret names and CloudTrail LLM callers.
+Bedrock Agents / AgentCore, Lambda, ECS, SageMaker, Step Functions, Q Business, Lex, IAM grants, secret names and CloudTrail LLM callers; opt-in AWS Agent Registry and AgentCore registry records.
 
 Requires: `boto3`. Offline input: JSONL dump of records.
 
@@ -541,10 +541,12 @@ Requires: `boto3`. Offline input: JSONL dump of records.
 | `account_id` | expected AWS account id for live scans (verified through STS); account label for offline exports |
 | `allow_instance_credentials` | allow EC2/ECS credential discovery (default false; inherited from options) |
 | `regions` | regions to scan (default \['us-east-1', 'us-west-2', 'eu-west-1', 'eu-central-1', 'ap-southeast-1', 'ap-northeast-1'\]; 'all' = every enabled region) |
-| `services` | subset of: bedrock, agentcore, lambda, ecs, sagemaker, stepfunctions, qbusiness, lex, iam, secrets, cloudtrail (default all) |
+| `services` | subset of: bedrock, agentcore, lambda, ecs, sagemaker, stepfunctions, qbusiness, lex, iam, secrets, cloudtrail, registry (default: all except registry) |
 | `cloudtrail_days` | look-back window in days for LLM invocation events, a non-negative integer (default 7, 0 disables) |
 | `max_lambda` | cap on Lambda functions per region, a positive integer (default 2000) |
 | `max_ecs_api_calls` | cap on ECS list/detail API calls per region, a positive integer (default 2000; reaching it marks coverage incomplete) |
+| `max_registry_records` | cap on registry records per region and registry namespace, a positive integer (default 1000; reaching it marks coverage incomplete) |
+| `registry_arns` | exact agent-registry registry ARNs of other accounts to read through the discovery API, which lists approved records only (needs services: registry) |
 | `input` | offline: JSONL of dumped records |
 | `max_input_bytes` | offline: maximum expanded bytes read across all input files (default 256 MiB, hard ceiling 512 MiB) |
 | `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
