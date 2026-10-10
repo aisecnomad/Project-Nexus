@@ -18,18 +18,22 @@ from click.testing import CliRunner
 
 from shadowscan import dashboard as dashboard_module
 from shadowscan.autonomy import SCHEMA as AUTONOMY_SCHEMA
-from shadowscan.autonomy import level_title
+from shadowscan.autonomy import UNDERSTATED_TAG, apply_autonomy, level_title
 from shadowscan.cli import main
-from shadowscan.comparison import load_report_with_digest
+from shadowscan.comparison import compare_reports, drift_counts, load_report_with_digest
 from shadowscan.dashboard import (
+    AUTONOMY_STATUSES,
     INVENTORY_SCHEMA,
     build_inventory,
+    coverage_cell,
     load_history,
+    parse_instant,
     render_inventory_json,
 )
 from shadowscan.fleet import FLEET_SCHEMA, PARTIAL_RECONCILIATION, merge_reports, report_result
 from shadowscan.models import Finding, Kind, ScanResult, ScanStats, Surface
 from shadowscan.registries import RECORD_KEY, RECORD_SCHEMA, reconcile_registries
+from shadowscan.registry import InventoryEntry
 from shadowscan.reporters import dashboard as page_module
 from shadowscan.reporters.dashboard import _DASH_JS, render_dashboard
 
@@ -296,12 +300,14 @@ def test_incomplete_and_uncollected_sources_never_read_as_zero(tmp_path):
     )
     sources = {source["name"]: source for source in inventory["sources"]}
     assert sources["laptop-b.json"]["complete"] is False
-    assert sources["laptop-b.json"]["coverage"]["code.filesystem"] == "incomplete"
-    assert sources["laptop-a.json"]["coverage"] == {
-        "code.filesystem": "complete",
-        "endpoint.mcp": "not-collected",
-    }
-    assert sources["laptop-c.json"]["coverage"]["code.filesystem"] == "not-collected"
+    connectors = inventory["coverage"]["connectors"]
+    assert connectors == ["code.filesystem", "endpoint.mcp"]
+    cells = {name: {c: coverage_cell(source, c) for c in connectors} for name, source in sources.items()}
+    assert cells["laptop-b.json"]["code.filesystem"] == "incomplete"
+    assert cells["laptop-a.json"] == {"code.filesystem": "complete", "endpoint.mcp": "not-collected"}
+    assert cells["laptop-c.json"]["code.filesystem"] == "not-collected"
+    # Only the connectors a source ran have a cell; the others read as not collected.
+    assert sources["laptop-a.json"]["coverage"] == {"code.filesystem": "complete"}
     assert inventory["coverage"]["incomplete_sources"] == 1
     # The coverage panel comes first, and lists the incomplete source before the complete ones.
     assert page.index("id='coverage'") < page.index("id='overview'") < page.index("id='agents'")
@@ -353,6 +359,7 @@ def test_a_fleet_report_keeps_its_sources_and_provenance(tmp_path):
     assert result.exit_code == 0, result.output
     assert [source["name"] for source in inventory["sources"]] == ["laptop-a.json", "laptop-b.json"]
     assert all(source["coverage"] == {"code.filesystem": "complete"} for source in inventory["sources"])
+    assert inventory["legacy_fleet"] is False
     assert {name for agent in inventory["agents"] for name in agent["merged_from"]} == {
         "laptop-a.json",
         "laptop-b.json",
@@ -413,6 +420,124 @@ def test_malformed_fleet_sources_are_refused(tmp_path):
             build_inventory(scan)
 
 
+def test_scan_level_records_are_not_coverage_columns(tmp_path):
+    a = _report(tmp_path, "laptop-a", {"crew.py": AGENT})
+    b = _report(tmp_path, "laptop-b", {"crew.py": AGENT})
+    data = json.loads(a.read_text())
+    # A warnings-only engine record, as a scan with an inventory kept in the scanned tree writes.
+    data["stats"].append(
+        {**data["stats"][0], "connector": "engine.inventory", "warnings": ["inventory in the scanned tree"]}
+    )
+    _write(a, data)
+    result, page, inventory = _dashboard(tmp_path, str(a), str(b))
+    assert result.exit_code == 0, result.output
+    assert inventory["complete"] is True and inventory["coverage"]["connectors"] == ["code.filesystem"]
+    assert all(source["coverage"] == {"code.filesystem": "complete"} for source in inventory["sources"])
+    # It is still a diagnostic, and an incomplete engine record still makes its source incomplete.
+    assert [entry["connector"] for entry in inventory["diagnostics"]] == ["engine.inventory"]
+    assert "class='st-not-collected'" not in page
+
+
+def test_coverage_grows_with_the_runs_listed_not_sources_times_connectors(monkeypatch):
+    monkeypatch.setattr(page_module, "MAX_CONNECTOR_COLUMNS", 3)
+    names = [f"plugin.c{n:03d}" for n in range(300)]
+    sources: list[dict[str, Any]] = [
+        {"name": f"s{n:03d}", "complete": True, "connectors": []} for n in range(300)
+    ]
+    sources[0]["connectors"] = [{"connector": name, "status": "complete"} for name in names]
+    scan = _result([_finding()])
+    scan.collection_scope = {
+        "schema": SCOPE,
+        "comparable": True,
+        "fleet": {"schema": FLEET_SCHEMA, "sources": sources},
+    }
+    inventory = build_inventory(scan)
+    assert inventory["coverage"]["connectors"] == names
+    # One cell per run listed: 300, where one per source and connector would be 90,000.
+    assert sum(len(source["coverage"]) for source in inventory["sources"]) == 300
+    assert len(render_inventory_json(inventory)) < 200_000
+    page = render_dashboard(inventory)
+    panel = page[page.index("id='coverage'") : page.index("id='overview'")]
+    assert "297 more connector column(s) are not shown" in panel and "plugin.c003" not in panel
+    # A source that did not run a shown connector still reads not collected.
+    assert panel.count("class='st-not-collected'") == 299 * 3
+    assert panel.count("class='st-complete'>complete") == 300 + 3
+
+
+def test_reports_without_inventory_present_still_show_their_inventory(tmp_path):
+    # Reports written before inventory_present: one reconciled against three entries, one sanctioned
+    # by a trusted registry, and one that shows no inventory at all.
+    reports = []
+    for name, finding, size in (
+        ("a.json", _finding("a", "r1", shadow=True), 3),
+        ("b.json", _finding("b", "r2", shadow=False, registry_match="agent-2"), 0),
+        ("c.json", _finding("c", "r3"), 0),
+    ):
+        report = _result([finding], inventory_size=size).to_dict()
+        report.pop("inventory_present")
+        reports.append((name, report))
+        _write(tmp_path / name, report)
+    merged = merge_reports(reports)
+    assert [source["inventory_present"] for source in merged.collection_scope["fleet"]["sources"]] == [
+        True,
+        True,
+        False,
+    ]
+    assert merged.inventory_present is True
+    # One report reads as it does among others.
+    assert [report_result(name, report).inventory_present for name, report in reports] == [True, True, False]
+    _, _, inventory = _dashboard(tmp_path, str(tmp_path / "a.json"), str(tmp_path / "b.json"))
+    assert [source["inventory_present"] for source in inventory["sources"]] == [True, True]
+    assert inventory["counts"]["inventory_status"] == {"shadow": 1, "sanctioned": 1, "no-inventory": 0}
+
+
+def _v1_fleet(tmp_path: Path, *, inventory_size: int = 0) -> Path:
+    """A fleet report as merges before fleet-merge/v2 wrote it: unreconciled findings were shadow."""
+    findings = [
+        _finding("rogue", f"r{n}", capabilities=["tool-use", "code-exec"], tags=["mcp-auto-approve"])
+        for n in range(2)
+    ]
+    for finding in findings:
+        apply_autonomy(finding)
+    fleet = merge_reports([(f"{n}.json", _result([f]).to_dict()) for n, f in enumerate(findings)]).to_dict()
+    fleet["collection_scope"]["fleet"]["schema"] = "shadowscan.fleet-merge/v1"
+    for source in fleet["collection_scope"]["fleet"]["sources"]:
+        for key in ("started_at", "finished_at", "inventory_present", "connectors"):
+            source.pop(key)
+    fleet["inventory_present"] = False
+    fleet["inventory_size"] = inventory_size
+    for item in fleet["findings"]:
+        item["shadow"] = True
+    return _write(tmp_path / f"fleet-v1-{inventory_size}.json", fleet)
+
+
+def test_an_earlier_fleet_merge_without_an_inventory_is_not_shadow(tmp_path):
+    path = _v1_fleet(tmp_path)
+    result, page, inventory = _dashboard(tmp_path, str(path))
+    assert result.exit_code == 0, result.output
+    assert inventory["counts"]["inventory_status"] == {"shadow": 0, "sanctioned": 0, "no-inventory": 2}
+    assert inventory["autonomy"]["priority"] == 0 and inventory["legacy_fleet"] is True
+    assert "merged by an earlier version" in page and "have no inventory to reconcile against" in page
+    # Merged again, or read as history, the same fleet reads the same.
+    again = merge_reports([("fleet.json", json.loads(path.read_text()))])
+    assert {finding.shadow for finding in again.findings} == {None} and again.inventory_present is False
+    history = tmp_path / "history"
+    history.mkdir()
+    (history / "fleet.json").write_bytes(path.read_bytes())
+    [point] = load_history(history)["points"]
+    assert point["shadow"] is None and point["ai_systems"] == 2
+    # With inventory evidence the shadow status is kept, and the page says it may include
+    # findings from sources without an inventory.
+    result, page, inventory = _dashboard(tmp_path, str(_v1_fleet(tmp_path, inventory_size=3)))
+    assert result.exit_code == 0, result.output
+    assert inventory["counts"]["inventory_status"]["shadow"] == 2 and inventory["legacy_fleet"] is True
+    priority = page[page.index("id='priority'") : page.index("id='registries'")]
+    assert "Shadow counts may include unreconciled AI systems" in priority
+    # A report that is not a fleet merge is never legacy.
+    report = _report(tmp_path, "laptop", {"crew.py": AGENT})
+    assert _dashboard(tmp_path, str(report))[2]["legacy_fleet"] is False
+
+
 # ------------------------------------------------------------------ shadow status, autonomy and priority
 
 
@@ -450,8 +575,13 @@ def test_autonomy_matrix_emphasizes_and_links_the_shadow_l4_quadrant():
     rows = {row["label"]: row for row in inventory["autonomy"]["rows"]}
     assert rows["L4 High Autonomy"]["shadow"] == 1 and rows["L5 Fully Autonomous"]["sanctioned"] == 1
     assert rows["L0 Chatbot"]["no-inventory"] == 1
-    assert rows["not applicable"]["shadow"] == 2 and rows["not applicable"]["tier"] is None
-    assert inventory["autonomy"]["priority"] == 1
+    # The grant is a kind the scale does not describe; an agent whose interval is malformed is unknown.
+    assert rows["not applicable"]["shadow"] == 1 and rows["not applicable"]["tier"] is None
+    assert (
+        rows["not classified"]["shadow"] == 1
+        and rows["not classified"]["autonomy_status"] == "not-classified"
+    )
+    assert inventory["autonomy"]["priority"] == 1 and inventory["autonomy"]["not_classified"] == 1
     page = render_dashboard(inventory)
     matrix = page[page.index("id='autonomy'") : page.index("id='priority'")]
     assert matrix.count("class='num priority'") == 2
@@ -460,6 +590,83 @@ def test_autonomy_matrix_emphasizes_and_links_the_shadow_l4_quadrant():
     )
     priority = page[page.index("id='priority'") : page.index("id='registries'")]
     assert "rogue" in priority and "governed" not in priority and "chat" not in priority
+
+
+def test_a_report_without_autonomy_reads_the_same_alone_and_merged(tmp_path):
+    rogue = _finding(
+        "rogue", "r1", capabilities=["tool-use", "code-exec"], tags=["mcp-auto-approve"], shadow=True
+    )
+    chat = _finding("chat", "r2", shadow=False, registry_match="chat-1")
+    paths = []
+    for name, finding in (("a.json", rogue), ("b.json", chat)):
+        report = _result([finding], inventory_present=True).to_dict()
+        # Written before autonomy tiers existed.
+        assert all("autonomy" not in item["metadata"] for item in report["findings"])
+        paths.append(str(_write(tmp_path / name, report)))
+    result, page, alone = _dashboard(tmp_path, paths[0])
+    assert result.exit_code == 0, result.output
+    _, _, merged = _dashboard(tmp_path, *paths)
+    assert alone["autonomy"]["priority"] == merged["autonomy"]["priority"] == 1
+    assert [agent["autonomy"]["floor"] for agent in alone["agents"]] == [4]
+    assert {agent["title"]: agent["autonomy"]["floor"] for agent in merged["agents"]} == {
+        "rogue": 4,
+        "chat": 0,
+    }
+    assert alone["autonomy"]["not_classified"] == merged["autonomy"]["not_classified"] == 0
+    assert "rogue" in page[page.index("id='priority'") : page.index("id='registries'")]
+
+
+def test_report_result_keeps_the_interval_of_a_current_report(tmp_path):
+    repo = {".mcp.json": MCP, "crew.py": AGENT}
+    raw = json.loads(_report(tmp_path, "laptop", repo).read_text())
+    result = report_result("laptop.json", raw)
+    blocks = {finding.id: finding.metadata.get("autonomy") for finding in result.findings}
+    assert blocks == {item["id"]: item["metadata"].get("autonomy") for item in raw["findings"]}
+    assert any(block is not None for block in blocks.values())
+    # A registered finding keeps its declared level and the understated tag, as a merge keeps them.
+    registered = _finding(
+        "ops", "r1", capabilities=["tool-use", "code-exec"], shadow=False, registry_match="ops"
+    )
+    apply_autonomy(registered, InventoryEntry(agent_id="ops", autonomy_level=0))
+    assert UNDERSTATED_TAG in registered.tags
+    report = _result([registered], inventory_present=True).to_dict()
+    [read] = report_result("r.json", report).findings
+    [merged] = merge_reports([("r.json", report)]).findings
+    assert (
+        read.metadata["autonomy"]
+        == merged.metadata["autonomy"]
+        == report["findings"][0]["metadata"]["autonomy"]
+    )
+    assert (
+        read.metadata["autonomy"]["declared"] == 0
+        and UNDERSTATED_TAG in read.tags
+        and UNDERSTATED_TAG in merged.tags
+    )
+
+
+def test_an_unclassified_ai_system_is_unknown_not_absent():
+    findings = [
+        _finding("rogue", "r1", shadow=True),
+        _finding("grant", "r2", kind=Kind.IAM_GRANT, shadow=True),
+    ]
+    inventory = build_inventory(_result(findings))
+    assert {agent["title"]: agent["autonomy_status"] for agent in inventory["agents"]} == {
+        "rogue": "not-classified",
+        "grant": "not-applicable",
+    }
+    assert inventory["autonomy"]["priority"] == 0 and inventory["autonomy"]["not_classified"] == 1
+    assert [row["autonomy_status"] for row in inventory["autonomy"]["rows"]][-3:] == list(AUTONOMY_STATUSES)
+    page = render_dashboard(inventory)
+    priority = page[page.index("id='priority'") : page.index("id='registries'")]
+    assert "carry no valid autonomy interval" in priority and "unknown, not absent" in priority
+    assert "No shadow AI system in these reports" not in priority
+    assert "<b>1</b>autonomy not classified (unknown)" in page
+    assert "<span class='warn'>not classified</span>" in page
+    # Without any unknown, the empty quadrant says so plainly.
+    known = build_inventory(
+        _result([_finding("chat", "r3", shadow=True, metadata={"autonomy": _autonomy(0)})])
+    )
+    assert "No shadow AI system in these reports has an autonomy floor" in render_dashboard(known)
 
 
 # ------------------------------------------------------------------ registries and references
@@ -626,6 +833,7 @@ def test_baseline_drift_is_counted_when_comparable(tmp_path):
     assert drift["comparable"] is True and drift["counts"]["new"] >= 1 and drift["counts"]["unknown"] == 0
     assert drift["classes"]["inventory"] == drift["counts"]["new"] + drift["counts"]["resolved"]
     assert "New AI systems since the baseline" in page and "Not comparable with the baseline" not in page
+    assert "BASELINE NOT COMPARABLE" not in page
 
 
 def test_an_incomparable_baseline_leaves_missing_findings_unknown(tmp_path):
@@ -639,6 +847,12 @@ def test_an_incomparable_baseline_leaves_missing_findings_unknown(tmp_path):
     assert drift["adverse"]["coverage"] is True
     assert "Not comparable with the baseline" in page and "unknown, not resolved" in page
     assert inventory["complete"] is True
+    # The exit code is 3 although every input is complete, so the page opens with its own banner.
+    assert "INCOMPLETE SCAN" not in page
+    assert page.index("BASELINE NOT COMPARABLE") < page.index("id='coverage'")
+    # Coverage drift counts the comparison's reasons, never findings.
+    section = page[page.index("id='drift'") : page.index("id='agents'")]
+    assert f"<td class='num'>{len(drift['reasons'])} reason(s)</td>" in section
 
 
 def _history_report(findings: list[Finding], started: str, **overrides: Any) -> dict[str, Any]:
@@ -675,6 +889,75 @@ def test_history_orders_by_start_time_and_shows_gaps(tmp_path):
     assert "not comparable: 1 reason(s)" in section and "not classified" in section
     assert section.count("<polyline") == 1 and section.count("<circle") == 3
     assert "Not placed in the series" in section and "d.json" in section
+
+
+def test_history_counts_match_compare_reports():
+    before = [_finding("a", "r1", shadow=True), _finding("b", "r2", owner="team"), _finding("d", "r4")]
+    after = [
+        _finding("a", "r1", shadow=True, capabilities=["code-exec"]),
+        _finding("b", "r2"),
+        _finding("c", "r3", tags=["mcp-auto-approve"]),
+    ]
+    early, late = "2026-09-01T00:00:00+00:00", "2026-10-01T00:00:00+00:00"
+    errors = [ScanStats(connector="code.filesystem", started_at=late, errors=["timed out"])]
+    local = _finding("caller", "gateway:caller", metadata={"identity_scope": "run"})
+    pairs = [
+        (_history_report(before, early), _history_report(after, late)),
+        (_history_report(before, early), _history_report(after, late, fingerprint="b" * 64)),
+        (_history_report(before, early), _history_report(after, late, stats=errors)),
+        (_history_report(before, early), _history_report([*after, local], late)),
+        (_history_report(after, late), _history_report(before, early)),
+    ]
+    moment = parse_instant("2026-10-02T00:00:00+00:00")
+    for old, new in pairs:
+        for age in (None, 10):
+            full = compare_reports(old, new, max_baseline_age_days=age, now=moment)
+            counted = drift_counts(old, new, max_baseline_age_days=age, now=moment)
+            assert counted["comparable"] == full["comparable"] and counted["reasons"] == full["reasons"]
+            assert counted["counts"] == {
+                key: len(full[key]) for key in ("new", "resolved", "unknown", "changed")
+            }
+            assert counted["drift_summary"] == full["drift_summary"] and counted["adverse"] == full["adverse"]
+    first = drift_counts(*pairs[0], now=moment)
+    assert first["comparable"] and first["counts"] == {"new": 1, "resolved": 1, "unknown": 0, "changed": 2}
+    assert first["adverse"]["capability"] and first["adverse"]["governance"]
+    with pytest.raises(ValueError):
+        drift_counts([], {})  # type: ignore[arg-type]
+
+
+def _history_directory(directory: Path, reports: int, findings: int) -> None:
+    """``reports`` weekly copies of one report of ``findings`` MCP servers, written without a model pass."""
+    directory.mkdir()
+    report = _history_report(
+        [_finding("MCP", "mcp", kind=Kind.MCP_SERVER, shadow=True)], "2026-01-01T00:00:00+00:00"
+    )
+    [template] = report["findings"]
+    report["findings"] = [
+        {**template, "id": f"ss-{n:016x}", "resource": f"endpoint:host-{n % 50}/mcp/{n}"}
+        for n in range(findings)
+    ]
+    report["summary"].update(total=findings, by_surface={"code": findings}, by_kind={"mcp-server": findings})
+    for week in range(reports):
+        report["started_at"] = f"2026-{1 + week // 28:02d}-{1 + week % 28:02d}T00:00:00+00:00"
+        _write(directory / f"w{week:03d}.json", report)
+
+
+def test_history_time_grows_linearly_within_the_documented_budget(tmp_path):
+    # docs/operations/dashboard.md documents the budget; SHADOWSCAN_HISTORY_FINDINGS raises the size.
+    count = int(os.environ.get("SHADOWSCAN_HISTORY_FINDINGS", "5000"))
+    timings = []
+    for size in (count // 4, count):
+        directory = tmp_path / f"history-{size}"
+        _history_directory(directory, 10, size)
+        started = time.perf_counter()
+        summary = load_history(directory)
+        timings.append(time.perf_counter() - started)
+        assert len(summary["pairs"]) == 9 and all(pair["comparable"] for pair in summary["pairs"])
+        assert all(pair["counts"] == {"new": 0, "resolved": 0, "changed": 0} for pair in summary["pairs"])
+    quarter, elapsed = timings
+    assert elapsed < 8 * quarter + 2.0, f"{count} findings took {elapsed:.1f}s, a quarter {quarter:.1f}s"
+    budget = 10.0 + 120.0 * 10 * count / 1_000_000
+    assert elapsed < budget, f"10 reports of {count} findings took {elapsed:.1f}s (budget {budget:.0f}s)"
 
 
 def test_history_without_inventory_reports_unknown_shadow(tmp_path):
@@ -790,7 +1073,7 @@ def test_history_directory_edge_cases_fail_closed_or_stay_visible(tmp_path, monk
     def broken(*args, **kwargs):
         raise ValueError("synthetic")
 
-    monkeypatch.setattr(dashboard_module, "compare_reports", broken)
+    monkeypatch.setattr(dashboard_module, "drift_counts", broken)
     [pair] = load_history(history)["pairs"]
     assert pair["comparable"] is False and pair["reasons"] == 1 and pair["counts"] is None
     monkeypatch.undo()

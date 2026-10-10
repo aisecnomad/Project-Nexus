@@ -12,9 +12,15 @@ shadowscan dashboard laptop-*.json --baseline last-week.json --history weekly/ -
 ```
 
 Several reports are merged exactly as [`shadowscan merge`](../scanning.md#fleet-merge)
-merges them. One report is used as written: a fleet report keeps its sources
-and each finding's `metadata.merged_from`, and a single scan becomes a fleet
-of one source.
+merges them. One report is not merged again: a fleet report keeps its
+sources and each finding's `metadata.merged_from`, and a single scan becomes
+a fleet of one source. Its findings are read as a merge reads a source, so
+one report shows what it would show among others: each applicable finding's
+[autonomy](../concepts/autonomy.md) interval is classified again and admits
+at least what its own block admits (a report written before autonomy tiers
+is classified, not shown as unclassified), and a report written before
+`inventory_present` existed counts as having an inventory when its
+`inventory_size` is above zero or any finding has a shadow status.
 
 | Option | Effect |
 | --- | --- |
@@ -35,19 +41,25 @@ from the keyboard, and they stay hidden without the script.
 1. **Coverage.** One row per source: whether it completed, when it was last
    scanned, how many whole days before the reference time that was
    (staleness), how many findings it reported and whether it supplied an
-   inventory. Then one column per connector any source ran. Incomplete and
-   stale sources come first. Connector diagnostics (errors, warnings and skip
-   reasons) follow, open when the inventory is incomplete.
+   inventory. Then one column per connector any source ran, at most 100; a
+   note says how many more columns are only in the JSON document. Scan-level
+   `engine.*` records are not connectors and get no column, as for `diff`
+   coverage: they still make a source incomplete and are listed in the
+   diagnostics. Incomplete and stale sources come first. Connector
+   diagnostics (errors, warnings and skip reasons) follow, open when the
+   inventory is incomplete.
 2. **Overview.** Counts of AI systems by inventory status, risk level,
    surface, kind, provider, account and owner, and the unowned count. An AI
    system here is any finding except a credential. Each table shows its 25
    largest values; the rest are in the JSON document.
 3. **Autonomy and shadow status.** AI systems by
-   [autonomy](../concepts/autonomy.md) floor (rows L0 to L5 and not
-   applicable) against shadow, sanctioned and no inventory. The shadow L4
-   and L5 cells are outlined, labelled "priority" and link to the next
-   section.
+   [autonomy](../concepts/autonomy.md) floor (rows L0 to L5, not classified
+   and not applicable) against shadow, sanctioned and no inventory. The
+   shadow L4 and L5 cells are outlined, labelled "priority" and link to the
+   next section.
 4. **Priority.** The shadow AI systems whose autonomy floor is L4 or above.
+   AI systems without an inventory or without an autonomy interval are
+   counted in a warning above the list: they are unknown, not absent.
 5. **Vendor registry reconciliation.** One row per registry type and registry
    id: records, the four [reconciliation statuses](../inventory.md#vendor-registries-as-inventory-sources),
    records without a reconciliation, approved, not approved and
@@ -60,10 +72,10 @@ from the keyboard, and they stay hidden without the script.
 9. **AI systems.** One row per finding that is not a credential, highest
    risk first.
 
-The page holds at most 5,000 AI system rows, 1,000 source rows, 1,000
-priority rows and 100 new-since-baseline rows. A table that holds fewer rows
-than the data says how many more are in the JSON document; nothing is cut
-silently.
+The page holds at most 5,000 AI system rows, 1,000 source rows, 100
+connector columns, 1,000 priority rows and 100 new-since-baseline rows. A
+table that holds fewer rows or columns than the data says how many more are
+in the JSON document; nothing is cut silently.
 
 ## Missing data is never zero
 
@@ -76,7 +88,8 @@ silently.
 | not collected | The source did not run this connector at all. |
 | unknown | The source comes from a fleet report written before sources recorded their connector runs, or its time is missing. |
 | no inventory | No inventory was supplied, so the AI system was never reconciled. It is neither shadow nor sanctioned. |
-| not applicable | The autonomy scale does not apply to the finding, or it carries no interval. |
+| not classified | The finding is of a kind the autonomy scale describes, but it carries no valid interval: its tier is unknown, and it could be at L4 or above. |
+| not applicable | The autonomy scale does not describe the finding's kind (a grant, identity, infrastructure or other enabler). |
 | unknown (no inventory), not classified | In history: a report without an inventory, or without any autonomy interval. |
 
 A source that was not collected is never a zero row. When any source or
@@ -90,14 +103,26 @@ inventory when no source supplied one. An AI system sanctioned in one source
 and not reconciled in another stays shadow and is labelled "not reconciled
 in every source".
 
+A fleet report merged by an earlier version (before
+`shadowscan.fleet-merge/v2`) recorded every AI system that some source did
+not reconcile as shadow, including one from a source without an inventory.
+When such a report shows no inventory at all (no `inventory_present`, an
+`inventory_size` of 0 and no sanctioned finding), its AI systems read "no
+inventory". Otherwise their shadow status is kept, and the coverage and
+priority sections warn that shadow counts may include unreconciled AI
+systems. Merge the source reports again with this version to remove the
+ambiguity.
+
 ## Drift and history
 
 With `--baseline`, the drift section uses the same comparison as
 `shadowscan diff`: counts of new, resolved, unknown, changed and not
 comparable findings, and the [drift classes](drift.md#drift-classes) with
-whether each is adverse. When the comparison is not comparable, the section
-says why, findings missing from the current reports are unknown rather than
-resolved, and the command exits 3.
+whether each is adverse. The coverage class counts the reasons the
+comparison is incomplete, not findings. When the comparison is not
+comparable, the page opens with a "baseline not comparable" banner, the
+section says why, findings missing from the current reports are unknown
+rather than resolved, and the command exits 3.
 
 ### History
 
@@ -113,9 +138,11 @@ systems with an autonomy floor of L4 or above, as a table and as an inline
 SVG line. For each pair of consecutive reports it shows drift counts only
 when the pair is comparable. Any other pair is a gap ("not comparable: N
 reasons"), and the line breaks there; it is never drawn as zero drift.
-History files are read twice with at most two reports in memory, and the
-second read must match the first read's SHA-256. History never changes the
-exit code.
+Only counts are published, so the history comparison validates and matches
+findings as `diff` does but does not pass them through the export boundary
+that `diff` applies to the findings it prints. History files are read
+twice with at most two reports in memory, and the second read must match the
+first read's SHA-256. History never changes the exit code.
 
 ## Exit codes
 
@@ -164,7 +191,17 @@ check. Run the full-size case with:
 SHADOWSCAN_DASHBOARD_FINDINGS=100000 python -m pytest tests/unit/test_dashboard.py -k budget
 ```
 
-The synthetic findings are author-written; the measurement is not a field
+History has its own regression test: ten reports at 5,000 findings and at a
+quarter as many must scale linearly, and the full run must stay within
+`10 + 120 × reports × findings / 1,000,000` seconds. Without coverage
+tracing, on the same machine, 104 weekly reports of 10,000 findings each
+(8.5 MB per report) took about 74 seconds. Raise the test's size with
+`SHADOWSCAN_HISTORY_FINDINGS`.
+
+The coverage panel and `sources[].coverage` grow with the connector runs the
+sources list, not with sources times connector names.
+
+The synthetic findings are author-written; the measurements are not a field
 benchmark.
 
 ## The `shadowscan.inventory/v1` document
@@ -190,6 +227,7 @@ rows, references and records are shortened.
         "oversight": "bypassed",
         "schema": "shadowscan.autonomy/v1"
       },
+      "autonomy_status": "classified",
       "capabilities": ["tool-use", "code-exec"],
       "confidence": 0.95,
       "connector": "endpoint.mcp",
@@ -224,11 +262,28 @@ rows, references and records are shortened.
   "as_of": "2026-10-10T00:00:00+00:00",
   "autonomy": {
     "basis": "floor",
+    "not_classified": 0,
     "priority": 1,
     "priority_floor": 4,
     "rows": [
-      {"label": "L4 High Autonomy", "no-inventory": 0, "sanctioned": 0, "shadow": 1, "tier": 4, "total": 1},
-      {"label": "not applicable", "no-inventory": 0, "sanctioned": 0, "shadow": 0, "tier": null, "total": 0}
+      {
+        "autonomy_status": "classified",
+        "label": "L4 High Autonomy",
+        "no-inventory": 0,
+        "sanctioned": 0,
+        "shadow": 1,
+        "tier": 4,
+        "total": 1
+      },
+      {
+        "autonomy_status": "not-classified",
+        "label": "not classified",
+        "no-inventory": 0,
+        "sanctioned": 0,
+        "shadow": 0,
+        "tier": null,
+        "total": 0
+      }
     ]
   },
   "comparable": true,
@@ -265,6 +320,7 @@ rows, references and records are shortened.
   "generated_at": "2026-10-09T08:00:40+00:00",
   "generator": {"name": "ShadowScan", "version": "0.1.2"},
   "history": null,
+  "legacy_fleet": false,
   "reasons": [],
   "references": {
     "controls": [
@@ -319,11 +375,12 @@ rows, references and records are shortened.
 | `as_of` | string or null | The reference time for staleness: `--as-of`, else the newest source's last scan. |
 | `complete`, `status` | boolean, string | `false` and `incomplete` when the input or any source was incomplete. |
 | `comparable`, `reasons` | boolean, array | Whether the input's collection scope is comparable with `shadowscan diff`, and the scope's reason when it is not. |
-| `coverage` | object | `connectors` (every connector any source ran), `sources`, `complete_sources`, `incomplete_sources` and `unknown_coverage_sources`. |
+| `legacy_fleet` | boolean | The input is a fleet report merged before `shadowscan.fleet-merge/v2`, whose shadow counts may include unreconciled AI systems. |
+| `coverage` | object | `connectors` (every connector any source ran, without scan-level `engine.*` records), `sources`, `complete_sources`, `incomplete_sources` and `unknown_coverage_sources`. |
 | `sources` | array | One entry per source; see below. |
 | `diagnostics`, `diagnostics_omitted` | array, integer | Connector runs with errors, warnings or a skip reason: `connector`, `status`, the first 20 `errors` and `warnings` with `errors_total` and `warnings_total`, and `skip_reason`. At most 500; the rest are counted. |
 | `counts` | object | `ai_systems`, `excluded_credentials`, `inventory_status` (`shadow`, `sanctioned`, `no-inventory`), `not_reconciled_in_every_source`, `unowned`, and `by_surface`, `by_kind`, `by_provider`, `by_account` and `by_owner` as `{value, count}` lists, most frequent first, with `value` null when not recorded; `by_risk_level` lists every level, most severe first. |
-| `autonomy` | object | `basis` (`floor`), `rows` (`tier` 0 to 5 or null for not applicable, `label`, `shadow`, `sanctioned`, `no-inventory`, `total`), `priority_floor` (4) and `priority` (shadow AI systems at or above it). |
+| `autonomy` | object | `basis` (`floor`); `rows`, one per tier and then not classified and not applicable (`tier` 0 to 5 or null, `autonomy_status` `classified`, `not-classified` or `not-applicable`, `label`, `shadow`, `sanctioned`, `no-inventory`, `total`); `priority_floor` (4); `priority` (shadow AI systems at or above it); and `not_classified` (AI systems whose tier is unknown). |
 | `registries` | object | `registries`, one per registry type and id: `records`, `registered-and-observed`, `registered-not-observed`, `observed-not-registered`, `not-comparable`, `unreconciled`, `approved`, `not_approved`, `auto_approved` and `listing_complete`; and `malformed_records`. |
 | `references` | object | `note`, and `threats` and `controls` as `{ref, title, framework, edition, count}`, most frequent first. |
 | `drift` | object or null | With `--baseline`: `comparable`, `reasons`, `baseline_started_at`, `baseline_age_days`, `counts` (`new`, `resolved`, `unknown`, `changed`, `not_comparable`), `classes` and `adverse` per drift class, and the finding ids in `new`, `resolved`, `unknown` and `changed`. |
@@ -341,7 +398,7 @@ rows, references and records are shortened.
 | `started_at`, `finished_at` | string or null | When the source scan ran. |
 | `inventory_present` | boolean or null | Whether the source supplied an inventory; null when unknown. |
 | `connectors` | array or null | Each connector run as `{connector, status}`; null for a source from an older fleet report. |
-| `coverage` | object | Connector name to `complete`, `cached`, `incomplete`, `skipped`, `not-collected` or `unknown`. |
+| `coverage` | object | For each connector the source ran (scan-level `engine.*` records excepted), the least complete status of its runs: `complete`, `cached`, `incomplete` or `skipped`. A connector in `coverage.connectors` without a cell here is `not-collected`, or `unknown` when `connectors` is null. |
 | `staleness_days` | integer or null | Whole days from the last scan to `as_of`; negative when the source finished after it, null when undatable. |
 
 ### AI system records
@@ -361,6 +418,7 @@ rows, references and records are shortened.
 | `merged_from` | array | Fleet sources the AI system was found in. |
 | `threats`, `controls` | arrays | Edition-qualified [references](../concepts/mappings.md). |
 | `autonomy` | object or null | The validated `metadata.autonomy` interval. |
+| `autonomy_status` | string | `classified`, `not-classified` (a kind the scale describes, with no valid interval: unknown) or `not-applicable`. |
 | `registry` | object or null | For a vendor registry record: `registry`, `registry_id`, `record_id`, `status`, `descriptor_type`, `approval_mode`, `listing_complete`, `listing_scope`, `publisher`, `updated_at` and `bindings` (`resource`, `provider`, `account`, `region`, `coverage`); `{"malformed": true}` for a record that does not follow the contract. |
 | `registry_reconciliation` | object or null | `status` and the `records`, `observed`, `registries` and `reason` links. |
 

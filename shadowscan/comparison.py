@@ -704,8 +704,8 @@ def baseline_lifecycle_reasons(
 
 
 def _drift_totals(
-    new: list[dict[str, Any]],
-    resolved: list[dict[str, Any]],
+    new: Sequence[object],
+    resolved: Sequence[object],
     changes: list[dict[str, Any]],
     reasons: list[str],
 ) -> tuple[dict[str, int], dict[str, bool]]:
@@ -728,31 +728,15 @@ def _drift_totals(
     return counts, adverse
 
 
-def compare_reports(
+def _comparison_reasons(
     baseline: dict[str, Any],
     current: dict[str, Any],
-    *,
-    max_baseline_age_days: int | None = None,
-    now: datetime | None = None,
-) -> dict[str, Any]:
-    """Keep positive observations, but never infer absence from lost coverage.
-
-    Unmatched findings with scan-local IDs are neither new, resolved nor
-    unknown: they are listed under ``not_comparable`` and the comparison is
-    incomplete. A scan-local ID present in both reports is compared as usual.
-    Each change lists its ``drift``; ``drift_summary`` and ``adverse`` total
-    them per class. With ``max_baseline_age_days``, a baseline that cannot be
-    shown to be that recent makes the comparison incomplete.
-    """
-    if not isinstance(baseline, dict) or not isinstance(current, dict):
-        raise ValueError("reports must be JSON objects")
-    b, c = _findings(baseline), _findings(current)
-    # Validate and sanitize every imported record before publishing anything,
-    # including shared records with no substantive change. Schema keys and
-    # verified generated identities stay under the model's protection.
-    public_b = {identifier: _public_finding(record) for identifier, record in b.items()}
-    public_c = {identifier: _public_finding(record) for identifier, record in c.items()}
-    moment = now or _utcnow()
+    b: dict[str, dict[str, Any]],
+    c: dict[str, dict[str, Any]],
+    max_baseline_age_days: int | None,
+    moment: datetime,
+) -> tuple[list[str], list[str], list[str]]:
+    """Why two reports are not comparable, and the unmatched scan-local ids of each."""
     reasons = []
     for label, report in (("baseline", baseline), ("current", current)):
         if not _complete(report):
@@ -784,6 +768,35 @@ def compare_reports(
             f"set {IDENTITY_KEY_ENV} for both scans to compare gateway callers"
         )
     reasons += baseline_lifecycle_reasons(baseline, current, max_age_days=max_baseline_age_days, now=moment)
+    return reasons, local_b, local_c
+
+
+def compare_reports(
+    baseline: dict[str, Any],
+    current: dict[str, Any],
+    *,
+    max_baseline_age_days: int | None = None,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Keep positive observations, but never infer absence from lost coverage.
+
+    Unmatched findings with scan-local IDs are neither new, resolved nor
+    unknown: they are listed under ``not_comparable`` and the comparison is
+    incomplete. A scan-local ID present in both reports is compared as usual.
+    Each change lists its ``drift``; ``drift_summary`` and ``adverse`` total
+    them per class. With ``max_baseline_age_days``, a baseline that cannot be
+    shown to be that recent makes the comparison incomplete.
+    """
+    if not isinstance(baseline, dict) or not isinstance(current, dict):
+        raise ValueError("reports must be JSON objects")
+    b, c = _findings(baseline), _findings(current)
+    # Validate and sanitize every imported record before publishing anything,
+    # including shared records with no substantive change. Schema keys and
+    # verified generated identities stay under the model's protection.
+    public_b = {identifier: _public_finding(record) for identifier, record in b.items()}
+    public_c = {identifier: _public_finding(record) for identifier, record in c.items()}
+    moment = now or _utcnow()
+    reasons, local_b, local_c = _comparison_reasons(baseline, current, b, c, max_baseline_age_days, moment)
     missing = [public_b[i] for i in sorted(b.keys() - c.keys() - set(local_b))]
     changes = []
     for identifier in sorted(b.keys() & c.keys()):
@@ -816,4 +829,51 @@ def compare_reports(
         "drift_summary": drift_summary,
         "adverse": adverse,
         "baseline": {"age_days": baseline_age_days(baseline, now=moment)},
+    }
+
+
+def drift_counts(
+    baseline: dict[str, Any],
+    current: dict[str, Any],
+    *,
+    max_baseline_age_days: int | None = None,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """The totals of :func:`compare_reports` without exporting any finding.
+
+    Returns ``comparable``, ``reasons``, the number of ``new``, ``resolved``,
+    ``unknown`` and ``changed`` findings, ``drift_summary`` and ``adverse``,
+    each exactly as :func:`compare_reports` would count it. Records are
+    validated as they are for matching, but no record passes the export
+    boundary, because nothing from a record is returned: a caller that
+    publishes only counts, such as dashboard history over many reports, does
+    not pay for a sanitized copy of every finding.
+    """
+    if not isinstance(baseline, dict) or not isinstance(current, dict):
+        raise ValueError("reports must be JSON objects")
+    b, c = _findings(baseline), _findings(current)
+    reasons, local_b, local_c = _comparison_reasons(
+        baseline, current, b, c, max_baseline_age_days, now or _utcnow()
+    )
+    missing = sorted(b.keys() - c.keys() - set(local_b))
+    new = sorted(c.keys() - b.keys() - set(local_c))
+    changes = []
+    for identifier in sorted(b.keys() & c.keys()):
+        before, after = _substantive_state(b[identifier]), _substantive_state(c[identifier])
+        if before != after:
+            # Directions and adversity come from the observed states; no value is shown.
+            changes.append({"drift": _drift(before, after, before, after)})
+    resolved = [] if reasons else missing
+    drift_summary, adverse = _drift_totals(new, resolved, changes, reasons)
+    return {
+        "comparable": not reasons,
+        "reasons": reasons,
+        "counts": {
+            "new": len(new),
+            "resolved": len(resolved),
+            "unknown": len(missing) if reasons else 0,
+            "changed": len(changes),
+        },
+        "drift_summary": drift_summary,
+        "adverse": adverse,
     }

@@ -9,8 +9,10 @@ against a baseline, history and one record per AI system. The dashboard page
 
 Missing data stays visible. A connector a source did not run is ``not-collected``, a source
 from an older fleet report has ``unknown`` coverage, a report without an inventory is
-``no-inventory`` and a finding without an autonomy interval is not applicable, never a zero
-or a clean state. Nothing in the document is a compliance determination: threat and control
+``no-inventory``, and a finding of a kind the autonomy scale describes but without an interval
+is ``not-classified`` (unknown), never a zero or a clean state. Coverage cells are stored only
+for the connectors a source ran, so the document grows with its input, not with sources times
+connectors. Nothing in the document is a compliance determination: threat and control
 references are evidence references.
 
 Credential findings (``secret`` and ``token``) are counted and left out. Records carry no
@@ -31,14 +33,22 @@ from pathlib import Path
 from typing import Any
 
 from shadowscan import __version__
-from shadowscan.autonomy import LEVELS, valid_autonomy
+from shadowscan.autonomy import LEVELS, applicable, valid_autonomy
 from shadowscan.comparison import (
     _complete,
     _summary_matches_findings,
     compare_reports,
+    drift_counts,
     load_report_with_digest,
 )
-from shadowscan.fleet import CONNECTOR_STATUSES, MAX_SOURCES, PARTIAL_RECONCILIATION, connector_status
+from shadowscan.fleet import (
+    CONNECTOR_STATUSES,
+    MAX_SOURCES,
+    PARTIAL_RECONCILIATION,
+    connector_status,
+    legacy_fleet,
+    shows_inventory,
+)
 from shadowscan.mappings import describe, finding_references
 from shadowscan.models import Finding, Kind, RiskLevel, ScanResult
 from shadowscan.registries import RECONCILIATION_KEY, RECONCILIATION_STATUSES, RECORD_KEY, registry_record
@@ -50,6 +60,9 @@ INVENTORY_SCHEMA = "shadowscan.inventory/v1"
 NOT_COLLECTED = "not-collected"
 UNKNOWN = "unknown"
 INVENTORY_STATUSES = ("shadow", "sanctioned", "no-inventory")
+# An AI system's autonomy: an interval, a kind the scale describes but no interval (unknown), or a
+# kind the scale does not describe.
+AUTONOMY_STATUSES = ("classified", "not-classified", "not-applicable")
 # Autonomy floor from which an unregistered system is the priority quadrant.
 PRIORITY_FLOOR = 4
 # Two years of weekly reports; more are counted and left out, never silently.
@@ -63,6 +76,9 @@ _EXCLUDED_KIND_VALUES = frozenset(kind.value for kind in _EXCLUDED_KINDS)
 _LEVEL_VALUES = frozenset(level.value for level in RiskLevel)
 # A cell shows the least complete of a source's runs of one connector.
 _STATUS_RANK = {"complete": 0, "cached": 1, "skipped": 2, "incomplete": 3}
+# Scan-level records (``engine.fleet`` and the like) are not connectors, as for ``diff`` coverage: they
+# still make a source incomplete and appear in diagnostics, but are not coverage columns.
+_ENGINE_PREFIX = "engine."
 # Sources sanitized together: well inside the sanitizer's node bound.
 _SANITIZE_CHUNK = 200
 
@@ -183,19 +199,31 @@ def _last_scanned(source: dict[str, Any]) -> datetime | None:
     return parse_instant(source.get("finished_at")) or parse_instant(source.get("started_at"))
 
 
+def coverage_cell(source: dict[str, Any], connector: str) -> str:
+    """A source's status for one of ``coverage.connectors``; without a cell, not collected or unknown."""
+    cell = source["coverage"].get(connector)
+    if cell is not None:
+        return str(cell)
+    return UNKNOWN if source["connectors"] is None else NOT_COLLECTED
+
+
 def _coverage(sources: list[dict[str, Any]], reference: datetime | None) -> dict[str, Any]:
-    """Add each source's coverage cells and staleness; return the coverage summary."""
-    names = sorted({run["connector"] for source in sources for run in source["connectors"] or []})
+    """Add each source's coverage cells and staleness; return the coverage summary.
+
+    Only the connectors a source ran get a cell, so the cells grow with the runs listed rather
+    than with sources times connector names; :func:`coverage_cell` reads the others.
+    """
+    names: set[str] = set()
     for source in sources:
-        runs = source["connectors"]
-        if runs is None:
-            cells = dict.fromkeys(names, UNKNOWN)
-        else:
-            cells = dict.fromkeys(names, NOT_COLLECTED)
-            for run in runs:
-                current = cells[run["connector"]]
-                if current == NOT_COLLECTED or _STATUS_RANK[run["status"]] > _STATUS_RANK[current]:
-                    cells[run["connector"]] = run["status"]
+        cells: dict[str, str] = {}
+        for run in source["connectors"] or []:
+            name = run["connector"]
+            if name.startswith(_ENGINE_PREFIX):
+                continue
+            current = cells.get(name)
+            if current is None or _STATUS_RANK[run["status"]] > _STATUS_RANK[current]:
+                cells[name] = run["status"]
+        names.update(cells)
         source["coverage"] = cells
         moment = _last_scanned(source)
         source["staleness_days"] = (
@@ -204,7 +232,7 @@ def _coverage(sources: list[dict[str, Any]], reference: datetime | None) -> dict
             else None
         )
     return {
-        "connectors": names,
+        "connectors": sorted(names),
         "sources": len(sources),
         "complete_sources": sum(1 for source in sources if source["complete"]),
         "incomplete_sources": sum(1 for source in sources if not source["complete"]),
@@ -292,8 +320,16 @@ def _autonomy(value: Any) -> dict[str, Any] | None:
     return {**value, "basis": [dict(item) for item in value["basis"]]}
 
 
+def _autonomy_status(finding: Finding, block: dict[str, Any] | None) -> str:
+    if block is not None:
+        return "classified"
+    # A missing or malformed interval on a kind the scale describes is unknown, not "does not apply".
+    return "not-classified" if applicable(finding) else "not-applicable"
+
+
 def _agent(finding: Finding) -> dict[str, Any]:
     threats, controls = finding_references(finding)
+    autonomy = _autonomy(finding.metadata.get("autonomy"))
     merged_from = _strings(finding.metadata.get("merged_from"))
     partial = finding.metadata.get("fleet_inventory") == PARTIAL_RECONCILIATION
     return {
@@ -329,7 +365,8 @@ def _agent(finding: Finding) -> dict[str, Any]:
         "merged_from": merged_from,
         "threats": threats,
         "controls": controls,
-        "autonomy": _autonomy(finding.metadata.get("autonomy")),
+        "autonomy": autonomy,
+        "autonomy_status": _autonomy_status(finding, autonomy),
         "registry": _registry(finding),
         "registry_reconciliation": _reconciliation(finding.metadata.get(RECONCILIATION_KEY)),
     }
@@ -374,13 +411,15 @@ def _floor(agent: dict[str, Any]) -> int | None:
 
 
 def _autonomy_matrix(agents: list[dict[str, Any]]) -> dict[str, Any]:
-    cells: Counter[tuple[int | None, str]] = Counter(
-        (_floor(agent), agent["inventory_status"]) for agent in agents
+    cells: Counter[tuple[int | None, str, str]] = Counter(
+        (_floor(agent), agent["autonomy_status"], agent["inventory_status"]) for agent in agents
     )
+    keys: list[tuple[int | None, str, str]] = [(level.number, "classified", level.title) for level in LEVELS]
+    keys += [(None, "not-classified", "not classified"), (None, "not-applicable", "not applicable")]
     rows = []
-    for tier, label in [*((level.number, level.title) for level in LEVELS), (None, "not applicable")]:
-        row: dict[str, Any] = {"tier": tier, "label": label}
-        row.update({status: cells.get((tier, status), 0) for status in INVENTORY_STATUSES})
+    for tier, autonomy_status, label in keys:
+        row: dict[str, Any] = {"tier": tier, "autonomy_status": autonomy_status, "label": label}
+        row.update({status: cells.get((tier, autonomy_status, status), 0) for status in INVENTORY_STATUSES})
         row["total"] = sum(row[status] for status in INVENTORY_STATUSES)
         rows.append(row)
     return {
@@ -388,6 +427,8 @@ def _autonomy_matrix(agents: list[dict[str, Any]]) -> dict[str, Any]:
         "rows": rows,
         "priority_floor": PRIORITY_FLOOR,
         "priority": sum(1 for agent in agents if is_priority(agent)),
+        # Their floor is unknown: any of them could belong to the priority quadrant.
+        "not_classified": sum(1 for agent in agents if agent["autonomy_status"] == "not-classified"),
     }
 
 
@@ -551,6 +592,8 @@ def build_inventory(
         "comparable": isinstance(result.collection_scope, dict)
         and result.collection_scope.get("comparable") is True,
         "reasons": header["reasons"],
+        # A fleet merge from an earlier version may count unreconciled AI systems as shadow.
+        "legacy_fleet": legacy_fleet(result.collection_scope),
         "coverage": coverage,
         "sources": sources,
         "diagnostics": diagnostics,
@@ -580,11 +623,9 @@ def render_inventory_json(inventory: dict[str, Any]) -> str:
 
 def _history_point(name: str, report: dict[str, Any], digest: str) -> dict[str, Any]:
     findings = [item for item in report["findings"] if item.get("kind") not in _EXCLUDED_KIND_VALUES]
-    inventory = (
-        report.get("inventory_present") is True
-        or (type(report.get("inventory_size")) is int and report["inventory_size"] > 0)
-        or any(item.get("shadow") is not None for item in report["findings"])
-    )
+    # Read as the dashboard reads a report: an earlier fleet merge's shadow values alone are not
+    # evidence of an inventory.
+    inventory = shows_inventory(report)
     blocks = [
         item["metadata"]["autonomy"]
         for item in findings
@@ -609,7 +650,9 @@ def _history_pair(
 ) -> dict[str, Any]:
     pair: dict[str, Any] = {"from": before.point["name"], "to": after.point["name"]}
     try:
-        comparison = compare_reports(old, new, now=after.instant)
+        # Only counts are published, so no finding is exported: a pair costs a validation pass,
+        # not a sanitized copy of every record.
+        comparison = drift_counts(old, new, now=after.instant)
     except (ValueError, TypeError, RecursionError):
         return {**pair, "comparable": False, "reasons": 1, "classes": None, "counts": None}
     if not comparison["comparable"]:
@@ -626,7 +669,7 @@ def _history_pair(
         "comparable": True,
         "reasons": 0,
         "classes": dict(comparison["drift_summary"]),
-        "counts": {key: len(comparison[key]) for key in ("new", "resolved", "changed")},
+        "counts": {key: comparison["counts"][key] for key in ("new", "resolved", "changed")},
     }
 
 

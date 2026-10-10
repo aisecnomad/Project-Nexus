@@ -17,6 +17,19 @@ summarizes each release for people who install and operate ShadowScan.
   reconciliation per registry; threat and control reference counts
   ("Evidence references, not compliance determinations."); and the AI
   systems table. Every table reads without JavaScript.
+- One report is read as `merge` reads a source, so it shows what it would
+  show among others: each applicable finding's autonomy interval is
+  classified again (a report written before autonomy tiers shows its tiers
+  and priority quadrant), and a report without `inventory_present` counts as
+  having an inventory when its `inventory_size` is above zero or a finding
+  has a shadow status. A finding of an applicable kind without a valid
+  interval reads "not classified" (unknown, counted and warned about in the
+  priority section), not "not applicable".
+- Coverage has no column for scan-level `engine.*` records, stores a cell
+  only for the connectors each source ran (the document grows with the
+  runs, not with sources times connectors) and shows at most 100 connector
+  columns, with a note for the rest. An incomparable `--baseline` opens the
+  page with its own banner, and the coverage drift class counts reasons.
 - `--inventory-json FILE` writes the same data as the versioned
   `shadowscan.inventory/v1` document for BI and SIEM tools. Credential
   findings are counted and left out; records carry no evidence snippets,
@@ -25,7 +38,9 @@ summarizes each release for people who install and operate ShadowScan.
   findings stay unknown unless the comparison is comparable.
   `--history DIR` adds per-report totals and drift between comparable
   consecutive reports (at most the newest 104; a non-comparable pair is a
-  gap, never zero). `--as-of TIME` sets the staleness reference, which
+  gap, never zero). History counts drift without exporting findings
+  (`comparison.drift_counts`); 104 synthetic reports of 10,000 findings
+  took about 74 seconds. `--as-of TIME` sets the staleness reference, which
   otherwise is the newest source's last scan, never the wall clock.
 - Exit 3 when an input or source is incomplete or the baseline comparison is
   not comparable (the files are still written); exit 1 on invalid input.
@@ -34,15 +49,21 @@ summarizes each release for people who install and operate ShadowScan.
   each connector run's status for every source, under
   `collection_scope.fleet.schema` `shadowscan.fleet-merge/v2`, and sets the
   merged report's `inventory_present` when any source supplied an
-  inventory. The scope fingerprint is unchanged.
+  inventory. A source written before `inventory_present` existed counts as
+  having one by its `inventory_size` or a finding's shadow status. The
+  scope fingerprint is unchanged.
 - Fleet shadow status is three-valued. A finding no source reconciled
   against an inventory is now `shadow: null` (no inventory) instead of
   `true`. A finding sanctioned in one source and not reconciled in another
   stays shadow and carries `metadata.fleet_inventory`
-  (`not-reconciled-in-every-source`).
+  (`not-reconciled-in-every-source`). A fleet report merged before
+  `shadowscan.fleet-merge/v2` that shows no inventory at all reads as no
+  inventory rather than shadow, whether merged again or shown on the
+  dashboard; otherwise the dashboard warns that its shadow counts may
+  include unreconciled findings.
 - Add authored tests for each view, escaping of hostile report values,
-  coverage, determinism, private outputs and a 20,000-finding linear-time
-  render budget.
+  coverage, determinism, private outputs, a 20,000-finding linear-time
+  render budget and a linear-time history budget.
   They use synthetic reports and do not establish acceptance on a live fleet.
 
 ### Integration review corrections (#178)

@@ -23,6 +23,7 @@
                                    └─────────┬──────────┘
                                              ▼
               table · json · sarif · csv · markdown · html · cyclonedx · ocsf   (reporters)
+                   JSON reports → merge → dashboard + inventory.json   (fleet views)
 ```
 
 ## Modules
@@ -53,7 +54,7 @@
 | `shadowscan/fleet.py` | `merge` of several reports: identity-checked union, three-valued shadow status, per-source times, inventory and connector runs |
 | `shadowscan/dashboard.py` | the `shadowscan.inventory/v1` document behind `dashboard`: coverage per source and connector, counts, autonomy against shadow status, registry and reference summaries, drift and history |
 | `shadowscan/reporters/dashboard.py` | the static dashboard page rendered from that document; not a `--format` |
-| `shadowscan/cli.py` | `scan`, `run`, `code`, `gateway`, `jwt`, `connectors`, `signatures`, `inventory`, `diff` |
+| `shadowscan/cli.py` | `scan`, `run`, `code`, `gateway`, `jwt`, `endpoint`, `connectors`, `signatures`, `inventory`, `mcp-registry`, `diff`, `merge`, `dashboard` |
 
 ## Finding lifecycle
 

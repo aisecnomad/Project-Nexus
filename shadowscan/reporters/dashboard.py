@@ -4,7 +4,8 @@ Every table is rendered here, so the page reads completely without JavaScript; o
 script only filters, sorts and pages the AI systems table. The page loads nothing: its
 Content Security Policy allows that script and inline styles, and no other source. Every
 value from the document is escaped, because reports are untrusted input. The coverage panel
-comes first, and missing data reads "not collected", "unknown" or "no inventory", never 0.
+comes first, and missing data reads "not collected", "unknown", "no inventory" or "not
+classified", never 0.
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ from shadowscan.dashboard import (
     PRIORITY_FLOOR,
     REFERENCE_NOTE,
     UNKNOWN,
+    coverage_cell,
     is_priority,
 )
 from shadowscan.reporters.html import _CSS, _e
@@ -28,6 +30,8 @@ from shadowscan.reporters.html import _CSS, _e
 MAX_AGENT_ROWS = 5_000
 MAX_PRIORITY_ROWS = 1_000
 MAX_SOURCE_ROWS = 1_000
+# Connector columns of the coverage table; built-in connectors number a few dozen.
+MAX_CONNECTOR_COLUMNS = 100
 MAX_VALUE_ROWS = 25
 MAX_REFERENCE_ROWS = 50
 MAX_DRIFT_ROWS = 100
@@ -173,7 +177,11 @@ def _inventory_cell(agent: dict[str, Any]) -> str:
 
 def _floor_label(agent: dict[str, Any]) -> str:
     autonomy = agent["autonomy"]
-    return _e(autonomy["floor_label"]) if autonomy else "<span class='muted'>not applicable</span>"
+    if autonomy:
+        return _e(autonomy["floor_label"])
+    if agent["autonomy_status"] == "not-classified":
+        return "<span class='warn'>not classified</span>"
+    return "<span class='muted'>not applicable</span>"
 
 
 def _risk(agent: dict[str, Any]) -> str:
@@ -210,9 +218,18 @@ def _agent_table(agents: list[dict[str, Any]], table_id: str, caption: str) -> s
     )
 
 
+def _legacy_fleet_note() -> str:
+    return (
+        "<p class='note warn'>This fleet report was merged by an earlier version (before"
+        " shadowscan.fleet-merge/v2), which counted an AI system that any source did not reconcile,"
+        " including one from a source without an inventory, as shadow. Shadow counts may include"
+        " unreconciled AI systems; merge the source reports again with this version.</p>"
+    )
+
+
 def _coverage(inv: dict[str, Any]) -> list[str]:
     coverage, sources = inv["coverage"], inv["sources"]
-    connectors = coverage["connectors"]
+    connectors = coverage["connectors"][:MAX_CONNECTOR_COLUMNS]
     parts = ["<section id='coverage' aria-labelledby='coverage-h'><h2 id='coverage-h'>Coverage</h2>"]
     summary = (
         f"{_e(coverage['sources'])} source(s): {_e(coverage['complete_sources'])} complete,"
@@ -227,6 +244,14 @@ def _coverage(inv: dict[str, Any]) -> list[str]:
     parts.append(
         f"<p class='note'>{summary}.{as_of} A connector a source did not run reads not collected.</p>"
     )
+    hidden_columns = len(coverage["connectors"]) - len(connectors)
+    if hidden_columns > 0:
+        parts.append(
+            f"<p class='note warn'>{_e(hidden_columns)} more connector column(s) are not shown; each"
+            " source's coverage of them is in inventory.json.</p>"
+        )
+    if inv["legacy_fleet"]:
+        parts.append(_legacy_fleet_note())
 
     def order(source: dict[str, Any]) -> tuple[Any, ...]:
         stale = source["staleness_days"]
@@ -245,7 +270,7 @@ def _coverage(inv: dict[str, Any]) -> list[str]:
         status = "complete" if source["complete"] else "incomplete"
         inventory = source["inventory_present"]
         inventory_text = "unknown" if inventory is None else "supplied" if inventory else "none"
-        cells = "".join(_status_cell(source["coverage"][name]) for name in connectors)
+        cells = "".join(_status_cell(coverage_cell(source, name)) for name in connectors)
         rows.append(
             f"<tr><th scope='row'>{_e(source['name'])}</th>{_status_cell(status)}"
             f"<td>{_num(source['finished_at'] or source['started_at'])}</td>"
@@ -305,6 +330,8 @@ def _overview(inv: dict[str, Any]) -> list[str]:
     ]
     if counts["not_reconciled_in_every_source"]:
         cards.append((counts["not_reconciled_in_every_source"], "shadow, not reconciled in every source"))
+    if inv["autonomy"]["not_classified"]:
+        cards.append((inv["autonomy"]["not_classified"], "autonomy not classified (unknown)"))
     parts = [
         "<section id='overview' aria-labelledby='overview-h'><h2 id='overview-h'>Overview</h2>"
         "<p class='note'>An AI system here is any finding except a credential: an agent, workflow, app,"
@@ -348,9 +375,10 @@ def _autonomy(inv: dict[str, Any]) -> list[str]:
     return [
         "<section id='autonomy' aria-labelledby='autonomy-h'>"
         "<h2 id='autonomy-h'>Autonomy and shadow status</h2>",
-        "<p class='note'>The floor is the lowest tier the evidence proves; a finding the scale does not"
-        " apply to, or that carries no interval, is not applicable. Shadow systems at"
-        f" L{PRIORITY_FLOOR} and L5 are the priority quadrant.</p>",
+        "<p class='note'>The floor is the lowest tier the evidence proves. A finding of a kind the scale"
+        " describes that carries no valid interval is not classified: its tier is unknown. A finding the"
+        f" scale does not describe is not applicable. Shadow systems at L{PRIORITY_FLOOR} and L5 are the"
+        " priority quadrant.</p>",
         f"<table>{_caption('AI systems by autonomy floor and inventory status')}"
         f"{_header(columns, numeric=frozenset({1, 2, 3, 4}))}<tbody>{''.join(rows)}</tbody></table>",
         "</section>",
@@ -369,6 +397,15 @@ def _priority(inv: dict[str, Any]) -> list[str]:
             f"<p class='note warn'>{_e(unknown)} AI system(s) have no inventory to reconcile against;"
             " their shadow status is unknown and they are not listed here.</p>"
         )
+    unclassified = inv["autonomy"]["not_classified"]
+    if unclassified:
+        parts.append(
+            f"<p class='note warn'>{_e(unclassified)} AI system(s) carry no valid autonomy interval;"
+            f" their tier is unknown, any of them could be at L{PRIORITY_FLOOR} or above, and they are not"
+            " listed here.</p>"
+        )
+    if inv["legacy_fleet"]:
+        parts.append(_legacy_fleet_note())
     if agents:
         shown = agents[:MAX_PRIORITY_ROWS]
         parts.append(
@@ -376,6 +413,11 @@ def _priority(inv: dict[str, Any]) -> list[str]:
         )
         if len(agents) > len(shown):
             parts.append(f"<p class='note'>{_e(len(agents) - len(shown))} more in inventory.json.</p>")
+    elif unknown or unclassified:
+        parts.append(
+            "<p class='note'>No shadow AI system whose status and tier are known has an autonomy floor"
+            f" of L{PRIORITY_FLOOR} or above; the AI systems above are unknown, not absent.</p>"
+        )
     else:
         parts.append(
             "<p class='note'>No shadow AI system in these reports has an autonomy floor of L4 or above.</p>"
@@ -476,13 +518,15 @@ def _drift(inv: dict[str, Any]) -> list[str]:
         f"{_header(labels, numeric=frozenset(range(5)))}<tbody><tr>{cells}</tr></tbody></table>"
     )
     rows = "".join(
-        f"<tr><th scope='row'>{_e(name)}</th><td class='num'>{_e(count)}</td>"
+        f"<tr><th scope='row'>{_e(name)}</th>"
+        # Coverage drift is the comparison itself: its count is of reasons, not findings.
+        f"<td class='num'>{_e(count)}{' reason(s)' if name == 'coverage' else ''}</td>"
         f"<td>{'adverse' if drift['adverse'].get(name) else 'none adverse'}</td></tr>"
         for name, count in drift["classes"].items()
     )
     parts.append(
-        f"<table>{_caption('Findings with drift of each class')}"
-        f"{_header(['Drift class', 'Findings', 'Adverse'], numeric=frozenset({1}))}<tbody>{rows}</tbody>"
+        f"<table>{_caption('Findings with drift of each class; coverage counts reasons, not findings')}"
+        f"{_header(['Drift class', 'Count', 'Adverse'], numeric=frozenset({1}))}<tbody>{rows}</tbody>"
         "</table></div>"
     )
     by_id = {agent["id"]: agent for agent in inv["agents"]}
@@ -687,6 +731,12 @@ def render_dashboard(inventory: dict[str, Any]) -> str:
         parts.append(
             "<div class='controls'><strong class='shadow'>INCOMPLETE SCAN — some required inputs could not be"
             " assessed. Counts cover only what was collected; review the coverage panel.</strong></div>"
+        )
+    if inventory["drift"] is not None and not inventory["drift"]["comparable"]:
+        parts.append(
+            "<div class='controls'><strong class='shadow'>BASELINE NOT COMPARABLE — findings missing from"
+            " these reports are unknown, not resolved, and the command exits 3; see the drift section."
+            "</strong></div>"
         )
     parts.append("<main>")
     parts += _coverage(inventory)

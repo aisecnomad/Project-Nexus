@@ -37,7 +37,7 @@ from pathlib import Path
 from typing import Any
 
 from shadowscan import __version__
-from shadowscan.autonomy import merge_autonomy, valid_autonomy
+from shadowscan.autonomy import UNDERSTATED_TAG, merge_autonomy, merged_autonomy, valid_autonomy
 from shadowscan.comparison import _SCHEMA as _SCOPE_SCHEMA
 from shadowscan.comparison import _complete, _findings, _scope_digest, _started_at, _summary_matches_findings
 from shadowscan.merge import merge
@@ -79,6 +79,53 @@ def _check(report: Any, name: str) -> dict[str, Any]:
             raise ValueError(f"{name}: a finding has malformed autonomy metadata; rescan before merging")
     _findings(report)
     return report
+
+
+def legacy_fleet(scope: Any) -> bool:
+    """Whether a collection scope is a fleet merge written before shadow status stayed three-valued.
+
+    Merges before ``shadowscan.fleet-merge/v2`` recorded a finding that some source did not
+    reconcile, including one from a source without any inventory, as shadow.
+    """
+    fleet = scope.get("fleet") if isinstance(scope, dict) else None
+    return fleet is not None and not (isinstance(fleet, dict) and fleet.get("schema") == FLEET_SCHEMA)
+
+
+def _inventory_size(report: dict[str, Any]) -> int:
+    size = report.get("inventory_size", 0)
+    if type(size) is not int or size < 0:
+        raise ValueError("report inventory size must be a nonnegative integer")
+    return size
+
+
+def shows_inventory(report: dict[str, Any]) -> bool:
+    """Whether a JSON report was reconciled against an inventory: its ``inventory_present``.
+
+    A report without the key, written before it existed, was not; a value that is not a boolean
+    is refused.
+    """
+    present = report.get("inventory_present", False)
+    if type(present) is not bool:
+        raise ValueError("report inventory presence must be a boolean")
+    return present
+
+
+def _source_findings(report: dict[str, Any]) -> tuple[list[Finding], bool]:
+    """A validated report's findings, and whether it was reconciled against an inventory.
+
+    Registration counts only from a report that reconciled: in one that did not, a connector
+    or plugin set ``shadow`` and ``registry_match``, and a fleet merge from before
+    :data:`FLEET_SCHEMA` recorded unreconciled findings as shadow. Their status is unknown,
+    so both are cleared.
+    """
+    findings = [Finding.from_dict(entry) for entry in report["findings"]]
+    _inventory_size(report)
+    present = shows_inventory(report)
+    if not present:
+        for finding in findings:
+            finding.shadow = None
+            finding.registry_match = None
+    return findings, present
 
 
 def _stats(report: dict[str, Any]) -> list[ScanStats]:
@@ -179,11 +226,8 @@ def merge_reports(reports: list[tuple[str, dict[str, Any]]]) -> ScanResult:
             reasons.append(f"{name}: collection scope not comparable")
         else:
             fingerprints.append(fingerprint)
-        present = report.get("inventory_present", False)
-        if type(present) is not bool:
-            raise ValueError("report inventory presence must be a boolean")
-        for entry in report["findings"]:
-            finding = Finding.from_dict(entry)
+        source_findings, present = _source_findings(report)
+        for finding in source_findings:
             # A report's ids are untrusted. Findings merge only when the
             # identity their own fields describe agrees as well, so a report
             # cannot fold another source's finding into one of its own by
@@ -228,10 +272,7 @@ def merge_reports(reports: list[tuple[str, dict[str, Any]]]) -> ScanResult:
             started.append((moment, report["started_at"]))
         if isinstance(report.get("finished_at"), str):
             finished.append(report["finished_at"])
-        size = report.get("inventory_size", 0)
-        if type(size) is not int or size < 0:
-            raise ValueError("report inventory size must be a nonnegative integer")
-        inventory_size = max(inventory_size, size)
+        inventory_size = max(inventory_size, _inventory_size(report))
         inventory_present = inventory_present or present
         sources.append(
             {
@@ -244,7 +285,7 @@ def merge_reports(reports: list[tuple[str, dict[str, Any]]]) -> ScanResult:
                 # and per-source coverage instead of only the flattened statistics.
                 "started_at": _text(report.get("started_at")),
                 "finished_at": _text(report.get("finished_at")),
-                "inventory_present": report.get("inventory_present") is True,
+                "inventory_present": present,
                 "connectors": [
                     {"connector": entry.connector, "status": connector_status(entry)}
                     for entry in source_stats
@@ -295,8 +336,12 @@ def report_result(name: str, raw: Any) -> ScanResult:
 
     The report is validated as :func:`merge_reports` validates a source, and its findings,
     metadata and collection scope are kept as written, so a fleet report keeps its sources
-    and ``metadata.merged_from``. A report whose completion evidence is missing or does not
-    match its findings is incomplete, as such a fleet source would be.
+    and ``metadata.merged_from``. Shadow status and the autonomy interval are read as
+    :func:`merge_reports` reads a source's: each finding is classified again and its interval
+    admits at least what its own block admits, so a report written before autonomy tiers is
+    classified rather than shown as unclassified, and one report reads as it would among
+    others. A report whose completion evidence is missing or does not match its findings is
+    incomplete, as such a fleet source would be.
     """
     report = _check(raw, name)
     stats = _stats(report)
@@ -309,17 +354,24 @@ def report_result(name: str, raw: Any) -> ScanResult:
                 errors=[f"{name}: source report is incomplete or has inconsistent completion evidence"],
             )
         )
-    size = report.get("inventory_size", 0)
-    if type(size) is not int or size < 0:
-        raise ValueError("report inventory size must be a nonnegative integer")
+    findings, reconciled = _source_findings(report)
+    for finding in findings:
+        sources = [finding.metadata["autonomy"]] if "autonomy" in finding.metadata else []
+        # Only a finding whose interval or tag changes is touched: an unchanged one stays verified
+        # clean, so a current report is not sanitized a second time.
+        if merged_autonomy(finding, sources) != (
+            finding.metadata.get("autonomy"),
+            UNDERSTATED_TAG in finding.tags,
+        ):
+            merge_autonomy(finding, sources)
     scope = report.get("collection_scope")
     result = ScanResult(
-        findings=[Finding.from_dict(entry) for entry in report["findings"]],
+        findings=findings,
         stats=stats,
         version=_text(report.get("version")) or "",
-        inventory_size=size,
+        inventory_size=_inventory_size(report),
         collection_scope=scope if isinstance(scope, dict) else None,
-        inventory_present=report.get("inventory_present") is True,
+        inventory_present=reconciled,
     )
     result.started_at = _text(report.get("started_at")) or ""
     result.finished_at = _text(report.get("finished_at"))
