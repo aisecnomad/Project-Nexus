@@ -1091,7 +1091,16 @@ def test_agent_registry_records_never_bind_or_claim_another_projects_engines(
         name=f"projects/{N}/locations/global/agents/wired",
         runtime_reference=f"//aiplatform.googleapis.com/projects/{segment}/locations/us-central1/reasoningEngines/7",
     )
-    trusted = [{"registry": "google-agent-registry", "id": AR_ID, "allow_registered_only": True}]
+    # The export is replayed offline, so the entry opts in to offline records: the cross-project
+    # rule, not the offline default, must keep the other project's engines unapproved.
+    trusted = [
+        {
+            "registry": "google-agent-registry",
+            "id": AR_ID,
+            "allow_registered_only": True,
+            "allow_offline_records": True,
+        }
+    ]
     result = scan(
         index,
         write_records(tmp_path, [*fixture_records(), *_victim_project(**coverage), record]),
@@ -1113,6 +1122,8 @@ def test_agent_registry_records_never_bind_or_claim_another_projects_engines(
     )
     assert RECONCILIATION_KEY not in findings[RE_SHADOW].metadata
     assert status(findings[RE_OK]) == "registered-and-observed"
+    # Positive control: the same trusted entry approves acme-ml's own bound engine.
+    assert findings[RE_OK].shadow is False
 
 
 @pytest.mark.parametrize(
@@ -1626,8 +1637,24 @@ UNRECOGNIZED = "cloud.gcp: Agent Registry runtime reference to Vertex AI or Dial
         (f"//aiplatform.googleapis.com/{RE_SHADOW}/", False),
         (f"//AIPLATFORM.googleapis.com/{RE_SHADOW}", False),
         (f"//dialogflow.googleapis.com/projects/{P}/locations/global/agents/abc/flows/x", False),
+        (f"//aiplatform.googleapis.com/{RE_SHADOW}/sessions/1", False),
+        (
+            f"//aiplatform.googleapis.com/projects/{P}/locations/us-central1/publishers/google/models/m/",
+            False,
+        ),
+        (
+            f"//aiplatform.googleapis.com/projects/{P}/locations/us-central1/endpoints/../reasoningEngines/1",
+            False,
+        ),
         # A plain resource name of a collection the scan does not observe names no engine.
         (f"//aiplatform.googleapis.com/projects/{P}/locations/us-central1/endpoints/1", True),
+        # So does a nested plain name outside the observed collections (a publisher model).
+        (
+            f"//aiplatform.googleapis.com/projects/{P}/locations/us-central1"
+            "/publishers/google/models/gemini-2.0-flash",
+            True,
+        ),
+        (f"//aiplatform.googleapis.com/projects/{P}/locations/us-central1/ragCorpora/1/ragFiles/2", True),
         # Neither Vertex AI nor Dialogflow.
         (f"//container.googleapis.com/projects/{P}/locations/us-central1/clusters/c", True),
         (f"https://aiplatform.googleapis.com.evil.example/{RE_SHADOW}", True),

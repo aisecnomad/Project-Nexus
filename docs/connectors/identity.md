@@ -65,8 +65,8 @@ with registry `microsoft-agent-365`, registry id `tenant_id`, descriptor type
 | `availableTo: allowedForNone` (or `none`) | `draft` |
 | `isBlocked: false`, available to all or some users, and an approved request | `approved` |
 | `isBlocked: false`, available to all or some users, no request, and an organization's own package (`type` `custom`, `shared` or `lob`) | `registered` |
-| `isBlocked: false`, available to all or some users, no request, and a Microsoft or partner package | `approved` |
-| any other combination, such as a missing `isBlocked` or an unknown enum member | `unknown` |
+| `isBlocked: false`, available to all or some users, no request, and a Microsoft or partner package (`type` `microsoft` or `external`) | `approved` |
+| any other combination, such as a missing `isBlocked` or `type`, or an unknown enum member (including `unknownFutureValue`) | `unknown` |
 
 The rules apply in that order. Enum members are compared case-insensitively,
 and both spellings Microsoft's pages use (`allowedForAll` and `all`,
@@ -100,7 +100,9 @@ A package whose details are missing binds nothing.
 A binding's coverage is `in-scope` only when the same run, or the run that
 wrote the replayed export, collected that object type completely across the
 tenant (an app-only listing) and no record was rejected as malformed (the
-rejected record may be the bound object); otherwise it is `unknown`. Service
+rejected record may be the bound object); otherwise it is `unknown`. In a
+replay, a record the offline loader dropped (an invalid or truncated JSON line,
+a duplicate key, a provider error record) counts as rejected. Service
 principals and app registrations a package binds are reported even without AI
 signals of their own (`metadata.registry_bound`), so the bindings can match them.
 `listing_complete` is true only when an app-only listing and every detail call
@@ -179,15 +181,19 @@ When an opt-in collection ran, live collection appends one
 `agentRegistryCoverage` record (`packages`, `agentIdentities`: `complete`,
 `incomplete` or `not-collected`; `applications`: `complete` or `incomplete`;
 `listingScope`: `registry` or `caller`; `tenantId`: the tenant the credential
-is bound to, that is the checked `tid` of a pre-issued or delegated token, or
-`tenant_id` for client credentials). It is exported with the other records,
+is bound to, that is the decoded `tid` of a pre-issued or delegated token,
+whether or not `tenant_id` is set, or `tenant_id` for client credentials;
+`null` when no tenant could be established, for example from a token that
+cannot be decoded). It is exported with the other records,
 so a replay keeps `listing_complete` and `in-scope` bindings and reports an
 incomplete collection, a caller-scoped listing, or a package whose details
 were missing, as incomplete again. A replay whose `tenant_id` differs from the
 marker's `tenantId` (compared case-insensitively) is incomplete, and its
-records get an empty registry id, so no trusted registry can approve another
-tenant's packages. An older export whose marker has no `tenantId` is
-attributed to `tenant_id` as before. An export without the marker, for example
+records get an empty registry id and no bindings, so no trusted registry can
+approve another tenant's packages and they cannot mark the configured tenant's
+objects `registered-and-observed`. A marker with `tenantId: null` replays the
+same way when `tenant_id` is set. Only an older export whose marker has no
+`tenantId` field is attributed to `tenant_id` as before. An export without the marker, for example
 one taken from Graph by hand, gives `listing_complete: false` and `unknown`
 binding coverage. The fixture
 `tests/fixtures/identity/entra_agent_registry.json` is synthetic, modeled on

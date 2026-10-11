@@ -802,7 +802,12 @@ even an empty one, and `inventory_size` is the largest source inventory.
 Report files are untrusted input. A finding id that another report already
 uses for a finding with another identity (resource, connector, account and
 the other identity fields) is refused (exit 1) rather than merged, as is a
-report whose `inventory_present` is not a boolean. Machines that share a host
+report whose `inventory_present` is not a boolean. A report without
+`inventory_present`, such as one written by the v0.1.x releases, merges as
+inventory-less only when it records no registration (no `shadow` verdict, no
+`registry_match` and an `inventory_size` of 0); otherwise it is refused
+(exit 1) rather than having its shadow verdicts dropped to `unassessed`.
+Rescan such sources with this version before merging. Machines that share a host
 name and home directory, such as clones of one VM image, produce the same
 identities and merge as one machine scanned twice; give each a distinct
 `--label`, such as its asset tag.

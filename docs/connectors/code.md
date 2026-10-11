@@ -396,7 +396,8 @@ HTTP clients can read another host from it), and a
 signature state of `absent`, `present-unverified` or `invalid` (card files are
 never verified). Cards are tagged `no-auth-declared`, `a2a-plaintext-interface`
 (an `http://` or `ws://` interface to a host not known to be loopback, such an
-interface included) and
+interface included, with the URL read as WHATWG URL parsers read it, so
+`http:/host`, `http:\\host` or a scheme split by a tab still counts) and
 `a2a-card-signature-invalid` (a malformed signature entry). A card that
 declares a protocol version other than 0.x or 1.x is still reported, with a
 warning that makes the scan incomplete. JSON/YAML descriptions are not
@@ -697,6 +698,16 @@ example `run-gemini-cli` `settings` or `claude-code-action` `mcp_config`) are
 reported from that workflow, and an embedded object that cannot be parsed
 makes the scan incomplete.
 
+A server URL gets `mcp-insecure-transport` when it is `http://` or `ws://` to
+a host not known to be loopback, read as WHATWG URL parsers (Node and browser
+clients) read it: tab, CR and LF are removed, leading control characters are
+stripped, and a host after one slash, three slashes or backslashes
+(`http:/host`, `http:\\host`) or before a backslash counts as a host that
+cannot be told. The check uses the configured URL: when redaction of an `env`
+value elsewhere in the file hides a plaintext URL's scheme or host in the
+record, the server is marked `plaintext_transport: true` (no value kept) and
+still gets the tag and the `mcp-plain-http` factor.
+
 ### MCP registry provenance
 
 With [`options.mcp_registries`](../getting-started/configuration.md#mcp-registry-snapshots),
@@ -716,9 +727,10 @@ or connects to, and by nothing else:
    spelled `docker.io`. The exact version or image tag the launch pins is the
    configured version; a range or a moving tag such as `latest` pins none;
 2. a server reached at a URL and with no command (a remote transport such as
-   `http`, `sse` or `streamable-http`, or no transport): its URL, compared with
-   the scheme and host lowercased and the default port, query, fragment and
-   trailing `/` removed;
+   `http`, `sse` or `streamable-http`, or no transport): its URL and every
+   `remotes[]` URL it also lists, which one registry name must list together,
+   compared with the scheme and host lowercased and the default port, query,
+   fragment and trailing `/` removed;
 3. an MCP server manifest (a `server.json` document with a top-level `name`
    and `packages` or `remotes`, not a server table): every package and remote
    URL it declares, which one registry name must list together.
@@ -732,7 +744,9 @@ when its launch names no registry package or could fetch or run something else:
 
 - the launcher is not a bare program name or an absolute path: `./npx`,
   `tools/uvx` or `.\npx.cmd` runs a file of the server's working directory,
-  usually the scanned repository, and a UNC path a file on another host;
+  usually the scanned repository, and a UNC path a file on another host. A
+  path under `/proc` or `/dev` (`/proc/self/cwd/npx`) counts as relative: the
+  kernel resolves it in the started process, against its working directory;
 - `node ./server.js`, a shell command line, a local path, a Git, URL or file
   source, an npm alias (`name@npm:other`), more than one `-p`/`--package` or a
   command that is not the package's own;
@@ -749,7 +763,8 @@ when its launch names no registry package or could fetch or run something else:
   programs and configuration are found or how they load (`PATH`, `PATHEXT`,
   `HOME`, `USERPROFILE`, `APPDATA`, `LOCALAPPDATA`, `PROGRAMDATA`, `XDG_*`,
   `TMPDIR`, `TEMP`, `TMP`, `LD_*`, `DYLD_*`, `COMSPEC`, `SHELL`, `BASH_ENV`,
-  `ENV`, `SSL_*`, `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE`). `NODE_ENV`,
+  `ENV`, `SSL_*`, `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE`, and `PREFIX` and
+  `DESTDIR`, under which npm reads its global npmrc). `NODE_ENV`,
   `PYTHONUNBUFFERED`, `PYTHONIOENCODING`, `PYTHONDONTWRITEBYTECODE` and
   `PYTHONUTF8` change neither, and credentials such as `GITHUB_TOKEN` are not
   in these namespaces;
@@ -762,7 +777,16 @@ when its launch names no registry package or could fetch or run something else:
   cannot be told from the configuration;
 - a `cmd /c` command line, or the arguments of a batch file (`npx.cmd`), that
   holds an operator, quote or a `%VAR%` or `!VAR!` reference: cmd.exe expands
-  variables before it reads operators, so a variable can hold `& command`.
+  variables before it reads operators, so a variable can hold `& command`. The
+  check reads every configured argument, not only the twelve the record keeps;
+- a launch whose record redaction or truncation changed: parsing treats every
+  `env` value of the file as a secret and redacts it wherever it appears, so an
+  env name, a `cmd /c` argument or a `docker run -e` that equals one of them
+  (or contains a short one) is shown as `[REDACTED]`. The parser decides the
+  launch on the configured values and, when the record would otherwise name a
+  different package, marks it `launch_unidentified: true` (no value kept). A
+  record with a redacted env name, `docker run -e` value, or `cmd /c` or batch
+  file argument names no package either.
 
 So does a URL that is templated, carries user information (redacted when the
 configuration is parsed, and able to name another host to the client:

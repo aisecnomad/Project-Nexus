@@ -121,7 +121,13 @@ summarizes each release for people who install and operate ShadowScan.
   source that reported it had an inventory. A shadow or unassessed finding has
   no `registry_match`. The merged report carries `inventory_present`
   (true when any source had an inventory, even an empty one), and a source
-  whose `inventory_present` is not a boolean is refused (exit 1).
+  whose `inventory_present` is not a boolean is refused (exit 1). A source
+  without `inventory_present` (reports from the v0.1.x releases, which share
+  the finding identity schema) is refused (exit 1) when it records any
+  registration (`shadow`, `registry_match` or a nonzero `inventory_size`):
+  reading the missing key as "no inventory" silently turned its shadow
+  verdicts into `unassessed` and lowered the fleet's shadow count. Rescan
+  such sources before merging.
   The terminal table, Markdown and HTML reports label such a finding
   `unassessed` and count them in the summary when the merged report has an
   inventory, instead of leaving a blank cell that reads as registered.
@@ -454,6 +460,27 @@ summarizes each release for people who install and operate ShadowScan.
   since an HTTP client can read another host from it
   (`http://remote.example\@localhost/` reaches `remote.example`); its evidence
   then names no host.
+- Identity and transport checks no longer read only the sanitized record.
+  Parsing redacts every `env` value of a file wherever it appears and keeps
+  twelve arguments, which could hide the `NODE_OPTIONS` or `PATH` name, the
+  `cmd /c` operator or `%VAR%`, or the `docker run -e` value that leaves a
+  launch unidentified, and let the approved catalog vouch for it. The parser
+  now decides on the configured values and marks a server whose record would
+  name a different package `launch_unidentified: true`, and a plaintext URL
+  that redaction hid `plaintext_transport: true` (it keeps the
+  `mcp-insecure-transport` tag and the `mcp-plain-http` factor); neither
+  marker holds a value. A record with a redacted env name, `docker run -e`
+  value, or `cmd /c` or batch-file argument names no package.
+- A launcher under `/proc` or `/dev` (`/proc/self/cwd/npx`) counts as a
+  relative path, and `PREFIX` and `DESTDIR`, under which npm reads its global
+  npmrc and so its registry, leave a launch unidentified.
+- A remote server with `remotes[]` beside its URL is matched by every
+  endpoint it lists, which one registry name must list together; before, only
+  the first URL was compared.
+- `mcp-insecure-transport` and `a2a-plaintext-interface` read a URL as WHATWG
+  URL parsers do: tab, CR and LF removed, leading control characters stripped,
+  and `http:/host`, `http:\\host` or `http:///host` taken as a plaintext
+  remote host (`http:///host` was not flagged before).
 - The tests use a synthetic snapshot shaped like the live registry API. No
   live registry fetch or tenant acceptance is part of the test suite.
 
@@ -523,7 +550,11 @@ summarizes each release for people who install and operate ShadowScan.
   is not a plain resource name (an `https:` URL, an API version segment, a
   trailing slash) makes that registry's listing incomplete and the scan
   incomplete (exit 3, one warning). It was previously ignored, so the engine
-  it registered could be reported `observed-not-registered`.
+  it registered could be reported `observed-not-registered`. So does a nested
+  name under a reasoning engine or Dialogflow agent (`agents/<id>/flows/<id>`).
+  A plain nested name of a collection the scan does not observe (a publisher
+  model, `publishers/google/models/<id>`) names no engine and is read like a
+  Vertex AI endpoint; it previously made every such scan exit 3.
 - A publisher record must be named as a publisher of the project and location
   it was listed in (`_project` and `_location` are now required), and one named
   with another project's number is dropped like a foreign record, so it can no
@@ -559,7 +590,12 @@ summarizes each release for people who install and operate ShadowScan.
   without a warning or error in that region for the scanned account (an
   export that rejects a runtime or gateway record counts) and every runtime and
   gateway finding of that region could be reported. An auto-detected record
-  still in `DRAFT` binds nothing: nobody submitted it, so it registers nothing.
+  binds whatever its status: a `DRAFT` nobody submitted registers nothing
+  (core reconciliation reports it `not-comparable`, `record-status`), but its
+  binding keeps the registry's account in scope, so the runtime or gateway
+  behind a registry of drafts only reads `observed-not-registered` when the
+  listing is complete. Stripping the draft's binding had left such a registry
+  without scope and its runtimes without any reconciliation.
   Provenance on a record created through the API is the publisher's assertion
   and binds nothing, and a provenance relation this release does not recognize
   binds nothing and makes the scan incomplete.
@@ -600,6 +636,27 @@ summarizes each release for people who install and operate ShadowScan.
   `registry_coverage: approved-only`, never set `listing_complete`, have no
   bindings and `approval_mode: unknown`, and keep their registry's account
   without being marked unresolved. Batch errors report only their codes.
+- AgentCore gateway findings are named by the gateway ARN, read through
+  `GetGateway` (already covered by `bedrock-agentcore:Get*`): `ListGateways`
+  returns no ARN, so live gateway findings were named by their id and a
+  registry binding to the gateway ARN could never match, reading the record
+  `registered-not-observed` and the gateway `observed-not-registered` in a
+  complete scan. Only the ARN and URL are kept from `GetGateway`. A failed
+  call, or details without an ARN, makes the scan incomplete; a gateway
+  replayed from an older export without its ARN takes its region's bindings
+  out of scope. Live gateway finding ids change: re-baseline them.
+- A runtime, gateway or registry record that analysis rejects, that an export
+  rejects or a replay drops, or whose finding `run` omits for failing
+  sanitization now withdraws the registry claims it could undercut: every
+  record's `listing_complete` becomes false and every in-scope binding
+  `unknown`. Surviving records had kept `listing_complete` and replay had kept
+  the exported in-scope coverage, so an incomplete scan still reported
+  `observed-not-registered` or `registered-not-observed` as facts.
+- Analysis bounds the text of a replayed registry record to the collection
+  limits (names, display names, status reasons and registry names to 300
+  characters, record versions to 64, provenance to the exported fields) and
+  rebuilds its descriptor summary with the collection limits and fields; an
+  edited export had carried unbounded text into titles and metadata.
 - The registry responses and `tests/fixtures/cloud/aws_registry_records.jsonl`
   are synthetic, modeled on the installed SDK models; nothing was validated
   against a live account. The README demo export is unchanged.
@@ -678,14 +735,26 @@ summarizes each release for people who install and operate ShadowScan.
   request, such as an agent a user shared, is `registered` instead of
   `approved`. A trusted tenant entry accepts it, with the app registration and
   agent identity it binds, only with `allow_registered_only`;
-  `allow_auto_approved` no longer approves it without a reviewer.
+  `allow_auto_approved` no longer approves it without a reviewer. Only a
+  Microsoft or partner package (`type` `microsoft` or `external`) with no
+  request is `approved`; a package with no request whose `type` is missing or
+  any other member (such as `unknownFutureValue`, which Graph returns for a
+  member added later) is `unknown`, so `allow_auto_approved` does not sanction
+  it or the agent identity it names.
 - A binding's coverage is `unknown` instead of `in-scope` when any record of the
   export was rejected as malformed, so a present but malformed app registration
-  or agent identity is not reported `registered-not-observed`.
+  or agent identity is not reported `registered-not-observed`. In a replay, a
+  record the offline loader dropped (an invalid or truncated JSON line, a
+  duplicate key, a provider error record) counts as rejected too: binding
+  coverage is `unknown` and `listing_complete` is `false`.
 - The coverage marker records the tenant the credential is bound to
   (`tenantId`). A replay whose `tenant_id` differs from it is incomplete and its
-  records get an empty registry id, so they cannot be trusted; an older export
-  without the field replays as before.
+  records get an empty registry id and no bindings, so they cannot be trusted
+  and cannot mark the configured tenant's objects `registered-and-observed`. A
+  pre-issued token's decoded `tid` is recorded also when `tenant_id` is not set
+  or names another tenant, and a run whose tenant is unknown writes
+  `tenantId: null`, which a replay with `tenant_id` treats as unattributed and
+  incomplete; only an older export without the field replays as before.
 - The fixtures and Graph payloads in the tests are synthetic, modeled on
   Microsoft's Graph reference pages; nothing was validated against a live
   tenant.
