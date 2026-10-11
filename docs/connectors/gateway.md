@@ -127,7 +127,11 @@ also marks the scan incomplete, so a forged record cannot offset real usage.
 Hour-of-day and weekday statistics (`night_share`, `weekend_share`,
 `always-on`) are computed in UTC and the connector has no timezone option. A
 single-timezone team sharing one unattributed key can look round-the-clock, so
-read `always-on` against the organization's local working hours.
+read `always-on` against the organization's local working hours. The tag alone
+is informational: the [autonomy classification](../concepts/autonomy.md) reads
+it as initiation evidence only when `metadata.activity.always_on_corroborated`
+is true, that is, when tool use, an agent-framework user agent or an unattended
+identity corroborates the cadence.
 
 ## `gateway.otel`
 Aggregates OpenTelemetry GenAI span exports without retaining prompt content.

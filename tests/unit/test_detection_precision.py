@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 
+from shadowscan.autonomy import classify
 from shadowscan.connectors.cloud.common import scan_env
 from shadowscan.connectors.common import (
     apply_matches,
@@ -1069,6 +1070,9 @@ def test_round_the_clock_human_caller_is_not_agentic(tmp_path: Path, run_connect
     )
     always_on = next(e for e in finding.evidence if e.signal == "gateway:always-on")
     assert always_on.weight == 0.3 and "without tool use" in always_on.description
+    # Regression: the informational tag alone was read as schedule initiation.
+    autonomy = classify(finding)
+    assert autonomy is not None and autonomy["initiation"] == "unknown"
 
 
 @pytest.mark.parametrize(
@@ -1090,6 +1094,8 @@ def test_corroborated_round_the_clock_callers_are_agentic(tmp_path: Path, run_co
     assert finding.metadata["agent_indicators"] >= 1
     assert finding.metadata["activity"]["always_on_corroborated"] is True
     assert next(e for e in finding.evidence if e.signal == "gateway:always-on").weight == 0.5
+    autonomy = classify(finding)
+    assert autonomy is not None and (autonomy["initiation"], autonomy["oversight"]) == ("schedule", "unknown")
 
 
 def test_business_hours_caller_has_no_temporal_signal(tmp_path: Path, run_connector):

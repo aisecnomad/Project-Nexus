@@ -130,7 +130,11 @@ _BYPASS_SIGNATURES = frozenset({"heuristic.autonomy"})
 # Signature evidence for code wired to a scheduler, queue or webhook.
 _TRIGGER_SIGNATURES = frozenset({"heuristic.scheduled-agent"})
 
-_SCHEDULE_TAGS = frozenset({"scheduled", "always-on"})
+_SCHEDULE_TAGS = frozenset({"scheduled"})
+# A gateway caller active around the clock. The tag alone is informational (a team sharing one key
+# across time zones is also active around the clock); it is initiation evidence only when the
+# connector corroborated the cadence with tool use, an agent framework or an unattended identity.
+_CADENCE_TAG = "always-on"
 _EVENT_TAGS = frozenset({"event-triggered"})
 # Workflow definition language trigger types (Power Automate and Logic Apps ``trigger_types``).
 _SCHEDULE_TRIGGER_TYPES = frozenset({"recurrence", "slidingwindow"})
@@ -179,6 +183,14 @@ def _approval_scope(finding: Finding) -> str | None:
     return scope if isinstance(scope, str) and scope in {"every-action", "some-actions"} else None
 
 
+def _corroborated_cadence(finding: Finding, tags: set[str]) -> bool:
+    """Whether the ``always-on`` tag comes with the connector's corroboration of an unattended caller."""
+    if _CADENCE_TAG not in tags:
+        return False
+    activity = finding.metadata.get("activity")
+    return isinstance(activity, dict) and activity.get("always_on_corroborated") is True
+
+
 def _trigger_initiation(finding: Finding) -> str | None:
     """``schedule`` or ``event`` from trigger tags or connector trigger metadata, else None."""
     tags = set(_strings(finding.tags))
@@ -186,7 +198,12 @@ def _trigger_initiation(finding: Finding) -> str | None:
     flow = metadata.get("trigger_type")
     flow_trigger = _folded(flow) if isinstance(flow, str) else ""
     types = {_folded(value) for value in _strings(metadata.get("trigger_types"))}
-    if tags & _SCHEDULE_TAGS or flow_trigger in _SCHEDULE_FLOW_TRIGGERS or types & _SCHEDULE_TRIGGER_TYPES:
+    if (
+        tags & _SCHEDULE_TAGS
+        or _corroborated_cadence(finding, tags)
+        or flow_trigger in _SCHEDULE_FLOW_TRIGGERS
+        or types & _SCHEDULE_TRIGGER_TYPES
+    ):
         return "schedule"
     event = metadata.get("trigger")
     if (

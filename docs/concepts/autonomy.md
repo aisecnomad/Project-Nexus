@@ -141,7 +141,7 @@ an approval step.
 | ServiceNow use case and trigger records | A record or application event (tag `event-triggered`) or a schedule (tag `scheduled`) starts the use case. A use case without a trigger runs from a conversation and records neither | Initiation only |
 | Azure Logic App recurrence | A schedule starts the flow (`metadata.trigger_types`) | Initiation only |
 | GCP Cloud Function `eventTrigger` | An event starts the function (`metadata.trigger`) | Initiation only |
-| Gateway caller active around the clock | Cadence of an unattended caller (tag `always-on`) | Initiation only |
+| Gateway caller active around the clock | Cadence of an unattended caller (tag `always-on` with `metadata.activity.always_on_corroborated`) | Initiation only |
 | AWS Step Functions state machine with LLM steps | An unattended workflow definition | Neither: the kind `workflow` already sets L3 |
 | Signature `heuristic.scheduled-agent` | Code wired to a scheduler, queue or webhook | Explains the capability; not initiation evidence (it cannot tell a schedule from an event) |
 
@@ -176,7 +176,7 @@ client may still approve tools some other way. Lifecycle tags (`disabled`,
 | `approval-bypassed` | `bypassed` | Any approval-bypass evidence. |
 | `approval-gated` | `gated` | Otherwise, any `approval_gate` or tag `asks-user`. |
 | `no-oversight-evidence` | `unknown` | Otherwise. |
-| `schedule-trigger` | `schedule` | Tag `scheduled` or `always-on`; Salesforce `trigger_type: Scheduled`; workflow `trigger_types` `Recurrence` or `SlidingWindow`. |
+| `schedule-trigger` | `schedule` | Tag `scheduled`; tag `always-on` when the gateway corroborated the cadence (`metadata.activity.always_on_corroborated` is true; the tag alone is informational, since a team sharing one key across time zones is also active around the clock); Salesforce `trigger_type: Scheduled`; workflow `trigger_types` `Recurrence` or `SlidingWindow`. |
 | `event-trigger` | `event` | Tag `event-triggered`; Salesforce `trigger_type` `RecordAfterSave`, `RecordBeforeSave`, `RecordBeforeDelete` or `PlatformEvent`; workflow `trigger_types` `ApiConnection`, `ApiConnectionWebhook`, `OpenApiConnection`, `OpenApiConnectionWebhook` or `HttpWebhook`; a function `trigger` naming an event type. |
 | `interactive-client` | `human` | An endpoint editor extension, browser extension or command found in shell history (`resource_type` `ide-extension`, `browser-extension`, `cli-usage`), with no trigger evidence. |
 | `no-initiation-evidence` | `unknown` | Otherwise. A configured client (`agent-config`) can also run unattended, for example a personal agent gateway or a CI job, so it is not person-started evidence. |
@@ -233,7 +233,7 @@ posture entry, or skips a malformed settings record, also keeps the gate at
 | Low-code | Workflow kind (L3); agents with tool records (a ServiceNow agent carries `tool-use` only with tool records, and `saas-actions` only when a tool is not a retrieval); `saas-actions`; ServiceNow autonomous agents | None | Schedule and event tags (a trigger a person operates records neither), Salesforce `trigger_type`, Power Automate recurrence |
 | SaaS | Bot and app capabilities; tag `write-access` | None | None |
 | Cloud | Agent resources with tools; action groups and code interpreters (`code-exec`); workflows (Step Functions, Logic Apps); `multi-agent` collaborators | Bedrock `requireConfirmation`; `asks-user` (partial) | Logic App `trigger_types`, Cloud Function `trigger` |
-| Gateway | Tool-use and multi-agent request shapes | None | Tag `always-on` |
+| Gateway | Tool-use and multi-agent request shapes | None | Tag `always-on`, when corroborated |
 | Identity, network | Not applicable: grants, identities, tokens and network contacts carry no autonomy | | |
 
 ## Declared and observed levels
