@@ -262,6 +262,42 @@ def test_readme_links_work_on_the_package_index() -> None:
     assert _pyproject()["project"]["readme"] == "README.md"
 
 
+# Root documents the site includes as snippets (CHANGELOG.md, RELEASE_NOTES.md, SECURITY.md,
+# GOVERNANCE.md), plus README.md and CONTRIBUTING.md, which GitHub renders the same way.
+_SITE_ROOT_DOCS = (
+    "CHANGELOG.md",
+    "RELEASE_NOTES.md",
+    "SECURITY.md",
+    "GOVERNANCE.md",
+    "CONTRIBUTING.md",
+    "README.md",
+)
+# One to six "#" followed by anything but a space or another "#": Markdown renders the line as a
+# heading, which a wrapped reference such as "#132 and #133" at the start of a line never means.
+_ACCIDENTAL_HEADING = re.compile(r"^#{1,6}[^# ]")
+
+
+def _site_documents() -> list[Path]:
+    return [*(ROOT / name for name in _SITE_ROOT_DOCS), *sorted((ROOT / "docs").rglob("*.md"))]
+
+
+def _accidental_headings(text: str) -> list[int]:
+    """Line numbers outside fenced code blocks that Markdown would render as a heading by accident."""
+    return [number for number, line in _prose_lines(text) if _ACCIDENTAL_HEADING.match(line)]
+
+
+def test_accidental_heading_check_ignores_code_blocks_and_real_headings() -> None:
+    text = "# Title\n\n#123 and #124 were merged.\n\n```sh\n#!/bin/sh\n```\n\n## Section\n\n#######x\n  #5 indented\n"
+    assert _accidental_headings(text) == [3]
+
+
+@pytest.mark.parametrize("markdown", _site_documents(), ids=_relative)
+def test_no_prose_line_starts_with_an_issue_number(markdown: Path) -> None:
+    """A wrapped line that starts with ``#132`` renders as a heading on the docs site and on GitHub."""
+    lines = _accidental_headings(_read(markdown))
+    assert not lines, f"{_relative(markdown)}: re-wrap lines {lines} so they do not start with '#'"
+
+
 def test_issue_form_links_reference_forms_that_exist() -> None:
     forms = {path.name for path in FORMS}
     for markdown in _markdown_files():
@@ -927,8 +963,11 @@ def test_signature_count_claims_are_recognised(text: str, claims: list[tuple[int
 
 # Root documents that describe the current tree. The site includes RELEASE_NOTES.md, SECURITY.md and
 # GOVERNANCE.md as snippets, so a stale number there is published too. CHANGELOG.md is a dated log
-# that quotes earlier counts and is left out.
+# that quotes earlier counts and is left out, as are the released sections of RELEASE_NOTES.md,
+# which quote the counts of their own version (see ``_current_text``).
 _CURRENT_ROOT_DOCS = ("README.md", "RELEASE_NOTES.md", "SECURITY.md", "GOVERNANCE.md", "CONTRIBUTING.md")
+# The first heading of a released section in RELEASE_NOTES.md: ``## 0.1.1 — 2026-10-08``.
+_RELEASED_HEADING = re.compile(r"^## \d+\.\d+", re.MULTILINE)
 
 
 def _current_docs() -> list[Path]:
@@ -940,10 +979,38 @@ def _current_docs() -> list[Path]:
     ]
 
 
+def _current_text(path: Path) -> str:
+    """The part of a document that describes the current tree.
+
+    RELEASE_NOTES.md keeps one section per release below its ``## Unreleased`` section, and a
+    released section states what that version shipped; only the text before the first released
+    heading is checked. Every other document is checked whole.
+    """
+    text = _read(path)
+    if path.name == "RELEASE_NOTES.md":
+        match = _RELEASED_HEADING.search(text)
+        if match is not None:
+            return text[: match.start()]
+    return text
+
+
+def test_release_notes_are_checked_up_to_the_first_released_section(tmp_path: Path) -> None:
+    current = "# Release notes\n\n## Unreleased\n\n- 10 signatures and 20 signals\n\n"
+    released = "## 0.1.1 — 2026-10-08\n\n- 5 signatures and 9 signals\n\n## 0.1.0\n\n- 4 signatures\n"
+    notes = tmp_path / "RELEASE_NOTES.md"
+    notes.write_text(current + released, encoding="utf-8")
+    assert _current_text(notes) == current
+    notes.write_text(current, encoding="utf-8")
+    assert _current_text(notes) == current, "notes without a released section are checked whole"
+    other = tmp_path / "README.md"
+    other.write_text(current + released, encoding="utf-8")
+    assert _current_text(other) == current + released, "only RELEASE_NOTES.md is sliced"
+
+
 def test_documented_signature_counts_match_the_shipped_packs(index) -> None:
     signatures = list(index.signatures.values())
     actual = (len(signatures), sum(len(signature.signals) for signature in signatures))
-    claims = [(path, claim) for path in _current_docs() for claim in _signature_claims(_read(path))]
+    claims = [(path, claim) for path in _current_docs() for claim in _signature_claims(_current_text(path))]
     assert any(path.name == "README.md" and signals is not None for path, (_, signals) in claims), (
         "README should state the signature and signal counts"
     )
@@ -958,7 +1025,9 @@ def test_documented_signature_counts_match_the_shipped_packs(index) -> None:
 
 def test_documented_connector_counts_match_the_registry() -> None:
     actual = len(builtin_connector_names())
-    claims = [(path, match) for path in _current_docs() for match in _CONNECTOR_CLAIM.finditer(_read(path))]
+    claims = [
+        (path, match) for path in _current_docs() for match in _CONNECTOR_CLAIM.finditer(_current_text(path))
+    ]
     assert claims, "a doc should state the connector count in bold (**N connectors**)"
     for path, match in claims:
         assert int(match.group(1)) == actual, (

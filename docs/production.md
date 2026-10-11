@@ -769,11 +769,11 @@ administration access, use an authorized administrator session rather than
 weakening the rules.
 
 Whatever the ruleset's state, the history is unchanged: the repository has a
-single maintainer, and no change merged to `main` through 2026-10-02 (including
-#42, #62, #65 and #123 to #133) carries an approving review from a second person;
-the only approvals on merged pull requests are the maintainer's own, on two
-Dependabot updates. A repository
-administrator can bypass or reconfigure rules, so a merged pull request, the
+single maintainer, and no change merged to `main` through 2026-10-02
+(including #42, #62, #65 and #123 to #133) carries an approving review from a
+second person; the only approvals on merged pull requests are the maintainer's
+own, on two Dependabot updates. A repository administrator can bypass or
+reconfigure rules, so a merged pull request, the
 version string and the internal AI-assisted hardening logs are not evidence of
 independent review. The review and merge policy is in
 [CONTRIBUTING.md](https://github.com/aisecnomad/Project-Nexus/blob/main/CONTRIBUTING.md#review-and-merge-policy).

@@ -424,8 +424,9 @@ summarizes each release for people who install and operate ShadowScan.
   vocabulary, up to 64 exact-resource bindings with collection coverage, and
   `listing_complete`. A malformed record is ignored and makes the scan
   incomplete (`engine.registries`, exit 3). Record evidence
-  (`registry:<type>`, confidence group `registry-record`) has weight 0.5. No
-  built-in connector emits records yet.
+  (`registry:<type>`, confidence group `registry-record`) has weight 0.5.
+  `cloud.aws`, `cloud.gcp` and `identity.entra` emit records (see their
+  entries below); no other built-in connector does.
 - Only a built-in connector that declares the new `emits_registry_records`
   engine hook may emit records. The engine drops `registry_record` from other
   connectors' findings, including cached ones and those of a plugin that
@@ -1316,9 +1317,10 @@ author-written and not independent review.
 - A project whose executable code constructs and serves an MCP server (the
   SDK plus a server-construction idiom outside test code) is reported through
   the `mcp-server` capability, `metadata.mcp_server` and an "MCP server in"
-  title (see "October 8 MCP server capability and model id attribution").
-  The finding kind, resource and identity are
-  unchanged; `mcp-server` findings remain MCP configuration inventories.
+  title (see "October 8 MCP server capability and model id attribution" under
+  "Candidate change history" in `docs/production.md`). The finding kind,
+  resource and identity are unchanged; `mcp-server` findings remain MCP
+  configuration inventories.
   MCP client code stays as before.
 - Spring AI: `ChatClient` builder chains that register concrete tools with
   `defaultTools(new ...)` after setting a system prompt or advisors, and
@@ -1477,9 +1479,9 @@ baselines; rebaseline before comparing (see `docs/production.md`).
 
 - The JS/TS/TSX lexer now lexes brace-less JSX elements as attribute values
   (`title=<span>…</span>`), a legal construct that marked real repositories
-  incomplete. Plain `.js`/`.mjs`/`.cjs` files keep the JSX retry that applies
-  only when the plain reading is ambiguous and the JSX reading completes.
-  Malformed JSX still fails closed.
+  incomplete. Malformed JSX still fails closed. How a plain `.js`, `.mjs` or
+  `.cjs` file is read as JSX is described under "Real-world benchmark
+  follow-up fixes" below.
 - Credential detection scales its per-execution regex allowance linearly
   with declared input size (`LINEAR_SECONDS_PER_MILLION_CHARS`, floor
   0.1 s, always inside the per-file wall budget), so keyword-dense
@@ -1558,8 +1560,8 @@ baselines; rebaseline before comparing (see `docs/production.md`).
   line break and reported `incomplete source lexical analysis`. It now stays open across the
   break, and an unclosed one is still incomplete.
 - Fixed: a `.js`, `.mjs` or `.cjs` file with JSX (React code in a `.js` file) was lexed as
-  plain JavaScript and reported incomplete. Plain lexing is retried as JSX only when it fails,
-  and the JSX reading is used only when it lexes completely. `.ts` files are never read as JSX.
+  plain JavaScript and reported incomplete. Such a file is now also read as JSX, under the rule
+  described under "Real-world benchmark follow-up fixes" below. `.ts` files are never read as JSX.
 - Fixed (fail-open in the two changes above): a quote the Rust lexer misread opened an ordinary
   string that now ran across lines to the next quote, masking the code in between while the file
   reported complete. Rust C raw strings (`cr"..."`, `cr#"..."#`) and character literals with a
@@ -1584,12 +1586,14 @@ baselines; rebaseline before comparing (see `docs/production.md`).
 
 ### Real-world benchmark follow-up fixes
 
-- `.js`, `.mjs` and `.cjs` files with a closing or self-closing tag are read
-  both as plain JavaScript and as JSX. When both readings complete, only what
-  both mask stays masked: element text such as `src/*.js` can no longer open a
-  plain-JavaScript comment that hides code up to a later `*/` while the scan
-  reports complete. A JSX reading that exhausts its look-ahead budget marks the
-  file incomplete.
+- A `.js`, `.mjs` or `.cjs` file is read as plain JavaScript first. When that
+  reading is ambiguous, or the file holds a closing or self-closing tag (`</a`,
+  `/>`), it is also read as JSX. When only one reading completes, that reading
+  is used. When both complete, only what both mask stays masked: element text
+  such as `src/*.js` can no longer open a plain-JavaScript comment that hides
+  code up to a later `*/` while the scan reports complete. When neither
+  completes, or the JSX reading exhausts its look-ahead budget, the file is
+  incomplete (exit 3).
 - Fixed: lossy text decoding checks every bounded window, so an ASCII prefix
   cannot hide an invalid or control-character body. Python and notebook files
   with a UTF-8 byte-order mark retain strict decoding of invalid bytes.
@@ -2046,12 +2050,14 @@ complete and empty. Each has a regression test; finding IDs are unchanged.
   between them: `yield <a> 1` and `await <a> 1` in a script (where both words
   are names), `of <a> 1` after an operand, a keyword cut out of a longer name
   (`a<ZWNJ>typeof <a> 1`, likewise at a combining mark or a `\u{...}` escape)
-  and the second `<` of a left shift (`mask<<shift>limit`). In `.js`, `.mjs`
-  and `.cjs` files JSX is now only tried when the plain walk is ambiguous, and
-  not used where an element follows a word other than a reserved word that
-  cannot be a name (`return`, `typeof`, `case` and the like) or in a file with
-  such a shift; the scan then stays incomplete. Before, the code connector
-  lexed these files as JSX from the start.
+  and the second `<` of a left shift (`mask<<shift>limit`; see "Lexical
+  coverage" above). Before, the code connector lexed `.js`, `.mjs` and `.cjs`
+  files as JSX from the start; they are now read as plain JavaScript first
+  (see "Real-world benchmark follow-up fixes" above). In their JSX reading, a
+  `<` after a word opens an element only after a reserved word that cannot be
+  a name (`return`, `typeof`, `case` and the like) that is not cut out of a
+  longer name; after `yield`, `await`, `of` or any other word the reading is
+  ambiguous and is not used.
 - Fixed: a `.ts` or `.tsx` file that started with `<TS>` or `<tileset` was
   masked whole as a Qt translation or Tiled tileset, although `<TS>expr` is a
   type assertion and `<TS></TS>` a JSX element. Only a file that opens with an
@@ -2587,9 +2593,9 @@ complete and empty. Each has a regression test; finding IDs are unchanged.
 
 ### October 2 integration of #134 and repository hygiene review
 
-Pull request #134 landed through an integration pull request as one
-signed-off commit, rebuilt on the current `main`: its branch predated #123,
-#132 and #133 and conflicted with the SARIF message escaping from #123. The
+Pull request #134 landed through an integration pull request as one signed-off
+commit, rebuilt on the current `main`: its branch predated #123, #132 and #133
+and conflicted with the SARIF message escaping from #123. The
 other changes come from an AI-assisted review of CI, documentation, code and
 repository layout. Each defect was reproduced before it was fixed and has a
 regression test or check; none had a second-person review. Migration notes are

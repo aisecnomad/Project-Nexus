@@ -1,8 +1,8 @@
 # Roadmap
 
-ShadowScan is an unreleased candidate (`0.1.2` in `pyproject.toml`). This
-roadmap is intent, not a contract. Items move only when they keep the
-fail-closed trust model.
+ShadowScan 0.1.2 is a published alpha pre-release (`NexusShadowScan` on PyPI,
+tag `v0.1.2`); `main` carries unreleased changes. This roadmap is intent, not
+a contract. Items move only when they keep the fail-closed trust model.
 
 ## Now
 
@@ -94,10 +94,17 @@ review and live validation before a release.
 
 ## Later, after independent review
 
-- First tagged release, published to PyPI as `NexusShadowScan` through the
-  approval-gated trusted-publishing job. Nothing publishes automatically.
-- Register the PyPI trusted publisher shortly before the first upload; a
-  pending publisher does not reserve the `NexusShadowScan` name.
+- Done: the PyPI trusted publisher is registered, and 0.1.2 is published to
+  PyPI as `NexusShadowScan` through the approval-gated trusted-publishing job
+  (tag `v0.1.2`). Nothing publishes automatically, and publication does not
+  establish independent review or deployment acceptance.
+- Next release: a candidate whose exact commit has independent human review
+  and retained acceptance evidence for its deployment scope, as the
+  [release process](GOVERNANCE.md#release-process) requires, then tagged and
+  published by the maintainer following the
+  [publishing runbook](docs/operations/publishing.md).
+- Add a second required reviewer to the `pypi` and `testpypi` environments and
+  turn on **Prevent self-review** as soon as one exists.
 
 ## Not planned
 
