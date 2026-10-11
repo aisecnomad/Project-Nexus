@@ -2260,7 +2260,8 @@ class FilesystemConnector(BaseConnector):
         for credentials, so an unread copy may hide a real key and stays a gap
         (fail closed). ``strict_coverage`` keeps the test-path case a gap too.
         A file the scanner never reads at any size is yielded and ignored, as
-        before.
+        before. A coding-agent settings file skipped here is still recorded as
+        unread for its project's approval gate (``_iter_entries``).
         """
         if self._oversize_skippable(rel, name):
             self._skip_oversize(rel, size)
@@ -2536,6 +2537,11 @@ class FilesystemConnector(BaseConnector):
                         self._unread_settings.append((proj, rel))
                     continue
                 if info.st_size > self._size_limit(fn) and self._skipped_oversize(rel, fn, info.st_size):
+                    if posture_client(rel) is not None:
+                        # Skipped without a coverage gap (a fixture, or a name in
+                        # oversize_skip_globs), but an unread settings file could still
+                        # loosen the approval gate its readable siblings set.
+                        self._unread_settings.append((proj, rel))
                     continue
                 if _never_read_by_name(fn):
                     continue

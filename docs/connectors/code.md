@@ -520,7 +520,11 @@ cannot establish a deployment (warning `skipped oversize test fixture`; the
 connector counts them in `skipped_oversize_test_fixtures` and reports the
 count in one summary warning per root). Instruction documents, agent
 definitions, source and configuration keep the gap in every mode. Every
-skipped file is still named. See the coverage policy in
+skipped file is still named. A coding-agent settings file skipped by either
+rule, or by an operator's `oversize_skip_globs`, is still recorded as unread
+for the approval gate of its project (see
+[approval gating](../concepts/autonomy.md#approval-gating-evidence)): the scan
+stays complete, but the gate covers only some actions. See the coverage policy in
 [scanning](../scanning.md#coverage-policy). Each root is opened once, and every
 file (including `CODEOWNERS`) is read relative to it without following a link in
 any path component. A directory replaced by a link while the scan runs therefore

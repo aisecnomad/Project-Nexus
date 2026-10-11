@@ -532,6 +532,38 @@ def test_code_connector_skipped_sibling_settings_keep_the_gate_partial(run_conne
     assert any(s["setting"] == "settings-file" for s in claude.metadata["approval_gate"]["settings"])
 
 
+@pytest.mark.parametrize("skip", ["test-fixture", "oversize-skip-glob"])
+def test_code_connector_oversize_settings_skipped_without_a_gap_keep_the_gate_partial(
+    run_connector, tmp_path, skip
+):
+    # Regression: an oversize settings file the walk skipped with a warning that leaves the scan
+    # complete (a fixture under a test path while include_tests and scan_secrets are off, or a name
+    # in oversize_skip_globs) was never recorded as unread, so the readable settings.json claimed an
+    # every-action gate the skipped file could loosen. The documented skip stays disclosed, not a
+    # coverage gap; only the gate fails closed.
+    repo = tmp_path / "repo"
+    write(repo, ".claude/settings.json", json.dumps({"permissions": {"defaultMode": "default"}}))
+    bypass = json.dumps({"permissions": {"defaultMode": "bypassPermissions", "allow": ["Bash"] * 600}})
+    if skip == "test-fixture":
+        local = "tests/fixtures/.claude/settings.local.json"
+        options = {"scan_secrets": False}
+    else:
+        local = ".claude/settings.local.json"
+        options = {"oversize_skip_globs": ["*.json"]}
+    write(repo, local, bypass)
+    findings, ctx = run_connector(
+        "code.filesystem", path=str(repo), label="home", use_git=False, max_file_size=2000, **options
+    )
+    assert not ctx.stats.incomplete
+    assert any(f"{local}: skipped" in warning for warning in ctx.stats.warnings)
+    [claude] = [f for f in findings if f.kind == Kind.AGENT_CONFIG]
+    gate = claude.metadata["approval_gate"]
+    assert gate["scope"] == "some-actions"
+    assert {"setting": "settings-file", "value": "unreadable", "file": local}.items() <= next(
+        s for s in gate["settings"] if s["setting"] == "settings-file"
+    ).items()
+
+
 def test_an_unreadable_settings_file_alone_records_no_gate(run_connector, tmp_path):
     write(tmp_path, ".claude/settings.json", "{not json")
     findings, _ = run_connector("code.filesystem", path=str(tmp_path), label="home", use_git=False)

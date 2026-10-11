@@ -348,6 +348,10 @@ incomplete depends on what the file could hide:
   credential evidence is lost by skipping it. The warning still names each file
   so the omission is visible. Lockfiles, minified bundles, source maps and
   bytecode below the limit are skipped silently because they are never analyzed.
+  A coding-agent settings file that an operator's glob matches (a
+  `.claude/settings.json` under `*.json`) is still recorded as unread for its
+  project's approval gate, which then covers only some actions (see
+  [approval gating](concepts/autonomy.md#approval-gating-evidence)).
 * With `scan_secrets: false`, an oversize documentation file (`.md`, `.mdc`,
   `.mdx`, `.txt`, not a manifest name) is skipped with a warning and the scan
   stays complete: its body is matched by file name only, so no technology
@@ -363,7 +367,9 @@ incomplete depends on what the file could hide:
   `test_*.py`) is skipped with the warning `skipped oversize test fixture` and
   the scan stays complete: test code is discounted evidence that cannot
   establish a deployment, so its omission is disclosed and counted (one
-  summary warning per root) rather than treated as a gap. With credential
+  summary warning per root) rather than treated as a gap. A coding-agent
+  settings file under such a path is still recorded as unread for its
+  project's approval gate, which then covers only some actions. With credential
   detection on, or `include_tests: true`, the file is analyzable like any
   other and the gap returns; `strict_coverage` records it as an error.
 * Every other oversize file, for example a 2 MiB Python module, JSON or YAML
