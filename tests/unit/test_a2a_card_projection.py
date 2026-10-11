@@ -130,6 +130,14 @@ def test_plaintext_interfaces_to_remote_hosts_are_tagged(url: str, plaintext: bo
         ("ws://agent.attacker.example\\@127.0.0.1/a2a", True),
         (f"http://{USERINFO}@localhost/a2a", True),
         ("https://agent.attacker.example\\@localhost/a2a", False),
+        # WHATWG URL parsers drop tab, CR and LF, strip leading C0 controls and take the host
+        # after any run of slashes or backslashes: each reaches agent.attacker.example.
+        ("ht\ttp://agent.attacker.example\\@localhost/a2a", True),
+        ("http\n://agent.attacker.example\\@localhost/a2a", True),
+        ("\x01http://agent.attacker.example\\@localhost/a2a", True),
+        ("http:\\\\agent.attacker.example\\a2a", True),
+        ("http:/agent.attacker.example/a2a", True),
+        ("ws:agent.attacker.example/a2a", True),
     ],
 )
 def test_an_interface_whose_host_cannot_be_told_is_not_projected_and_still_plaintext(

@@ -2,19 +2,22 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
 
+from shadowscan.connectors.code.mcp_config import _parse_mcp_servers
 from shadowscan.connectors.mcp_risk import (
     RISK_DESCRIPTIONS,
     McpRisk,
     PackageRef,
     assess_server,
+    assess_transport,
     registry_package,
     server_package,
 )
-from shadowscan.models import Kind
+from shadowscan.models import Finding, Kind, Surface
 from shadowscan.risk import assess
 
 
@@ -113,8 +116,22 @@ def test_shell_without_command_flag_is_not_a_wrapper():
         ("http://127.0.0.1:3000/mcp", False),
         ("http://[::1]:3000/mcp", False),
         ("http://api.localhost/mcp", False),
-        ("http:///nohost", False),
+        ("http://", False),
         ("http://[bad/mcp", False),
+        # WHATWG URL parsers (Node, browsers) drop tab, CR and LF, strip leading C0 controls
+        # and read the host after any run of slashes and backslashes: each of these reaches
+        # remote.example over plaintext, though urlsplit reads localhost or no host.
+        ("http:///remote.example/mcp", True),
+        ("ht\ttp://remote.example\\@localhost/mcp", True),
+        ("http\n://remote.example\\@localhost/mcp", True),
+        ("\x01http://remote.example\\@localhost/mcp", True),
+        (" HTTP://remote.example/mcp", True),
+        ("http:\\\\remote.example\\mcp", True),
+        ("http:/remote.example/mcp", True),
+        ("http:remote.example/mcp", True),
+        ("ws:\\remote.example/mcp", True),
+        ("ht\ttps://remote.example/mcp", False),
+        ("\thttp://localhost:3000/mcp", False),
         # An HTTP client reads the host as remote.example; parsed configuration redacts the
         # user information that held the backslash, so neither form names a known loopback.
         ("http://remote.example\\@localhost:3000/mcp", True),
@@ -193,6 +210,9 @@ def test_code_connector_tags_risky_servers_and_skips_disabled(run_connector, tmp
         "ht\ttp://mcp.example.com/mcp",
         "http:\n//mcp.example.com/mcp",
         "\x01http://mcp.example.com/mcp",
+        # WHATWG parsers read the host after one slash or backslashes as well.
+        "http:/mcp.example.com/mcp",
+        "http:\\\\mcp.example.com\\mcp",
     ],
 )
 def test_every_insecure_transport_label_is_scored(url):
@@ -399,6 +419,16 @@ def test_server_package_ignores_a_remote_only_server():
         ("cmd", ["/c", "tools/npx.cmd -y pkg@1.0.0"]),
         ("./cmd", ["/c", "npx", "-y", "pkg@1.0.0"]),
         ("./npx -y pkg@1.0.0", []),
+        # /proc and /dev paths look absolute but resolve in the started process: its working
+        # directory (/proc/self/cwd) or an open file (/dev/fd/N).
+        ("/proc/self/cwd/npx", ["-y", "pkg@1.0.0"]),
+        ("/proc/thread-self/cwd/npx", ["-y", "pkg@1.0.0"]),
+        ("/proc/self/cwd/node_modules/.bin/npx", ["-y", "pkg@1.0.0"]),
+        ("/proc/1234/root/usr/bin/npx", ["-y", "pkg@1.0.0"]),
+        ("/./proc/self/cwd/npx", ["-y", "pkg@1.0.0"]),
+        ("/usr/../proc/self/cwd/npx", ["-y", "pkg@1.0.0"]),
+        ("/dev/fd/3", ["-y", "pkg@1.0.0"]),
+        ("cmd", ["/c", "/proc/self/cwd/npx", "-y", "pkg@1.0.0"]),
     ],
 )
 def test_server_package_is_none_for_a_launcher_run_from_a_relative_path(command, args):
@@ -413,7 +443,9 @@ def test_server_package_is_none_for_a_launcher_run_from_a_relative_path(command,
      "DYLD_INSERT_LIBRARIES", "CONTAINERS_REGISTRIES_CONF", "CONTAINER_CONNECTION", "REGISTRY_AUTH_FILE",
      "PODMAN_CONNECTIONS_CONF", "DOCKER_CONTEXT", "DOCKER_CERT_PATH", "HOME", "USERPROFILE", "HOMEPATH",
      "APPDATA", "LOCALAPPDATA", "PROGRAMDATA", "XDG_CONFIG_HOME", "TMPDIR", "TEMP", "COMSPEC", "SHELL",
-     "BASH_ENV", "ENV", "SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE"],
+     "BASH_ENV", "ENV", "SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE",
+     # npm reads its global npmrc (and so its registry) under PREFIX, or DESTDIR + its prefix.
+     "PREFIX", "prefix", "DESTDIR"],
 )  # fmt: skip
 def test_server_package_is_none_when_the_environment_changes_how_a_launcher_starts(name):
     server = {"command": "npx", "args": ["-y", "pkg@1.0.0"], "env_names": ["GITHUB_TOKEN", name]}
@@ -423,6 +455,7 @@ def test_server_package_is_none_when_the_environment_changes_how_a_launcher_star
 def test_server_package_keeps_its_identity_beside_environment_that_changes_neither_package_nor_program():
     names = ["GITHUB_TOKEN", "OPENAI_API_KEY", "NODE_ENV", "PYTHONUNBUFFERED", "PYTHONIOENCODING",
              "PYTHONDONTWRITEBYTECODE", "PYTHONUTF8", "HOME_ASSISTANT_URL", "PATH_TO_DB", "LOG_LEVEL",
+             "INSTALL_PREFIX",
              "AWS_CA_BUNDLE"]  # fmt: skip
     server = {"command": "npx", "args": ["-y", "pkg@1.0.0"], "env_names": names}
     assert server_package(server) == PackageRef("npm", "pkg", "1.0.0")
@@ -563,3 +596,105 @@ def test_registry_package_matches_only_the_public_registry_a_launch_fetches_from
 )
 def test_launcher_forms_are_assessed_like_the_plain_launch(command, args, risks):
     assert [risk.id for risk in assess_server({"command": command, "args": args})] == risks
+
+
+@pytest.mark.parametrize(
+    "server",
+    [
+        # A redacted env name may be NODE_OPTIONS or PATH.
+        {"command": "npx", "args": ["-y", "pkg@1.0.0"], "env_names": ["[REDACTED]", "Z"]},
+        # cmd.exe reads operators and %VAR% in an argument that redaction may have hidden.
+        {"command": "cmd", "args": ["/c", "npx", "-y", "pkg@1.0.0", "[REDACTED]"]},
+        {"command": "npx.cmd", "args": ["-y", "pkg@1.0.0", "[REDACTED]"]},
+        # A redacted docker -e may set NODE_OPTIONS in the container.
+        {"command": "docker", "args": ["run", "-i", "-e", "[REDACTED]", "ghcr.io/acme/tool:1.0"]},
+        # The parser marks a launch it saw change after redaction or truncation.
+        {"command": "npx", "args": ["-y", "pkg@1.0.0"], "launch_unidentified": True},
+    ],
+)
+def test_server_package_is_none_when_redaction_hides_part_of_the_launch(server):
+    assert server_package(server) is None
+
+
+def test_server_package_keeps_its_identity_beside_a_redacted_server_argument():
+    server = {"command": "npx", "args": ["-y", "pkg@1.0.0", "--token", "[REDACTED]"], "env_names": ["TOKEN"]}
+    assert server_package(server) == PackageRef("npm", "pkg", "1.0.0")
+
+
+_PKG = ["-y", "pkg@1.0.0"]
+
+
+@pytest.mark.parametrize(
+    "server",
+    [
+        # Each env value of the document is redacted wherever it appears, so a value equal to
+        # (or, under eight characters, inside) an env name, an argument or a docker -e hides it.
+        {"command": "npx", "args": _PKG, "env": {"NODE_OPTIONS": "--require ./evil.js", "Z": "O"}},
+        {"command": "npx", "args": _PKG, "env": {"NODE_OPTIONS": "--require ./e.js", "Z": "NODE_OPTIONS"}},
+        {"command": "npx", "args": _PKG, "env": {"PATH": "./bin:/usr/bin", "Z": "PATH"}},
+        {"command": "cmd", "args": ["/c", "npx", *_PKG, "%X%"], "env": {"X": "& calc", "Z": "%X%"}},
+        {"command": "cmd", "args": ["/c", "npx", *_PKG, "&", "calc"], "env": {"Z": "&"}},
+        {
+            "command": "docker",
+            "args": ["run", "-i", "-e", "NODE_OPTIONS=--require /x/evil.js", "acme/tool:1.0"],
+            "env": {"Z": "NODE_OPTIONS=--require /x/evil.js"},
+        },
+        # Only the first twelve arguments are kept; cmd.exe still reads the rest.
+        {"command": "cmd", "args": ["/c", "npx", *_PKG, *[f"a{i}" for i in range(8)], "&", "calc"]},
+        {"command": "npx.cmd", "args": [*_PKG, *[f"a{i}" for i in range(10)], "%X%"], "env": {"X": "& calc"}},
+    ],
+)
+def test_a_parsed_launch_redaction_or_truncation_changed_names_no_package(server):
+    records = _parse_mcp_servers(".mcp.json", json.dumps({"mcpServers": {"x": server}}), [])
+    assert len(records) == 1 and server_package(records[0]) is None
+
+
+def test_a_parsed_launch_keeps_its_identity_when_only_server_arguments_are_hidden():
+    server = {
+        "command": "npx",
+        "args": [*_PKG, *[f"--opt{i}" for i in range(14)]],
+        "env": {"TOKEN": "x" * 24},
+    }
+    records = _parse_mcp_servers(".mcp.json", json.dumps({"mcpServers": {"x": server}}), [])
+    assert server_package(records[0]) == PackageRef("npm", "pkg", "1.0.0")
+    assert "launch_unidentified" not in records[0]
+
+
+@pytest.mark.parametrize("value", ["mcp.plain.example", "http", "8080"])
+def test_a_plaintext_url_another_servers_env_value_redacts_is_still_insecure(value):
+    document = {
+        "mcpServers": {
+            "remote": {"type": "http", "url": "http://mcp.plain.example:8080/mcp"},
+            "other": {"command": "node", "args": ["server.js"], "env": {"A": value}},
+        }
+    }
+    records = _parse_mcp_servers(".mcp.json", json.dumps(document), [])
+    remote = next(record for record in records if record["name"] == "remote")
+    assert remote["url"] != "http://mcp.plain.example:8080/mcp" and assess_transport(remote) is None
+    assert remote.get("plaintext_transport") is True
+    assert assess_server(remote) == [McpRisk("mcp-insecure-transport", "remote server")]
+    finding = Finding(
+        surface=Surface.CODE,
+        connector="code.filesystem",
+        kind=Kind.MCP_SERVER,
+        title="MCP server",
+        resource="repo:x",
+        resource_type="mcp-config",
+        metadata={"servers": [remote]},
+    )
+    assert "mcp-plain-http" in {factor.id for factor in assess(finding).factors}
+
+
+def test_a_url_redaction_leaves_plaintext_or_tls_as_it_was():
+    document = {
+        "mcpServers": {
+            "tls": {"type": "http", "url": "https://mcp.tls.example:8080/mcp"},
+            "plain": {"type": "http", "url": "http://mcp.plain.example/mcp"},
+            "other": {"command": "node", "args": ["server.js"], "env": {"A": "8080"}},
+        }
+    }
+    records = {record["name"]: record for record in _parse_mcp_servers(".mcp.json", json.dumps(document), [])}
+    assert "plaintext_transport" not in records["tls"] and assess_server(records["tls"]) == []
+    # Still readable as plaintext from the record itself, so no marker is needed.
+    assert "plaintext_transport" not in records["plain"]
+    assert assess_server(records["plain"]) == [McpRisk("mcp-insecure-transport", "mcp.plain.example")]

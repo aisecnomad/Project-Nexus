@@ -349,3 +349,30 @@ def test_merge_refuses_a_malformed_inventory_presence(tmp_path: Path, value: obj
     with pytest.raises(ValueError, match="inventory presence must be a boolean") as raised:
         merge_reports([("forged", report)])
     assert str(value) not in str(raised.value)
+
+
+@pytest.mark.parametrize("verdict", ["shadow", "registered", "inventory-size"])
+def test_merge_refuses_an_older_report_whose_registration_it_cannot_attribute(tmp_path: Path, verdict: str):
+    # Regression: reports from the v0.1.x tags share the identity schema but omit
+    # inventory_present. Reading the missing key as false turned their shadow verdicts into
+    # unassessed and the merge exited 0 with a lower fleet shadow count.
+    _report(tmp_path, "laptop", {".mcp.json": MCP})
+    agent_id = "fs-mcp" if verdict == "registered" else None
+    inventory = _inventory(tmp_path, "it", agent_id)
+    report = json.loads(
+        _scan(tmp_path / "laptop", tmp_path / "old.json", "--inventory", str(inventory)).read_text()
+    )
+    del report["inventory_present"]
+    if verdict == "inventory-size":
+        report["findings"][0].update(shadow=None, registry_match=None)
+        report["inventory_size"] = 1
+    current = json.loads(_report(tmp_path, "desktop", {".mcp.json": MCP}).read_text())
+    for inputs in ([("old.json", report)], [("old.json", report), ("new.json", current)]):
+        with pytest.raises(ValueError, match="old.json: report predates inventory_present"):
+            merge_reports(inputs)
+    legacy = tmp_path / "legacy.json"
+    legacy.write_text(json.dumps(report))
+    out = tmp_path / "merged.json"
+    result = CliRunner().invoke(main, ["merge", str(legacy), "--format", "json", "-o", str(out)])
+    assert result.exit_code == 1 and "rescan before merging" in result.output
+    assert not out.exists()

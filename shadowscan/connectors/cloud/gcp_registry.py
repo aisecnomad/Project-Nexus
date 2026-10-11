@@ -60,6 +60,7 @@ OBSERVED_LISTINGS = {
     "reasoning-engine": (VERTEX_CATALOG, "reasoningEngines"),
     "dialogflow-agent": (DIALOGFLOW_CATALOG, "agents"),
 }
+_OBSERVED_COLLECTIONS = frozenset(collection for _, collection in OBSERVED_LISTINGS.values())
 _COVERAGE_COLLECTIONS = {
     AR_REGISTRY: frozenset({"locations", *AR_COLLECTIONS, *AR_ALPHA_COLLECTIONS}),
     GE_REGISTRY: frozenset({"engines", "assistants", "agents"}),
@@ -123,6 +124,11 @@ COLLECTION_ID = re.compile(r"[a-z0-9][a-z0-9_-]*")
 _RESOURCE = re.compile(
     r"projects/(?P<project>[A-Za-z0-9._:-]+)/locations/(?P<location>[a-z][a-z0-9-]*)"
     r"/(?P<collection>[A-Za-z]+)/(?P<id>[^/\s?#]+)"
+)
+# A plain resource name with sub-resources (``publishers/google/models/x``, ``agents/a/flows/f``).
+_NESTED_RESOURCE = re.compile(
+    r"projects/[A-Za-z0-9._:-]+/locations/[a-z][a-z0-9-]*"
+    r"/(?P<collection>[A-Za-z]+)/(?P<ids>[^/\s?#]+(?:/[A-Za-z]+/[^/\s?#]+)+)"
 )
 _REGISTRY_NAME = re.compile(
     r"(?://agentregistry\.googleapis\.com/)?projects/([A-Za-z0-9._:-]+)/locations/([a-z][a-z0-9-]*)"
@@ -506,13 +512,23 @@ def unrecognized_reference(uri: Any) -> bool:
 
     Such a reference (an ``https:`` URL, a version segment, a trailing slash) may register a
     reasoning engine or Dialogflow agent that would otherwise look unregistered. A plain resource
-    name of a collection this scan does not observe (a Vertex AI endpoint) is read: it names no
-    engine.
+    name of a collection this scan does not observe (a Vertex AI endpoint, or a nested name such as
+    a publisher model) is read: it names no engine. A nested name under an observed collection (a
+    Dialogflow agent's flow, a reasoning engine's session) is not: it may stand for that engine.
     """
     if not isinstance(uri, str) or not _RUNTIME_HOST.match(uri):
         return False
     match = _RUNTIME_REFERENCE.fullmatch(uri)
-    return match is None or _resource(match["resource"]) is None
+    if match is None:
+        return True
+    if _resource(match["resource"]) is not None:
+        return False
+    nested = _NESTED_RESOURCE.fullmatch(match["resource"])
+    return (
+        nested is None
+        or nested["collection"] in _OBSERVED_COLLECTIONS
+        or not all(_safe_segment(segment) for segment in match["resource"].split("/"))
+    )
 
 
 class ProjectNumbers:

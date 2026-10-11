@@ -126,6 +126,32 @@ def _merge_registration(finding: Finding, unregistered: bool, matches: set[str])
             finding.metadata["registry_match_reason"] = "ambiguous-resource-approval"
 
 
+def _inventory_presence(report: dict[str, Any], name: str) -> bool:
+    """Whether the source reconciled against an inventory; refuses a report that cannot say.
+
+    Reports written before ``inventory_present`` existed (the v0.1.x tags share the current
+    identity schema) record ``shadow`` from an inventory scan without saying so. Reading the
+    missing key as false would turn their shadow verdicts into ``unassessed`` and silently drop
+    them from the fleet's shadow count, so such a report is refused unless it carries no
+    registration evidence at all.
+    """
+    if "inventory_present" not in report:
+        size = report.get("inventory_size", 0)
+        verdicts = any(
+            isinstance(entry, dict) and (entry.get("shadow") is not None or entry.get("registry_match"))
+            for entry in report["findings"]
+        )
+        if verdicts or (type(size) is int and size > 0):
+            raise ValueError(
+                f"{name}: report predates inventory_present but records registration; rescan before merging"
+            )
+        return False
+    present = report["inventory_present"]
+    if type(present) is not bool:
+        raise ValueError("report inventory presence must be a boolean")
+    return present
+
+
 def merge_reports(reports: list[tuple[str, dict[str, Any]]]) -> ScanResult:
     """Merge ``(name, report)`` pairs into one :class:`ScanResult`; raises ``ValueError`` on bad input."""
     if not reports:
@@ -163,9 +189,7 @@ def merge_reports(reports: list[tuple[str, dict[str, Any]]]) -> ScanResult:
             reasons.append(f"{name}: collection scope not comparable")
         else:
             fingerprints.append(fingerprint)
-        present = report.get("inventory_present", False)
-        if type(present) is not bool:
-            raise ValueError("report inventory presence must be a boolean")
+        present = _inventory_presence(report, name)
         for entry in report["findings"]:
             finding = Finding.from_dict(entry)
             # A report's ids are untrusted. Findings merge only when the

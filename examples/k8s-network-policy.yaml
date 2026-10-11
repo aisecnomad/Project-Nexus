@@ -29,9 +29,16 @@
 # a second ipBlock to the HTTPS rule:
 #   - ipBlock:
 #       cidr: ::/0
-#       except: [fc00::/7, fe80::/10, 64:ff9b::/96, "::ffff:0:0/96"]
-# (fc00::/7 covers AWS's fd00:ec2::254 metadata address; 64:ff9b::/96 is NAT64,
-# which can reach IPv4 metadata and private addresses.)
+#       except: [fc00::/7, fe80::/10, 64:ff9b::/96, "64:ff9b:1::/48", "::ffff:0:0/96"]
+# (fc00::/7 covers AWS's fd00:ec2::254 metadata address; 64:ff9b::/96 and the
+# local-use 64:ff9b:1::/48 are NAT64 prefixes, which can reach IPv4 metadata
+# and private addresses. Also except any network-specific NAT64 prefix your
+# cluster uses.)
+# Unlike the IPv4 rule, ::/0 does not exclude the cluster: on clusters whose
+# pods, services, nodes or VPC use global-unicast IPv6 (EKS IPv6, GKE
+# dual-stack with external IPv6, many on-premises CNIs) also add those
+# prefixes to except, or the pod can reach internal HTTPS endpoints, including
+# the API server, that the IPv4 rule denies.
 #
 # Enforced only by a CNI that supports NetworkPolicy.
 apiVersion: networking.k8s.io/v1

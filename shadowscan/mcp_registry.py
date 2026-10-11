@@ -214,7 +214,7 @@ class _Identity:
     """What a configured server is matched by.
 
     ``packages`` and ``remotes`` are what the client fetches or connects to: one package for a
-    command, one URL for a remote transport, every package and remote of a server manifest.
+    command, every URL of a remote transport, every package and remote of a server manifest.
     ``name`` is a manifest's own registry name: provenance hints, never approved membership.
     """
 
@@ -473,8 +473,14 @@ def _identity(server: dict[str, Any]) -> _Identity:
         package = server_package(server)
         return _Identity(packages=(package,) if package is not None else ())
     if has_url and kind not in _STDIO_TRANSPORTS:
-        remote = normalize_remote(url)
-        return _Identity(remotes=(remote,) if remote is not None else ())
+        # Every endpoint the record lists (its URL, then each ``remotes[]`` entry) is one the
+        # client may reach, so each must be listed; one that cannot be compared leaves none.
+        listed = server.get("urls")
+        endpoints = listed if isinstance(listed, list) and listed else [url]
+        remotes = [normalize_remote(endpoint) for endpoint in endpoints]
+        if any(remote is None for remote in remotes):
+            return _Identity()
+        return _Identity(remotes=tuple(dict.fromkeys(filter(None, remotes))))
     # A command declared as a remote transport, or a URL declared as a local one.
     return _Identity()
 

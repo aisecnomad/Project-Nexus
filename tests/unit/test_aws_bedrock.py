@@ -125,6 +125,8 @@ def test_agentcore_gateway_reads_target_detail_for_lambda(index):
             "mcp": {"lambda": {"lambdaArn": "arn:aws:lambda:us-east-1:123:function:tool"}}
         },
     }
+    gateway_arn = "arn:aws:bedrock-agentcore:us-east-1:123456789012:gateway/g1"
+    client.get_gateway.return_value = {"gatewayArn": gateway_arn, "gatewayUrl": "https://g1.example.com/mcp"}
     connector._client = lambda service, region: client
 
     def pages(_client, op, _key, **kw):
@@ -139,7 +141,10 @@ def test_agentcore_gateway_reads_target_detail_for_lambda(index):
     gateway = next(r for r in connector._collect_agentcore("us-east-1") if r["_kind"] == "agentcore-gateway")
     assert gateway["_targets"][0]["targetConfiguration"]["mcp"]["lambda"]["lambdaArn"].endswith(":tool")
     client.get_gateway_target.assert_called_once_with(gatewayIdentifier="g1", targetId="t1")
-    assert "code-exec" in connector._h_agentcore_gateway(gateway).capabilities
+    finding = connector._h_agentcore_gateway(gateway)
+    assert "code-exec" in finding.capabilities and finding.resource == gateway_arn
+    client.get_gateway.assert_called_once_with(gatewayIdentifier="g1")
+    assert not ctx.stats.incomplete
 
 
 def test_disabled_bedrock_actions_and_knowledge_bases_do_not_grant_capabilities(index):

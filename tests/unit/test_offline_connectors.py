@@ -313,8 +313,11 @@ def test_aws_registry_offline(run_connector, fixtures):
     }
     gateway = records["gtw000000001"]
     assert gateway.kind == Kind.MCP_SERVER and "mcp-insecure-transport" in gateway.tags
-    # An auto-detected draft was never submitted: it keeps its provenance but binds nothing.
-    assert gateway.metadata[RECORD_KEY]["bindings"] == []
+    # An auto-detected draft was never submitted: it registers nothing, but its binding keeps
+    # the registry's scope.
+    assert [b["resource"] for b in gateway.metadata[RECORD_KEY]["bindings"]] == [
+        gateway.metadata["provenance"][0]["sourceId"]
+    ]
     assert gateway.metadata["provenance"][0]["sourceId"].endswith(":gateway/tools-gateway-pq1rs2tu3v")
     assert records["skl000000001"].kind == Kind.AGENT_CONFIG
     assert "no-auth-declared" in records["a2a000000001"].tags

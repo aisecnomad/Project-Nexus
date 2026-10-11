@@ -691,3 +691,26 @@ def test_engine_ends_triage_a_reserve_before_the_job_deadline(
     job_deadline = time.monotonic() + 3600
     result = Engine(ScanConfig.from_dict(spec), index).run(job_deadline=job_deadline)
     assert result.complete and deadlines == [pytest.approx(job_deadline - reserve)]
+
+
+@responses.activate
+def test_triage_response_bodies_are_capped_at_64_kib(monkeypatch):
+    # Regression guard: the triage client must read at most 64 KiB of a reply body, not
+    # the HTTP default (256 KiB). A body within the cap is read; a longer one is a
+    # failed request.
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    reply = _anthropic('{"verdict": "likely-agent"}')
+
+    def body(size: int) -> str:
+        padded = json.dumps({**reply, "padding": ""})
+        return json.dumps({**reply, "padding": "p" * (size - len(padded))})
+
+    within, over = body(64 * 1024), body(64 * 1024 + 1)
+    assert (len(within), len(over)) == (64 * 1024, 64 * 1024 + 1)
+    for text in (within, over):
+        responses.post("https://api.anthropic.com/v1/messages", body=text, content_type="application/json")
+    settings = TriageSettings.from_options({"enabled": True, "model": "m"})
+    findings = [_finding("a", 90, RiskLevel.HIGH), _finding("b", 80, RiskLevel.HIGH)]
+    Triage(settings).run(findings)
+    assert findings[0].metadata["llm_triage"]["verdict"] == "likely-agent"
+    assert findings[1].metadata["llm_triage"]["status"] == "failed"
