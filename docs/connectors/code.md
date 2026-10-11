@@ -947,7 +947,9 @@ incomplete; see the [connector reference](../connectors.md#codegithub)). Use a
 variable of its own for the token rather than a shared `GITHUB_TOKEN`. Offline
 input: a directory of clones. Code findings retain the scanned Git tree/commit
 identity in `metadata.source_snapshot`; API blob bytes are checked against their
-enumerated Git object IDs.
+enumerated Git object IDs. A listed path that would leave the checkout (`..`, an
+absolute path) is hostile and aborts that repository's fetch, whether the file is
+fetched or only recorded as an unread settings file.
 An offline input with no clone directories is incomplete.
 An explicit `repos:` response whose repository identity does not match the
 requested name is incomplete, and that response is not scanned.
@@ -990,7 +992,8 @@ Token: PAT with `read_api` + `read_repository`.
 Live API records cannot choose internal offline paths or dispatch fields. Code
 findings retain the scanned Git tree/commit identity in
 `metadata.source_snapshot`, and API mode pins tree pagination to an immutable
-commit before downloading files.
+commit before downloading files. A listed path that would leave the checkout is
+hostile and aborts that project's fetch, as in `code.github`.
 Missing, malformed or mismatched details for an explicitly named project, and an offline
 input with no clone directories, make the scan incomplete.
 A group listing entry whose project `id` is not a positive integer is an error

@@ -1740,6 +1740,25 @@ def _check_enumeration_time(walk: _WalkCounters) -> None:
         raise _WalkLimitError(f"connector deadline: listing stopped after {walk.examined} entries")
 
 
+def _below_root(rel: str) -> bool:
+    """Whether ``rel`` names a file below the scan root: a relative posix path with no ``..`` or drive.
+
+    A remote tree path reaches ``_project_root`` and the manifest probes under it as
+    ``root / rel``; an absolute path, a ``..`` component, a backslash (a separator on
+    Windows) or a drive-like first component could list or read outside the tree.
+    """
+    path = PurePosixPath(rel)
+    parts = path.parts
+    return (
+        bool(parts)
+        and not path.is_absolute()
+        and ".." not in parts
+        and "\\" not in rel
+        and "\x00" not in rel
+        and ":" not in parts[0]
+    )
+
+
 def _validated_include(value: Any) -> frozenset[str]:
     """``include``: relative posix paths below a root, normalized; nothing may escape or be absolute."""
     out: set[str] = set()
@@ -2943,9 +2962,19 @@ class FilesystemConnector(BaseConnector):
             ):
                 self._scan_file(scan, rel, path, proj_root)
         # A settings file the walk skipped can only loosen the gate of a project it read.
-        self._unread_settings.extend(
-            (_project_root(scan.root, rel), rel) for rel in self.unread_settings if scan.root.is_dir()
-        )
+        for rel in self.unread_settings:
+            if not _below_root(rel):
+                # The snapshot writer refuses such a path before this point; a path that is not
+                # confined to the tree must drive no listing or manifest probe outside it, and a
+                # listing that names one is not trusted to be complete.
+                self.ctx.warn(
+                    f"code.filesystem: {scan.label}: unread settings path outside the scanned tree "
+                    "ignored; coverage incomplete",
+                    incomplete=True,
+                )
+                self.tree_listing_incomplete = True
+            elif scan.root.is_dir():
+                self._unread_settings.append((_project_root(scan.root, rel), rel))
         for proj_root, rel in self._unread_settings:
             if (proj := scan.projects.get(proj_root)) is not None:
                 _note_unread_settings(proj, rel)

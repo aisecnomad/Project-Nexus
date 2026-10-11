@@ -163,8 +163,8 @@ class UnusualRepositoryPath(ConnectorError):
     """A legal Git path this scanner does not materialise (backslash, drive-like prefix)."""
 
 
-def repository_target(root: str, path: str) -> Path:
-    """Validate API tree paths before fetching or writing outside the checkout.
+def repository_relpath(path: str) -> PurePosixPath:
+    """Validate one API tree path as a relative path below a checkout, without touching the disk.
 
     Traversal and absolute paths are hostile and abort the repository fetch
     before any request. Paths that Git permits but that are ambiguous on a
@@ -180,6 +180,12 @@ def repository_target(root: str, path: str) -> Path:
         raise ConnectorError("Refusing unsafe repository tree path")
     if "\\" in path or ":" in rel.parts[0]:
         raise UnusualRepositoryPath("Refusing unsafe repository tree path")
+    return rel
+
+
+def repository_target(root: str, path: str) -> Path:
+    """Validate an API tree path (:func:`repository_relpath`) and resolve it below ``root``."""
+    repository_relpath(path)
     target = (Path(root) / path).resolve()
     if not target.is_relative_to(Path(root).resolve()) or target == Path(root).resolve():
         raise ConnectorError("Repository tree path escapes checkout")
@@ -675,6 +681,21 @@ class RemoteRepositoryConnector(BaseConnector):
         """
         dest = os.path.join(tmp, "repo")
         os.makedirs(dest, exist_ok=True)
+        # A coding-agent settings file of the tree that the snapshot will not hold (a link, over the
+        # blob size limit, past the sample cap, or not downloaded) could loosen an approval gate
+        # that a fetched one sets; the filesystem scan records it as unreadable. Its path reaches
+        # that scan's project lookup as ``root / path``, so it is checked like a fetched one, before
+        # any request: traversal aborts the repository, and an unusual path, which cannot be
+        # materialised either, is left out (the fetch loop or the sampling warning disclosed it).
+        settings_paths: set[str] = set()
+        for p in tree_paths:
+            if posture_client(p) is None:
+                continue
+            try:
+                repository_relpath(p)
+            except UnusualRepositoryPath:
+                continue
+            settings_paths.add(p)
         written = 0
         written_paths: set[str] = set()
         lfs_pointers = False
@@ -715,10 +736,6 @@ class RemoteRepositoryConnector(BaseConnector):
             self._coverage_gap(
                 f"{self.name}: Git LFS pointer files{where} are not resolved; source coverage partial"
             )
-        # A coding-agent settings file of the tree that is not in the snapshot (a link, over the
-        # blob size limit, past the sample cap, or not downloaded) could loosen an approval gate
-        # that a fetched one sets; the filesystem scan records it as unreadable.
-        unread = sorted({p for p in tree_paths if posture_client(p) is not None} - written_paths)
-        repo["_unread_settings"] = unread
+        repo["_unread_settings"] = sorted(settings_paths - written_paths)
         repo["_tree_incomplete"] = not tree_complete
         return dest, written
