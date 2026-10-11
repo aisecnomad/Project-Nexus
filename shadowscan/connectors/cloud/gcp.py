@@ -730,22 +730,24 @@ class GcpConnector(BaseConnector):
                 yield {**ep, "_kind": "vertex-endpoint", "_project": project, "_location": loc}
 
     def _project_number(self, project: str) -> Iterator[dict[str, Any]]:
-        """The project's number, so registry names that carry it can be compared with ids."""
+        """The project's number, so registry names that carry it can be compared with ids.
+
+        A failed or invalid lookup is recorded with a null number: live collection has warned,
+        and a replay of the dump must stay as incomplete.
+        """
         number = self._project_numbers.get(project)
         if number is None:
             data = self._get(f"https://cloudresourcemanager.googleapis.com/v1/projects/{project}")
-            if data is None:
-                return  # _get has already recorded the failure
             found = data.get("projectNumber") if isinstance(data, dict) else None
             if (
-                not isinstance(data, dict)
-                or data.get("projectId") != project
-                or not isinstance(found, str)
-                or not is_number(found)
+                isinstance(data, dict)
+                and data.get("projectId") == project
+                and isinstance(found, str)
+                and is_number(found)
             ):
+                number = self._project_numbers[project] = found
+            elif data is not None:  # _get has already recorded a failed request
                 self.ctx.warn(f"cloud.gcp: invalid project response for {project}; project number unknown")
-                return
-            number = self._project_numbers[project] = found
         yield {"_kind": PROJECT_NUMBER_KIND, "_project": project, "project_number": number}
 
     def _collect_discovery_engines(self, project: str) -> Iterator[dict[str, Any]]:
@@ -788,6 +790,8 @@ class GcpConnector(BaseConnector):
                 f"cloud.gcp: invalid Discovery Engine engine name in {project}; "
                 "Gemini Enterprise coverage unknown"
             )
+            # The app's assistants were not listed; a replay of the dump must see that gap too.
+            yield self._coverage(project, loc, GE_REGISTRY, "assistants", "v1alpha", False)
             return
         engine_name = str(name)
         host = _api_host("discoveryengine", loc)
@@ -1029,6 +1033,10 @@ class GcpConnector(BaseConnector):
         if self.offline and catalogs.failed_listings:
             # Live collection warned when the listing failed; the export only records that it did.
             self.ctx.warn("cloud.gcp: registry catalog listing incomplete in export; records may be missing")
+        if self.offline and catalogs.failed_lookups:
+            self.ctx.warn(
+                "cloud.gcp: project number unknown in export; registry names that carry it are not comparable"
+            )
         yield from findings
 
     @staticmethod

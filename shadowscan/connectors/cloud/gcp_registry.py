@@ -785,9 +785,10 @@ class RegistryCatalogs:
     number of a project other than the one it was listed in (counted in :attr:`foreign` and
     dropped): it would claim that other project's registry identity.
 
-    :attr:`failed_listings` counts coverage records of listings that did not complete, and
-    :attr:`unrecognized` the Agent Registry records whose runtime reference names Vertex AI or
-    Dialogflow in a form this scan cannot read.
+    :attr:`failed_listings` counts coverage records of listings that did not complete,
+    :attr:`failed_lookups` the project-number records of lookups that did, and :attr:`unrecognized`
+    the Agent Registry records whose runtime reference names Vertex AI or Dialogflow in a form
+    this scan cannot read.
     """
 
     def __init__(self) -> None:
@@ -807,6 +808,7 @@ class RegistryCatalogs:
         self.tainted = False
         self.foreign = 0
         self.failed_listings = 0
+        self.failed_lookups = 0
         self.unrecognized = 0
 
     # ------------------------------------------------------------ intake
@@ -823,9 +825,14 @@ class RegistryCatalogs:
             self.failed_listings += rec["complete"] is False
         elif kind == PROJECT_NUMBER_KIND:
             project, number = rec.get("_project"), rec.get("project_number")
-            if not valid_project(project) or not isinstance(number, str) or not is_number(number):
+            if not valid_project(project) or not (
+                number is None or (isinstance(number, str) and is_number(number))
+            ):
                 raise ValueError("project number")
-            if not self.numbers.add(str(project), number):
+            if number is None:
+                # The lookup failed when collected (and was warned then); the export records that.
+                self.failed_lookups += 1
+            elif not self.numbers.add(str(project), number):
                 raise ValueError("conflicting project number")
         else:
             # Publishers only name the publisher of a skill; they are not records themselves, but

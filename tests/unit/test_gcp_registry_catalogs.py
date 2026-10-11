@@ -381,10 +381,13 @@ def test_unsafe_engine_names_are_never_requested(index, engine):
     scanner, fake = connector(
         index, ge_routes([{"name": engine, "appType": "APP_TYPE_INTRANET"}]), gemini_enterprise=True
     )
-    list(scanner._collect_project(P))
+    records = list(scanner._collect_project(P))
     assert not [url for url in fake.urls if "/v1alpha/" in url]
     assert any("invalid Discovery Engine engine name" in warning for warning in scanner.ctx.stats.warnings)
     assert scanner.ctx.stats.incomplete
+    # The gap is recorded, so a replay of the dump stays incomplete; the unsafe name is not kept.
+    (assistants,) = coverage(records, "gemini-enterprise", "assistants")
+    assert assistants["complete"] is False and "parent" not in assistants
 
 
 @pytest.mark.parametrize(
@@ -416,8 +419,10 @@ def test_engine_names_with_the_project_id_need_no_number(index):
     scanner, fake = connector(index, routes, gemini_enterprise=True)
     records = list(scanner._collect_project(P))
     assert f"https://discoveryengine.googleapis.com/v1alpha/{engine}/assistants" in fake.urls
-    assert not kinds(records, "project-number")
-    # The project lookup failed, and that is reported.
+    # The project lookup failed, and that is reported, in the dump as well.
+    assert kinds(records, "project-number") == [
+        {"_kind": "project-number", "_project": P, "project_number": None}
+    ]
     assert scanner.ctx.stats.incomplete
 
 
@@ -434,7 +439,9 @@ def test_invalid_project_lookup_leaves_the_number_unknown(index, response):
     routes = registry_routes(**{f"https://cloudresourcemanager.googleapis.com/v1/projects/{P}": response})
     scanner, _ = connector(index, routes, agent_registry=True)
     records = list(scanner._collect_project(P))
-    assert not kinds(records, "project-number")
+    assert kinds(records, "project-number") == [
+        {"_kind": "project-number", "_project": P, "project_number": None}
+    ]
     assert any("project number unknown" in warning for warning in scanner.ctx.stats.warnings)
 
 
@@ -450,7 +457,9 @@ def test_discovered_projects_carry_their_numbers_without_a_lookup(index, monkeyp
     monkeypatch.setattr(scanner, "_auth", lambda: setattr(scanner, "http", fake))
     records = list(scanner.collect())
     assert kinds(records, "project-number") == [
-        {"_kind": "project-number", "_project": P, "project_number": N}
+        {"_kind": "project-number", "_project": P, "project_number": N},
+        # The lookup below answers nothing here, and the dump records that the number is unknown.
+        {"_kind": "project-number", "_project": "two", "project_number": None},
     ]
     # A non-string number is not trusted; that project's number is looked up instead.
     assert [
@@ -1491,6 +1500,68 @@ def test_replayed_dump_of_an_incomplete_scan_stays_incomplete(index, tmp_path, m
         RECONCILIATION_KEY not in finding.metadata or status(finding) != "observed-not-registered"
         for finding in replay.findings
     )
+
+
+LOOKUP = f"https://cloudresourcemanager.googleapis.com/v1/projects/{P}"
+UNKNOWN_NUMBER = (
+    "cloud.gcp: project number unknown in export; registry names that carry it are not comparable"
+)
+
+
+@pytest.mark.parametrize(
+    "routes,catalog,gap",
+    [
+        (
+            ge_routes(
+                [
+                    {
+                        "name": "projects/other/locations/global/collections/default_collection/engines/e",
+                        "appType": "APP_TYPE_INTRANET",
+                    }
+                ]
+            ),
+            "gemini_enterprise",
+            REPLAYED_GAP,
+        ),
+        (
+            registry_routes(
+                **{LOOKUP: HttpError(403, "https://cloudresourcemanager.googleapis.com", "denied")}
+            ),
+            "agent_registry",
+            UNKNOWN_NUMBER,
+        ),
+        (
+            registry_routes(**{LOOKUP: {"projectId": "other", "projectNumber": N}}),
+            "agent_registry",
+            UNKNOWN_NUMBER,
+        ),
+    ],
+    ids=["engine-name", "lookup-denied", "lookup-invalid"],
+)
+def test_replayed_dump_of_an_unvalidated_engine_or_unknown_number_stays_incomplete(
+    index, tmp_path, monkeypatch, routes, catalog, gap
+):
+    fake = FakeGoogle(routes)
+    monkeypatch.setattr(GcpConnector, "_auth", lambda self: setattr(self, "http", fake))
+    config = {"projects": [P], "locations": ["us-central1"], catalog: True}
+    dumped = tmp_path / "dump"
+    live = Engine(
+        ScanConfig(connectors=[ConnectorSpec("cloud.gcp", config)], dump_records=str(dumped)), index
+    ).run()
+    (dump,) = dumped.glob("*.jsonl")
+    replay = scan(index, dump)
+    # No listing of the export's records failed, yet the gap voids a claim about them: the export
+    # records it, so replaying it is as incomplete as the live scan.
+    assert not live.complete and not replay.complete
+
+    def warnings(result: ScanResult) -> list[str]:
+        return next(stats.warnings for stats in result.stats if stats.connector == "cloud.gcp")
+
+    assert warnings(replay).count(gap) == 1
+    assert gap not in warnings(live)
+    assert {f.id: f.metadata.get(RECORD_KEY) for f in live.findings} == {
+        f.id: f.metadata.get(RECORD_KEY) for f in replay.findings
+    }
 
 
 def test_the_documented_gcp_registry_example_is_valid(index):

@@ -271,7 +271,9 @@ as described above.
 Either option also records the project number (from the project listing, or one
 `projects.get` call for a configured project) so names that carry the number
 compare with names that carry the id, and records whether each Vertex AI
-reasoning-engine and Dialogflow CX agent listing completed.
+reasoning-engine and Dialogflow CX agent listing completed. A lookup that fails
+or answers for another project is recorded with a null number, so replaying the
+dump is as incomplete as the live scan (one warning).
 
 | Record kind | Finding kind | Registry | Status |
 | --- | --- | --- | --- |
@@ -359,7 +361,8 @@ replaying the dump of an incomplete scan is incomplete again (one warning) and
 voids the claims of the listings that failed, as the live scan did. Engine,
 assistant and location names from responses become request paths only after
 validation (an engine in another project, location or collection is skipped with
-a warning). A record that analysis cannot read, including a malformed coverage
+a warning and recorded as an incomplete assistants listing, so a replay stays
+incomplete). A record that analysis cannot read, including a malformed coverage
 record, an unsupported `_kind` or a publisher that is not named as a publisher
 of the project and location it was listed in, makes every binding's coverage
 `unknown`, every listing incomplete and every presence `unknown` for that scan.
