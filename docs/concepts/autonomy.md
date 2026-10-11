@@ -134,11 +134,11 @@ an approval step.
 | Model-selected tool dispatch loops (code) | Each tool the model picks runs and feeds back without approval | Approval bypass |
 | Signature `heuristic.autonomy` (code: `human_in_the_loop=False`, `--dangerously-skip-permissions`, `autoApprove` and similar) | Code disables an approval gate | Approval bypass, even next to a trigger |
 | Other signature capabilities (agent-loop idioms, autonomous agent frameworks, coding agents) | The signature author's claim that it runs without a person | Approval bypass, unless a trigger explains the capability |
-| ServiceNow AI agent `autonomous` flag or type | The agent is configured to act without a person | Approval bypass |
-| n8n, Make, Zapier, Workato schedule and webhook triggers | A schedule or event starts the flow (tags `scheduled`, `event-triggered`) | Initiation only |
+| ServiceNow AI agent `autonomous` flag, or `agent_type` exactly `autonomous` | The agent is configured to act without a person | Approval bypass |
+| n8n, Make, Zapier, Workato schedule, webhook and app triggers | A schedule or an event starts the flow (tags `scheduled`, `event-triggered`). A trigger a person operates (an n8n manual, chat, form or evaluation trigger; a Make on-demand scenario; a Workato Workbot command; a Zapier Chrome extension push or Interfaces form) records neither | Initiation only |
 | Power Automate recurrence | A schedule starts the flow (tag `scheduled`) | Initiation only |
 | Salesforce flow `TriggerType` | A schedule or a record or platform event starts the flow (`metadata.trigger_type`) | Initiation only |
-| ServiceNow use case and trigger records | An event starts the agent (tag `event-triggered`) | Initiation only |
+| ServiceNow use case and trigger records | A record or application event (tag `event-triggered`) or a schedule (tag `scheduled`) starts the use case. A use case without a trigger runs from a conversation and records neither | Initiation only |
 | Azure Logic App recurrence | A schedule starts the flow (`metadata.trigger_types`) | Initiation only |
 | GCP Cloud Function `eventTrigger` | An event starts the function (`metadata.trigger`) | Initiation only |
 | Gateway caller active around the clock | Cadence of an unattended caller (tag `always-on`) | Initiation only |
@@ -230,7 +230,7 @@ posture entry, or skips a malformed settings record, also keeps the gate at
 | Code | Capabilities from verified source analysis and signatures; agent kind with `tool-use`; posture bypass tags; MCP auto-approval; `heuristic.autonomy` | Coding-agent `approval_gate` | `heuristic.scheduled-agent` explains `autonomous` only |
 | Endpoint | Configured clients' signature capabilities; posture bypass tags; MCP auto-approval | Coding-agent `approval_gate` | Editor and browser extensions, shell history: `human` |
 | Runtime | Capabilities of the observed product | None | None |
-| Low-code | Workflow kind (L3); agents with tools; `saas-actions`; ServiceNow autonomous agents | None | Schedule and event tags, Salesforce `trigger_type`, Power Automate recurrence |
+| Low-code | Workflow kind (L3); agents with tool records (a ServiceNow agent carries `tool-use` only with tool records, and `saas-actions` only when a tool is not a retrieval); `saas-actions`; ServiceNow autonomous agents | None | Schedule and event tags (a trigger a person operates records neither), Salesforce `trigger_type`, Power Automate recurrence |
 | SaaS | Bot and app capabilities; tag `write-access` | None | None |
 | Cloud | Agent resources with tools; action groups and code interpreters (`code-exec`); workflows (Step Functions, Logic Apps); `multi-agent` collaborators | Bedrock `requireConfirmation`; `asks-user` (partial) | Logic App `trigger_types`, Cloud Function `trigger` |
 | Gateway | Tool-use and multi-agent request shapes | None | Tag `always-on` |

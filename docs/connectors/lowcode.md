@@ -31,7 +31,10 @@ SOQL/Tooling: `BotDefinition`/`BotVersion` (Einstein bots & Agentforce
 agents), `GenAiPlannerDefinition`/`GenAiPluginDefinition`/`GenAiFunctionDefinition`
 (topics, actions, Apex/Flow targets), `GenAiPromptTemplate`, `FlowDefinitionView`
 with AI hints, `ConnectedApplication` + `OauthToken` (user-authorised apps,
-aggregated). Auth: `access_token` or client-credentials connected app.
+aggregated). Auth: `access_token` or client-credentials connected app. A flow
+whose `TriggerType` is `Scheduled`, `RecordAfterSave`, `RecordBeforeSave`,
+`RecordBeforeDelete` or `PlatformEvent` carries `autonomous` as initiation
+evidence, with the value in `metadata.trigger_type`.
 
 ## `lowcode.servicenow`
 Table API: `sn_aia_agent`, `sn_aia_tool`, `sn_aia_usecase`, `sn_aia_trigger`,
@@ -43,13 +46,27 @@ only when the windows cover the table's `X-Total-Count`, the number of rows the
 query matches before that filtering. A response without a valid `X-Total-Count`
 cannot prove where the table ends: an empty page then ends the table with a
 warning and the scan is incomplete. `max_pages` bounds each table, and reaching
-it is incomplete.
+it is incomplete. An AI agent carries `tool-use` only when the export holds its
+`sn_aia_tool` records, and `saas-actions` only when one of them is not a
+retrieval tool; the `autonomous` capability needs the agent's `autonomous`
+flag or an `agent_type` of exactly `autonomous`. A use case or its
+`sn_aia_trigger` records add `scheduled` for a scheduled trigger and
+`event-triggered` for a record or application trigger; a use case without a
+trigger, which runs from a conversation, adds neither.
 
 ## `lowcode.n8n` · `lowcode.make` · `lowcode.zapier` · `lowcode.workato`
 Workflows/scenarios/zaps/recipes with AI or agent steps (n8n LangChain nodes,
 Make AI modules and AI Agents, Zapier AI/Agents from account exports, Workato
-GenAI/agentic providers); triggers (schedule/webhook → autonomous), code
-steps (→ code-exec), models. A Zapier export record needs an `id`, `title`,
+GenAI/agentic providers); triggers, code steps (→ code-exec), models. A
+schedule trigger adds the `scheduled` tag and a webhook, polled or chained
+trigger the `event-triggered` tag, each with the `autonomous` capability as
+initiation evidence (see [autonomy tiers](../concepts/autonomy.md)). A trigger
+a person operates adds neither: an n8n manual, chat, form or evaluation
+trigger, a Make scenario scheduled on demand, a Workato Workbot command, or a
+Zapier Chrome extension push or Interfaces form. n8n classifies its trigger
+nodes by type, Make reads `scheduling.type` and webhook modules, Workato the
+provider of the recipe's trigger line, and Zapier the first step's app. A
+Zapier export record needs an `id`, `title`,
 `name` or `Zap` field; any other object is reported as an unsupported record
 and makes the scan incomplete. A CSV row whose cells are all blank is skipped
 without a diagnostic.

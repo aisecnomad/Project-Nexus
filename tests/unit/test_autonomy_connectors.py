@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -866,3 +867,307 @@ def test_logic_app_trigger_types_ignore_malformed_trigger_entries(run_connector,
     [logic] = [f for f in findings if f.resource_type == "logic-app"]
     assert logic.metadata["trigger_types"] == ["ApiConnectionWebhook"]
     assert "autonomous" not in logic.capabilities and interval(logic)[3] == "event"
+
+
+# ------------------------------------------- low-code triggers a person operates
+
+
+def _export(tmp_path: Path, name: str, records: Any) -> str:
+    source = tmp_path / name
+    source.write_text(json.dumps(records))
+    return str(source)
+
+
+def _initiation_tags(f: Finding) -> set[str]:
+    return set(f.tags) & {"scheduled", "event-triggered"}
+
+
+def _n8n_workflow(*trigger_types: str) -> dict[str, Any]:
+    nodes: list[dict[str, Any]] = [
+        {"name": f"Trigger {number}", "type": trigger, "parameters": {}}
+        for number, trigger in enumerate(trigger_types)
+    ]
+    nodes.append({"name": "Agent", "type": "@n8n/n8n-nodes-langchain.agent", "parameters": {}})
+    return {"id": "w1", "name": "Agent workflow", "active": True, "nodes": nodes}
+
+
+@pytest.mark.parametrize(
+    ("trigger", "tags", "initiation"),
+    [
+        # Regression: every node type containing "trigger" was tagged event-triggered and
+        # autonomous, although a person starts these from the workflow's own button, chat window,
+        # form or evaluation runner.
+        ("n8n-nodes-base.manualTrigger", set(), "unknown"),
+        ("@n8n/n8n-nodes-langchain.chatTrigger", set(), "unknown"),
+        ("n8n-nodes-base.formTrigger", set(), "unknown"),
+        ("n8n-nodes-base.evaluationTrigger", set(), "unknown"),
+        # A schedule is not also an event.
+        ("n8n-nodes-base.scheduleTrigger", {"scheduled"}, "schedule"),
+        ("n8n-nodes-base.cron", {"scheduled"}, "schedule"),
+        ("n8n-nodes-base.interval", {"scheduled"}, "schedule"),
+        # Webhooks, pollers, other workflows and MCP clients start a run without a person.
+        ("n8n-nodes-base.webhook", {"event-triggered"}, "event"),
+        ("n8n-nodes-base.slackTrigger", {"event-triggered"}, "event"),
+        ("n8n-nodes-base.executeWorkflowTrigger", {"event-triggered"}, "event"),
+        ("@n8n/n8n-nodes-langchain.mcpTrigger", {"event-triggered"}, "event"),
+    ],
+)
+def test_n8n_triggers_a_person_operates_record_no_initiation(
+    run_connector, tmp_path, trigger, tags, initiation
+):
+    source = _export(tmp_path, "n8n.json", {"data": [_n8n_workflow(trigger)]})
+    [workflow] = run_connector("lowcode.n8n", input=source)[0]
+    assert workflow.metadata["triggers"] == [trigger]
+    assert _initiation_tags(workflow) == tags
+    assert ("autonomous" in workflow.capabilities) is bool(tags)
+    assert interval(workflow)[3] == initiation
+
+
+def test_n8n_schedule_beside_a_manual_test_trigger_is_scheduled(run_connector, tmp_path):
+    workflow = _n8n_workflow("n8n-nodes-base.manualTrigger", "n8n-nodes-base.scheduleTrigger")
+    [finding] = run_connector("lowcode.n8n", input=_export(tmp_path, "n8n.json", {"data": [workflow]}))[0]
+    assert _initiation_tags(finding) == {"scheduled"} and interval(finding)[3] == "schedule"
+
+
+def _workato_recipe(provider: str, **extra: Any) -> dict[str, Any]:
+    root = {"number": 0, "keyword": "trigger", "provider": provider, "name": "new_event", "block": []}
+    return {
+        "id": 7,
+        "name": "Classify tickets with GenAI",
+        "running": True,
+        "code": json.dumps(root),
+        "config": [{"keyword": "application", "provider": "workato_genai"}],
+        **extra,
+    }
+
+
+@pytest.mark.parametrize(
+    ("provider", "tags", "initiation"),
+    [
+        # Regression: the trigger line's keyword is "trigger" on every recipe, so every recipe, a
+        # scheduled one and a Workbot command included, was tagged event-triggered.
+        ("clock", {"scheduled"}, "schedule"),
+        ("workbot", set(), "unknown"),
+        ("zendesk", {"event-triggered"}, "event"),
+        ("webhooks", {"event-triggered"}, "event"),
+    ],
+)
+def test_workato_trigger_provider_sets_the_initiation(run_connector, tmp_path, provider, tags, initiation):
+    source = _export(tmp_path, "workato.json", {"items": [_workato_recipe(provider)]})
+    [recipe] = run_connector("lowcode.workato", input=source)[0]
+    assert recipe.metadata["triggers"] == [f"{provider}:new_event"]
+    assert _initiation_tags(recipe) == tags
+    assert ("autonomous" in recipe.capabilities) is bool(tags)
+    assert interval(recipe)[3] == initiation
+
+
+def test_workato_recipe_without_a_trigger_line_records_no_initiation(run_connector, tmp_path):
+    action_only = _workato_recipe("zendesk")
+    action_only["code"] = json.dumps({"number": 0, "keyword": "action", "provider": "workato_genai"})
+    no_code = _workato_recipe("zendesk", id=8, code=None)
+    findings = run_connector(
+        "lowcode.workato", input=_export(tmp_path, "workato.json", [action_only, no_code])
+    )[0]
+    assert len(findings) == 2
+    assert all(f.metadata["triggers"] == [] and "autonomous" not in f.capabilities for f in findings)
+
+
+def _make_scenario(scheduling: dict[str, Any] | None, *modules: str) -> dict[str, Any]:
+    scenario: dict[str, Any] = {
+        "_kind": "scenario",
+        "id": 11,
+        "name": "Ticket summariser",
+        "_team": "t1",
+        "isActive": True,
+        "blueprint": {"flow": [{"module": m} for m in (*modules, "openai-gpt-3:CreateCompletion")]},
+    }
+    if scheduling is not None:
+        scenario["scheduling"] = scheduling
+    return scenario
+
+
+@pytest.mark.parametrize(
+    ("scheduling", "first", "tags", "initiation"),
+    [
+        # Regression: the first module's name decided, so an on-demand scenario creating a calendar
+        # event was event-triggered while a scenario polling every 15 minutes recorded nothing.
+        ({"type": "on-demand"}, "google-calendar:createEvent", set(), "unknown"),
+        ({"type": "on-demand"}, "zendesk:watchTickets", set(), "unknown"),
+        ({"type": "indefinitely", "interval": 900}, "zendesk:watchTickets", {"scheduled"}, "schedule"),
+        ({"type": "daily", "time": "09:00"}, "slack:createPoll", {"scheduled"}, "schedule"),
+        ({"type": "immediately"}, "gateway:CustomWebHook", {"event-triggered"}, "event"),
+        # Without scheduling (a blueprint file) only a webhook module proves an event.
+        (None, "gateway:CustomWebHook", {"event-triggered"}, "event"),
+        (None, "zendesk:watchTickets", set(), "unknown"),
+        (None, "google-calendar:createEvent", set(), "unknown"),
+    ],
+)
+def test_make_scheduling_and_webhooks_set_the_initiation(
+    run_connector, tmp_path, scheduling, first, tags, initiation
+):
+    source = _export(tmp_path, "make.json", [_make_scenario(scheduling, first)])
+    [scenario] = run_connector("lowcode.make", input=source)[0]
+    assert scenario.metadata["triggers"][0] == first
+    assert _initiation_tags(scenario) == tags
+    assert ("autonomous" in scenario.capabilities) is bool(tags)
+    assert interval(scenario)[3] == initiation
+
+
+@pytest.mark.parametrize(
+    ("first_app", "tags", "initiation"),
+    [
+        ("Zapier Chrome extension", set(), "unknown"),
+        ("Zapier Interfaces", set(), "unknown"),
+        ("HubSpot", set(), "unknown"),
+        ("Schedule by Zapier", {"scheduled"}, "schedule"),
+        ("Webhooks by Zapier", {"event-triggered"}, "event"),
+    ],
+)
+def test_zapier_first_step_sets_the_initiation(run_connector, tmp_path, first_app, tags, initiation):
+    zap = {
+        "id": "z1",
+        "title": "Summarise with ChatGPT",
+        "status": "on",
+        "steps": f"{first_app}, ChatGPT (OpenAI), Slack",
+    }
+    [finding] = run_connector("lowcode.zapier", input=_export(tmp_path, "zapier.json", [zap]))[0]
+    assert finding.metadata["triggers"] == [first_app]
+    assert _initiation_tags(finding) == tags and interval(finding)[3] == initiation
+
+
+def _servicenow(tmp_path: Path, *records: dict[str, Any]) -> str:
+    return _export(tmp_path, "servicenow.json", list(records))
+
+
+@pytest.mark.parametrize(
+    ("trigger_type", "tags", "initiation"),
+    [
+        # Regression: a scheduled trigger was tagged event-triggered.
+        ("scheduled", {"scheduled"}, "schedule"),
+        ("Date based", {"scheduled"}, "schedule"),
+        ("record", {"event-triggered"}, "event"),
+        ("Record created or updated", {"event-triggered"}, "event"),
+        ("application", {"event-triggered"}, "event"),
+        # A trigger record of an unrecorded type still starts the use case without a person.
+        (None, {"event-triggered"}, "event"),
+    ],
+)
+def test_servicenow_trigger_records_set_the_initiation(
+    run_connector, tmp_path, trigger_type, tags, initiation
+):
+    usecase = {"_table": "sn_aia_usecase", "sys_id": "u1", "name": "P1 triage"}
+    trigger: dict[str, Any] = {"_table": "sn_aia_trigger", "sys_id": "t1", "name": "Trigger", "usecase": "u1"}
+    if trigger_type is not None:
+        trigger["trigger_type"] = trigger_type
+    orphan = {**trigger, "sys_id": "t2", "usecase": "missing"}
+    findings, _ = run_connector("lowcode.servicenow", input=_servicenow(tmp_path, usecase, trigger, orphan))
+    resolved = next(f for f in findings if f.resource_type == "now-assist-usecase")
+    unresolved = next(f for f in findings if f.metadata.get("identity_unresolved"))
+    for f in (resolved, unresolved):
+        assert _initiation_tags(f) == tags and "autonomous" in f.capabilities
+        assert interval(f)[3] == initiation
+
+
+@pytest.mark.parametrize("trigger_type", [None, "", "manual", "none", "Conversation"])
+def test_servicenow_use_case_without_a_trigger_records_no_initiation(run_connector, tmp_path, trigger_type):
+    usecase: dict[str, Any] = {"_table": "sn_aia_usecase", "sys_id": "u1", "name": "Ask in chat"}
+    if trigger_type is not None:
+        usecase["trigger_type"] = trigger_type
+    [use_case] = run_connector("lowcode.servicenow", input=_servicenow(tmp_path, usecase))[0]
+    assert not _initiation_tags(use_case) and "autonomous" not in use_case.capabilities
+    assert interval(use_case) == (3, 5, "unknown", "unknown")
+
+
+def test_servicenow_use_case_own_trigger_type_counts(run_connector, tmp_path):
+    usecase = {"_table": "sn_aia_usecase", "sys_id": "u1", "name": "Nightly", "trigger_type": "scheduled"}
+    [use_case] = run_connector("lowcode.servicenow", input=_servicenow(tmp_path, usecase))[0]
+    assert _initiation_tags(use_case) == {"scheduled"} and interval(use_case)[3] == "schedule"
+
+
+@pytest.mark.parametrize(
+    ("agent", "autonomous"),
+    [
+        ({"autonomous": "true"}, True),
+        ({"autonomous": True}, True),
+        ({"agent_type": "autonomous"}, True),
+        ({"agent_type": " Autonomous "}, True),
+        ({"agent_type": {"value": "autonomous", "display_value": "Autonomous"}}, True),
+        # Regression: a substring match read these as the autonomous type.
+        ({"agent_type": "semi-autonomous"}, False),
+        ({"agent_type": "non-autonomous"}, False),
+        ({"agent_type": "autonomous_supervised"}, False),
+        ({"autonomous": "false", "agent_type": "supervised"}, False),
+        ({}, False),
+    ],
+)
+def test_servicenow_autonomous_agent_type_needs_the_exact_value(run_connector, tmp_path, agent, autonomous):
+    record = {"_table": "sn_aia_agent", "sys_id": "a1", "name": "Incident triage", **agent}
+    tool = {"_table": "sn_aia_tool", "sys_id": "t1", "name": "Restart service", "type": "flow", "agent": "a1"}
+    [finding] = run_connector("lowcode.servicenow", input=_servicenow(tmp_path, record, tool))[0]
+    assert ("autonomous" in finding.capabilities) is autonomous
+    assert interval(finding)[:3] == ((4, 5, "bypassed") if autonomous else (3, 5, "unknown"))
+
+
+@pytest.mark.parametrize(
+    ("tool_types", "capabilities", "floor"),
+    [
+        # Regression: an agent without tool records carried tool-use and saas-actions, so it was
+        # L3 and, once flagged autonomous, L4 with no tool in the export.
+        ((), set(), 0),
+        (("retrieval",), {"tool-use"}, 3),
+        (("Knowledge search", "record retrieval"), {"tool-use"}, 3),
+        (("flow",), {"tool-use", "saas-actions"}, 4),
+        (("retrieval", "record operation"), {"tool-use", "saas-actions"}, 4),
+        (("script",), {"tool-use", "saas-actions", "code-exec"}, 4),
+    ],
+)
+def test_servicenow_agent_capabilities_follow_its_tool_records(
+    run_connector, tmp_path, tool_types, capabilities, floor
+):
+    agent = {"_table": "sn_aia_agent", "sys_id": "a1", "name": "Incident triage", "autonomous": "true"}
+    tools = [
+        {
+            "_table": "sn_aia_tool",
+            "sys_id": f"t{number}",
+            "name": f"Tool {number}",
+            "type": kind,
+            "agent": "a1",
+        }
+        for number, kind in enumerate(tool_types)
+    ]
+    [finding] = run_connector("lowcode.servicenow", input=_servicenow(tmp_path, agent, *tools))[0]
+    assert set(finding.capabilities) - {"autonomous"} == capabilities
+    assert len(finding.metadata["tools"]) == len(tool_types)
+    assert interval(finding)[0] == floor
+
+
+@pytest.mark.parametrize(
+    ("trigger_type", "autonomous", "initiation"),
+    [
+        # Regression: RecordBeforeDelete flows classified as event-triggered without the capability.
+        ("RecordBeforeDelete", True, "event"),
+        ("RecordAfterSave", True, "event"),
+        ("PlatformEvent", True, "event"),
+        ("Scheduled", True, "schedule"),
+        (None, False, "unknown"),
+        ("Screen", False, "unknown"),
+    ],
+)
+def test_salesforce_flow_trigger_types_carry_the_capability_the_classifier_reads(
+    run_connector, tmp_path, trigger_type, autonomous, initiation
+):
+    flow = {
+        "attributes": {"type": "FlowDefinitionView"},
+        "Id": "f1",
+        "ApiName": "Prompt_Cleanup",
+        "Label": "Prompt: Einstein cleanup",
+        "TriggerType": trigger_type,
+        "ProcessType": "AutoLaunchedFlow",
+    }
+    source = _export(tmp_path, "salesforce.json", [flow])
+    [finding] = run_connector(
+        "lowcode.salesforce", input=source, instance_url="https://acme.my.salesforce.com"
+    )[0]
+    assert finding.metadata["trigger_type"] == trigger_type
+    assert ("autonomous" in finding.capabilities) is autonomous
+    assert interval(finding)[3] == initiation

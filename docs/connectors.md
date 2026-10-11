@@ -779,7 +779,9 @@ registry approval from an unrelated parent.
 
 ### `lowcode.n8n`
 n8n workflows with AI or agent steps, including LangChain nodes; triggers
-(schedule/webhook → autonomous), code steps (→ code-exec) and models. Live
+(schedule → `scheduled`, webhook or app event → `event-triggered`, both with
+`autonomous`; a manual, chat, form or evaluation trigger adds neither), code
+steps (→ code-exec) and models. Live
 pagination is bounded by `max_pages` (default and maximum 1000). A workflow
 needs a nonempty provider ID for a usable resource identity. Exported blueprints
 without an ID retain detected AI evidence under an unresolved identity, make
@@ -788,21 +790,26 @@ uses `api_key`, sent as `X-N8N-API-KEY` (env `N8N_API_KEY`), against `api_url`
 (env `N8N_API_URL`, for example `https://n8n.example.com/api/v1`).
 
 ### `lowcode.make`
-Make scenarios with AI modules and AI Agents; triggers (schedule/webhook →
-autonomous), code steps (→ code-exec) and models. Live pagination is bounded by
+Make scenarios with AI modules and AI Agents; triggers (`scheduling.type` →
+`scheduled`, webhook → `event-triggered`, both with `autonomous`; an on-demand
+scenario adds neither), code steps (→ code-exec) and models. Live pagination is bounded by
 `max_pages` (default and maximum 1000). Make scans one `team_id`, or every team
 of an `organization_id` when `team_id` is unset.
 
 ### `lowcode.zapier`
-Zapier zaps and AI/Agents from account exports; triggers (schedule/webhook →
-autonomous), code steps (→ code-exec) and models. Live pagination is bounded by
+Zapier zaps and AI/Agents from account exports; triggers (schedule →
+`scheduled`, webhook → `event-triggered`, both with `autonomous`; a Chrome
+extension push or Interfaces form adds neither), code steps (→ code-exec) and
+models. Live pagination is bounded by
 `max_pages` (default and maximum 1000). Wholly blank text rows are skipped only
 with a recognized identity column (`title`, `name`, `Title`, `Zap`, `id`, or
 `Id`); unknown schemas are incomplete.
 
 ### `lowcode.workato`
-Workato recipes with GenAI/agentic providers; triggers (schedule/webhook →
-autonomous), code steps (→ code-exec), and models. Live pagination is bounded by
+Workato recipes with GenAI/agentic providers; triggers (Scheduler →
+`scheduled`, app, webhook or callable trigger → `event-triggered`, both with
+`autonomous`; a Workbot command adds neither), code steps (→ code-exec), and
+models. Live pagination is bounded by
 `max_pages` (default and maximum 1000).
 
 ## SaaS

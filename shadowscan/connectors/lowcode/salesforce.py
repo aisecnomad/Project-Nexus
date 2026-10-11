@@ -86,6 +86,13 @@ QUERIES: dict[str, tuple[str, str]] = {
 }
 
 
+# Flow ``TriggerType`` values that start a flow without a person: a schedule, a record change or a
+# platform event. The autonomy classification reads the same values from ``metadata.trigger_type``.
+_UNATTENDED_FLOW_TRIGGERS = frozenset(
+    {"Scheduled", "RecordAfterSave", "RecordBeforeSave", "RecordBeforeDelete", "PlatformEvent"}
+)
+
+
 class SalesforceConnector(BaseConnector):
     name: ClassVar[str] = "lowcode.salesforce"
     surface: ClassVar[Surface] = Surface.LOWCODE
@@ -491,7 +498,7 @@ class SalesforceConnector(BaseConnector):
             )
         )
         apply_matches(f, matches, weight_scale=0.5)
-        if rec.get("TriggerType") in {"Scheduled", "RecordAfterSave", "RecordBeforeSave", "PlatformEvent"}:
+        if rec.get("TriggerType") in _UNATTENDED_FLOW_TRIGGERS:
             # Autonomy: initiation evidence (a schedule or a record or platform event, read from
             # metadata.trigger_type), not approval-bypass evidence.
             f.add_capability("autonomous")
