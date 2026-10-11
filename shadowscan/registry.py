@@ -17,7 +17,8 @@ The inventory can be supplied as:
         frameworks: [framework.langgraph]
 
   A card with top-level ``schema_version: 2`` declares ``autonomy_profile.level`` on the L0-L5
-  scale of :mod:`shadowscan.autonomy`; an earlier card's level is ignored and reported.
+  scale of :mod:`shadowscan.autonomy`; an earlier card's level is ignored and reported. Such a
+  card may also declare governance facts (``governance:``, see :mod:`shadowscan.governance`).
 
 * a simple inventory list ``agents: [{id, name, owner, resources, names, autonomy_level}]`` (YAML/JSON)
 * a CSV with columns ``agent_id, name, owner, resources`` (resources separated by ``|``)
@@ -49,6 +50,7 @@ import yaml
 
 from shadowscan.autonomy import observed_floor, valid_autonomy
 from shadowscan.errors import SetupError, SetupPathError
+from shadowscan.governance import GovernanceError, parse_governance
 from shadowscan.models import Finding, Surface
 from shadowscan.utils.files import (
     SKIPPED_LINK,
@@ -200,6 +202,8 @@ class InventoryEntry:
     autonomy_level: int | None = None
     # A card without schema_version 2 set autonomy_profile.level; it was not read (older scale).
     ignored_autonomy_level: bool = False
+    # Governance facts a schema_version 2 card declares (shadowscan.governance), or None.
+    governance: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
         # Direct users of the public model must not bypass parser type checks.
@@ -214,6 +218,7 @@ class InventoryEntry:
         _autonomy_level(values, "autonomy_level", path, "entry")
         if type(self.ignored_autonomy_level) is not bool:
             raise _invalid(path, "entry.ignored_autonomy_level", "expected a boolean")
+        self.governance = _governance(self.governance, path, "entry")
 
     def all_names(self) -> list[str]:
         out = [self.agent_id]
@@ -395,6 +400,7 @@ class Inventory:
         if meta.get("classification"):
             tags.append(meta["classification"].strip())
         level, ignored = _card_autonomy(doc, path, location)
+        governance = _card_governance(doc, path, location)
         return InventoryEntry(
             agent_id=aid.strip(),
             name=_first_string(meta, "name", "display_name"),
@@ -412,6 +418,7 @@ class Inventory:
             card=doc,
             autonomy_level=level,
             ignored_autonomy_level=ignored,
+            governance=governance,
         )
 
     @staticmethod
@@ -614,6 +621,21 @@ def _card_autonomy(doc: dict[str, Any], path: Path, location: str) -> tuple[int 
     return _autonomy_level(profile, "level", path, f"{location}.autonomy_profile"), False
 
 
+def _governance(value: Any, path: Path, location: str) -> dict[str, Any] | None:
+    try:
+        return parse_governance(value)
+    except GovernanceError as exc:
+        raise _invalid(path, f"{location}.{exc.field}", exc.message) from None
+
+
+def _card_governance(doc: dict[str, Any], path: Path, location: str) -> dict[str, Any] | None:
+    """The governance facts a card declares: only schema_version 2 cards have a ``governance`` block."""
+    value = doc.get("governance")
+    if value is not None and doc.get("schema_version", 1) != 2:
+        raise _invalid(path, f"{location}.governance", "requires schema_version 2")
+    return _governance(value, path, location)
+
+
 def _check_fields(value: dict, allowed: set[str], path: Path, location: str) -> None:
     if any(not isinstance(key, str) or key not in allowed for key in value):
         # Do not echo arbitrary unknown keys: they may themselves contain secrets.
@@ -731,6 +753,8 @@ def card_stub_for(finding: Finding) -> dict[str, Any]:
             "max_loop_iterations": None,
             "velocity_limit": None,
         },
+        # Facts only the operator can declare; a reviewer replaces the placeholder.
+        "governance": {"eu_ai_act_risk_class": "unknown"},
         "identity_and_delegation": {
             "spiffe_id": None,
             "auth_mechanism": None,

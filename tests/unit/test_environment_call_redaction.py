@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import subprocess
 import sys
@@ -13,14 +14,26 @@ from shadowscan.config import ConnectorSpec, ScanConfig
 from shadowscan.connectors.base import ConnectorContext
 from shadowscan.connectors.code.github import GitHubConnector
 from shadowscan.connectors.code.gitlab import GitLabConnector
+from shadowscan.controls import control_evidence
+from shadowscan.dashboard import build_inventory, render_inventory_json
 from shadowscan.engine import Engine
+from shadowscan.models import ScanResult
+from shadowscan.reporters.controls import CONTROL_FORMATS, render_controls
 from shadowscan.reporters.csv_ import render_csv
+from shadowscan.reporters.dashboard import render_dashboard
 from shadowscan.reporters.html import render_html
 from shadowscan.reporters.json_ import render_json
 from shadowscan.reporters.markdown import render_markdown
 from shadowscan.reporters.sarif import render_sarif
 from shadowscan.utils import redaction
 from shadowscan.utils.redaction import REDACTED, SanitizationLimitError, sanitize_text
+
+
+def render_controls_report(result: ScanResult) -> str:
+    """The control evidence report, in every format, of ``result`` read back as a JSON report."""
+    evidence = control_evidence([("report.json", json.loads(result.to_json()))])
+    return "\n".join(render_controls(evidence, fmt) for fmt in CONTROL_FORMATS)
+
 
 SECRET = "opaque-environment-credential-canary-123456"
 TAIL = "opaque-environment-credential-second-fragment"
@@ -185,12 +198,23 @@ def test_environment_credentials_never_reach_any_evidence_reporter(
         ]
     else:
         assert result.complete and not result.stats[0].errors
-    for render in (render_json, render_html, render_markdown, render_sarif, render_csv):
+    for render in (
+        render_json,
+        render_html,
+        render_markdown,
+        render_sarif,
+        render_csv,
+        render_controls_report,
+    ):
         output = render(result)
         assert SECRET not in output, render.__name__
         assert TAIL not in output, render.__name__
-        if render is not render_csv:
+        if render not in (render_csv, render_controls_report):
             assert REDACTED in output, render.__name__
+    # The dashboard and its inventory export carry no evidence, so nothing is left to redact there.
+    inventory = build_inventory(result)
+    for output in (render_dashboard(inventory), render_inventory_json(inventory)):
+        assert SECRET not in output and TAIL not in output
 
 
 @pytest.mark.parametrize(

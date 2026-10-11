@@ -8,7 +8,8 @@ and ``metadata.controls`` (NIST AI RMF, ISO/IEC 42001, EU AI Act, AIUC-1).
 
 They are evidence references written by the project's author, not compliance
 determinations and not independently reviewed. They never feed identity, risk,
-diff state, merging or the incremental cache.
+diff state, merging or the incremental cache. :mod:`shadowscan.controls` groups
+them per control for the ``shadowscan controls`` evidence report.
 """
 
 from __future__ import annotations
@@ -58,17 +59,20 @@ class MappingIndex:
         entries = {entry.ref: entry for catalog in catalogs for entry in catalog.entries}
         return cls(catalogs, rules, entries)
 
+    def matching_rules(self, finding: Finding) -> list[Rule]:
+        """The rules whose condition ``finding`` meets, in catalog order."""
+        facts = FindingFacts.of(finding)
+        return [rule for rule in self.rules if rule.when.matches(facts)]
+
     def references(self, finding: Finding) -> tuple[list[str], list[str]]:
         """The sorted threat (and layer) references and control references for ``finding``."""
-        facts = FindingFacts.of(finding)
         threats: set[str] = set()
         controls: set[str] = set()
-        for rule in self.rules:
-            if rule.when.matches(facts):
-                if rule.kind in THREAT_KINDS:
-                    threats.update(rule.refs)
-                elif rule.kind in CONTROL_KINDS:
-                    controls.update(rule.refs)
+        for rule in self.matching_rules(finding):
+            if rule.kind in THREAT_KINDS:
+                threats.update(rule.refs)
+            elif rule.kind in CONTROL_KINDS:
+                controls.update(rule.refs)
         return sorted(threats), sorted(controls)
 
     def describe(self, ref: str) -> MappingEntry | None:

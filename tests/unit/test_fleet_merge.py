@@ -10,7 +10,7 @@ import pytest
 from click.testing import CliRunner
 
 from shadowscan.cli import main
-from shadowscan.fleet import merge_reports
+from shadowscan.fleet import FLEET_SCHEMA, merge_reports
 from shadowscan.models import Kind
 from shadowscan.reporters import render
 
@@ -349,3 +349,23 @@ def test_merge_refuses_a_malformed_inventory_presence(tmp_path: Path, value: obj
     with pytest.raises(ValueError, match="inventory presence must be a boolean") as raised:
         merge_reports([("forged", report)])
     assert str(value) not in str(raised.value)
+
+
+def test_fleet_sources_record_collection_time_inventory_and_connector_runs(tmp_path: Path):
+    path = _report(tmp_path, "laptop", {".mcp.json": MCP})
+    report = json.loads(path.read_text())
+    broken = json.loads(path.read_text())
+    broken["stats"][0]["errors"] = ["connector timed out"]
+    broken["summary"]["complete"] = False
+    broken["inventory_present"] = True
+    result = merge_reports([("a.json", report), ("b.json", broken)])
+    fleet = result.collection_scope["fleet"]
+    assert fleet["schema"] == FLEET_SCHEMA == "shadowscan.fleet-merge/v2"
+    first, second = fleet["sources"]
+    assert (first["started_at"], first["finished_at"]) == (report["started_at"], report["finished_at"])
+    assert first["inventory_present"] is False and second["inventory_present"] is True
+    assert first["connectors"] == [{"connector": "code.filesystem", "status": "complete"}]
+    assert second["connectors"] == [{"connector": "code.filesystem", "status": "incomplete"}]
+    # Any source with an inventory makes the merged report one that was reconciled.
+    assert result.inventory_present is True
+    assert merge_reports([("a.json", report)]).inventory_present is False

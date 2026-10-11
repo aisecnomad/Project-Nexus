@@ -1,8 +1,9 @@
 # Agent governance proposals
 
-Status: proposal, drafted 2026-10-10. This page expands six roadmap ideas into
-scoped items. It is intent, not a contract, and nothing here is implemented
-unless an item says so. [ROADMAP.md](https://github.com/aisecnomad/Project-Nexus/blob/main/ROADMAP.md)
+Status: proposal, drafted 2026-10-10; all six items are now implemented,
+unreleased (each section's status line gives the details and what remains
+open). This page expands six roadmap ideas into scoped items. It is intent,
+not a contract, and nothing here is implemented unless an item says so. [ROADMAP.md](https://github.com/aisecnomad/Project-Nexus/blob/main/ROADMAP.md)
 carries the one-line summary of each item.
 
 The six items are:
@@ -497,6 +498,11 @@ Rules:
 
 ## 4. Enterprise inventory dashboard (DASH)
 
+Status: DASH-0 to DASH-3 are implemented, unreleased, as `shadowscan
+dashboard` and its `shadowscan.inventory/v1` export; see
+[Fleet dashboard](../operations/dashboard.md). The tests use synthetic
+reports, not a live fleet.
+
 ### Constraint
 
 The roadmap does not plan a hosted scanning service. The dashboard is
@@ -618,8 +624,11 @@ results carry them as tags, and JSON findings carry them as
 Status: CTRL-1 catalogs are implemented, unreleased, as `metadata.controls`,
 and the HTML and Markdown reports list each finding's control references; see
 [Threat and control mappings](../concepts/mappings.md). The control evidence
-report (CTRL-0 and the rest of CTRL-2) and declared facts (CTRL-3) remain
-proposals.
+report (CTRL-0 and CTRL-2) is implemented, unreleased, as
+[`shadowscan controls`](../operations/controls.md) with Markdown, CSV and JSON
+output; the HTML report has no controls section yet. Declared facts (CTRL-3)
+are implemented, unreleased, as the Capability Card
+[`governance:` block](../inventory.md#declared-governance-facts).
 
 ### Frameworks
 

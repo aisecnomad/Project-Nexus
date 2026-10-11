@@ -307,6 +307,8 @@ can still include `tag:autonomy-understated` from a source whose own match
 was registered. A source whose autonomy block is malformed
 is rejected ("rescan before merging"). Findings from reports written before
 this field existed are classified from the merged finding alone.
+[`shadowscan dashboard`](../operations/dashboard.md) reads a single report
+the same way, so one report shows the tiers it would show among others.
 
 ## Limits
 

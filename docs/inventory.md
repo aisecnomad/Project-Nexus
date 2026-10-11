@@ -24,7 +24,8 @@ approves a finding; bind it with a Capability Card like any other agent.
 
 The bundled example is [`agent-card.yaml`](https://github.com/aisecnomad/Project-Nexus/blob/main/agent-card.yaml). ShadowScan reads
 `schema_version`, `metadata.agent_id`, `metadata.name`, `metadata.owner_team` / `owner`,
-`metadata.classification`, `autonomy_profile.level`, and a `discovery:` block required for automatic registration:
+`metadata.classification`, `autonomy_profile.level`, the optional
+[`governance:`](#declared-governance-facts) block, and a `discovery:` block required for automatic registration:
 
 ```yaml
 schema_version: 2                              # autonomy_profile.level uses the L0-L5 scale
@@ -83,6 +84,63 @@ Matching and approval do not depend on the level.
 without reviewing it against the scale's definitions. Until then the card
 keeps registering its resources and its level is ignored with the warning
 above.
+
+### Declared governance facts
+
+A `schema_version: 2` card may declare governance facts that the scanner cannot
+observe, in an optional top-level `governance:` block:
+
+```yaml
+schema_version: 2
+metadata:
+  agent_id: refunds-agent
+governance:
+  eu_ai_act_risk_class: high          # prohibited, high, limited, minimal, gpai, gpai-systemic or unknown
+  intended_purpose: Issue refunds for disputed card payments.
+  oversight_measures:
+    - Refunds above 500 EUR need a second approver
+    - Weekly sample review by the payments team
+  aiuc1_certificate: AIUC-1 certificate reference
+  iso42001_scope: true                # inside the ISO/IEC 42001 management system scope
+discovery:
+  resources: ["arn:aws:bedrock:us-east-1:111111111111:agent/AGENTX"]
+```
+
+Every key is optional, and a key set to null is undeclared. Validation is as
+strict as the rest of the card: an unknown key, a risk class outside the list,
+an empty or over-long string (`intended_purpose` at most 500 characters,
+`aiuc1_certificate` and each oversight measure at most 200), more than 20
+`oversight_measures` or an `iso42001_scope` that is not `true` or `false`
+fails the inventory, and so does a `governance` block on a card without
+`schema_version: 2`. Error messages name the field, never its value. Simple
+entries and CSV rows have no governance fields. `shadowscan inventory check`
+validates the block and lists each entry's declared EU AI Act class.
+
+A finding registered by the card records the block as
+`metadata.declared_governance`, with the card's `metadata.agent_id` as
+`source`. Only the card that registers the finding in the current run can
+declare its facts: a value from a connector, a plugin or an earlier run is
+replaced, a shadow finding has none, and `shadowscan merge` drops them from a
+finding that is shadow or unassessed in the merged report. Reports that
+register one finding to different agents make it ambiguous and shadow, so
+neither card's facts apply. When two reports register it to the same agent
+with different declared facts (different versions of one card), `merge` and
+`controls` refuse them (exit 1) instead of keeping the first report's; make
+the inventories agree and rescan. Reports redact
+credential-like phrases in declared values like any other field, so a value at
+the card's length limit can be longer in a report; a report's block is checked
+without those limits. The HTML and Markdown reports
+show them as "Declared governance (card …, not verified)", and the
+[control evidence report](operations/controls.md) labels references that rest
+on them as declared.
+
+ShadowScan never infers or checks these facts. Whether a system is high-risk
+under the EU AI Act depends on its intended purpose and the operator's role, so
+only the declared class selects the
+[declared control references](concepts/mappings.md#declared-facts): EU AI Act
+Articles 12, 14 and 26 for a declared `high` class, and Article 50 for a
+declared `limited`, `gpai` or `gpai-systemic` agent, bot or AI application.
+They do not change risk scores, matching or approval.
 
 ### Simple list
 
@@ -554,7 +612,9 @@ detected capabilities into `capability_surface`, the risk score into
 `schema_version: 2` cards whose `autonomy_profile.level` is the finding's
 observed autonomy floor, the lowest level its evidence proves; set it to the
 level the agent is approved for. A finding kind without autonomy (for example
-`oauth-grant`) gets no level. Review, complete
+`oauth-grant`) gets no level. Stubs also carry
+`governance: {eu_ai_act_risk_class: unknown}` as a placeholder for the
+[declared facts](#declared-governance-facts) only the operator can supply. Review, complete
 and move the card into the inventory directory; on the next scan the finding is
 registered and its risk drops.
 

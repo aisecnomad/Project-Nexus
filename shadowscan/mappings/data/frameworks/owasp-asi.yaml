@@ -7,6 +7,7 @@ source_url: https://github.com/GenAI-Security-Project/GenAI-LLM-Top10/blob/main/
 licence: CC-BY-SA-4.0
 checked: "2026-10-10"
 verification: primary
+review: author
 notes: >-
   Announced 2025-12-09. The list's own page on genai.owasp.org could not be
   retrieved. Entry names were checked against Appendix A of the OWASP Top 10

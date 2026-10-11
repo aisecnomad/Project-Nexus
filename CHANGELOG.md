@@ -5,6 +5,61 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## Unreleased
 
+### Fleet dashboard and inventory export
+
+- Add `shadowscan dashboard REPORTS... -o dashboard.html`: a static,
+  self-contained page with no external assets and one hashed script. The
+  coverage panel comes first (completeness per source and connector,
+  last scan and staleness); a connector a source did not run reads
+  "not collected", never 0. Then counts by inventory status, risk level,
+  surface, kind, provider, account and owner; autonomy floor against shadow
+  status with the shadow L4 and L5 cells marked and linked; vendor registry
+  reconciliation per registry; threat and control reference counts
+  ("Evidence references, not compliance determinations."); and the AI
+  systems table. Every table reads without JavaScript.
+- One report is read as `merge` reads a source, so it shows what it would
+  show among others: each applicable finding's autonomy interval is
+  classified again (a report written before autonomy tiers shows its tiers
+  and priority quadrant), and a report without `inventory_present` counts as
+  having an inventory when its `inventory_size` is above zero or a finding
+  has a shadow status. A finding of an applicable kind without a valid
+  interval reads "not classified" (unknown, counted and warned about in the
+  priority section), not "not applicable".
+- Coverage has no column for scan-level `engine.*` records, stores a cell
+  only for the connectors each source ran (the document grows with the
+  runs, not with sources times connectors) and shows at most 100 connector
+  columns, with a note for the rest. An incomparable `--baseline` opens the
+  page with its own banner, and the coverage drift class counts reasons.
+- `--inventory-json FILE` writes the same data as the versioned
+  `shadowscan.inventory/v1` document for BI and SIEM tools. Credential
+  findings are counted and left out; records carry no evidence snippets,
+  evidence attributes, permissions or raw metadata.
+- `--baseline FILE` adds drift computed as `diff` computes it; missing
+  findings stay unknown unless the comparison is comparable.
+  `--history DIR` adds per-report totals and drift between comparable
+  consecutive reports (at most the newest 104; a non-comparable pair is a
+  gap, never zero). History counts drift without exporting findings
+  (`comparison.drift_counts`); 104 synthetic reports of 10,000 findings
+  took about 74 seconds. `--as-of TIME` sets the staleness reference, which
+  otherwise is the newest source's last scan, never the wall clock.
+- Exit 3 when an input or source is incomplete or the baseline comparison is
+  not comparable (the files are still written); exit 1 on invalid input.
+  Outputs are written with mode 0600 and never through a symbolic link.
+- `merge` now records `started_at`, `finished_at`, `inventory_present` and
+  each connector run's status for every source, under
+  `collection_scope.fleet.schema` `shadowscan.fleet-merge/v2`, and sets the
+  merged report's `inventory_present` when any source supplied an
+  inventory. The scope fingerprint is unchanged.
+- The dashboard reads shadow status as `shadowscan merge` records it
+  (registration only from sources with `inventory_present: true`), labels a
+  finding that inventories matched to different agents, and reads a fleet
+  report merged before `shadowscan.fleet-merge/v2` as having no inventory,
+  with a note to merge its sources again.
+- Add authored tests for each view, escaping of hostile report values,
+  coverage, determinism, private outputs, a 20,000-finding linear-time
+  render budget and a linear-time history budget.
+  They use synthetic reports and do not establish acceptance on a live fleet.
+
 ### Redaction on CPython 3.12.0 to 3.12.3
 
 - Fixed: on CPython 3.12.0 to 3.12.3, redacting a long single line could
@@ -171,6 +226,67 @@ summarizes each release for people who install and operate ShadowScan.
   cloud SDKs: the mypy overrides list the `google` namespace package, which
   `import google.auth` also binds. A new test type-checks every optional SDK
   import with installed packages hidden.
+
+### Control evidence report and declared governance facts
+
+- Add `shadowscan controls REPORT.json [...]` (`--format markdown|csv|json`,
+  `-o`, repeatable `--framework`). For every entry of the NIST AI RMF,
+  ISO/IEC 42001, EU AI Act and AIUC-1 catalogs it lists the findings whose
+  control references name it, split by risk level, with up to 10 examples
+  (highest risk first), an evidence status and the scope behind it (report
+  and connector completeness, whether an inventory was supplied). Several
+  reports are merged as `merge` merges them; a finding counts as shadow only
+  when a report reconciled with an inventory says so, and a report's own
+  `inventory_present: false` is believed over its shadow values. A report
+  that `merge` produced is refused (exit 1): pass the source reports.
+- A control no finding references reads `not observed` only when every report
+  is complete; otherwise it reads `unknown (scan incomplete)`, and counts of
+  referenced controls are marked as lower bounds. An incomplete input still
+  writes the output, with an `INCOMPLETE SCAN` banner (a first
+  `SCAN-INCOMPLETE` row in CSV), and exits 3. A control no finding references
+  reads `unknown (inventory not supplied)` when a finding whose shadow status
+  is unknown could reference it through a rule that reads shadow status or
+  declared facts (so `GOVERN-1.6`, ISO/IEC 42001 `A.4.2` and AIUC-1 `E` never
+  read `not observed` from a scan without an inventory), and
+  `unknown (risk class not declared)` when a finding without a declared EU AI
+  Act class could reference it through a declared-class rule. Controls no rule
+  maps read `not mapped`. The CSV has an `inventory` column (`supplied`,
+  `partial` or `not supplied`). The output never says a control is met and has
+  no score.
+- Every output carries the notice "Evidence references, not compliance
+  determinations. Mappings are author mappings and have not been
+  independently reviewed." Catalogs gain a required `review` field whose only
+  accepted value is `author`; the validator rejects anything else, and the
+  generated catalog reference shows it. CSV cells use the CSV reporter's
+  spreadsheet-injection protection, a `|` in a Markdown table code span is
+  escaped, and output files are written with mode 0600 and never through a
+  symbolic link. The JSON schema is `shadowscan.control-evidence/v1`.
+- Capability Cards with `schema_version: 2` accept an optional `governance:`
+  block: `eu_ai_act_risk_class` (`prohibited`, `high`, `limited`, `minimal`,
+  `gpai`, `gpai-systemic`, `unknown`), `intended_purpose`,
+  `oversight_measures`, `aiuc1_certificate` and `iso42001_scope`. Unknown keys,
+  malformed values and a block on an earlier card fail inventory validation.
+  `inventory check` lists the declared class, and `inventory stubs` writes a
+  `governance: {eu_ai_act_risk_class: unknown}` placeholder.
+- A finding registered by such a card records `metadata.declared_governance`
+  (the block plus `source`, the card's agent id). The value is rebuilt on every
+  reconciliation pass, so a connector, plugin or earlier run cannot plant it;
+  `merge` drops it from findings that are shadow, refuses a report with a
+  malformed block, and refuses a registered finding whose reports carry
+  different blocks instead of keeping the first report's. A report's block is
+  checked without the card's length limits, because export redaction can
+  lengthen a declared value. HTML and Markdown reports show the facts as
+  declared and not verified.
+- Mapping rules gain the `declared_risk_class_any` condition and two control
+  rules: a declared `high` class references EU AI Act Articles 12, 14 and 26,
+  and a declared `limited`, `gpai` or `gpai-systemic` agent, bot or AI
+  application references Article 50. Declared facts count only for registered
+  findings and never change risk, matching or approval.
+- Add authored positive and negative regressions for every format, the
+  incomplete and no-inventory statuses, framework selection, spreadsheet
+  injection, card validation and the declared rules. The declared facts and
+  the mappings are not verified against any tenant, and regression passes do
+  not supply independent human review.
 
 ### Drift classes, baseline pinning and weekly drift templates
 

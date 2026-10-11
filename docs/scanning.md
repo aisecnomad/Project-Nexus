@@ -769,9 +769,12 @@ evidence and technologies union, the earliest `first_seen` and latest
 `last_seen` survive, the first report's metadata wins. Findings from
 different machines keep their own resources because the endpoint label
 prefixes every resource. Every finding records the reports it came from in
-`metadata.merged_from`, and `collection_scope.fleet.sources` lists each
-source with its completion state, finding count and scope fingerprint. A
-source is named by its path below the reports' common directory
+`metadata.merged_from`, and `collection_scope.fleet.sources`
+(`shadowscan.fleet-merge/v2`) lists each source with its completion state,
+finding count, scope fingerprint, `started_at` and `finished_at`, whether it
+supplied an inventory (`inventory_present`), and the status of each of its
+connector runs (`connectors`: `complete`, `cached`, `incomplete` or
+`skipped`). A source is named by its path below the reports' common directory
 (`host-a/report.json` for reports collected as `<host>/report.json`), or by
 its file name when the reports share a directory.
 
@@ -805,7 +808,9 @@ the other identity fields) is refused (exit 1) rather than merged, as is a
 report whose `inventory_present` is not a boolean. Machines that share a host
 name and home directory, such as clones of one VM image, produce the same
 identities and merge as one machine scanned twice; give each a distinct
-`--label`, such as its asset tag.
+`--label`, such as its asset tag. A registered finding whose reports carry
+different [declared governance facts](inventory.md#declared-governance-facts)
+is refused too, so the result never depends on the order of the reports.
 
 The merged report is comparable with `shadowscan diff` only when every source
 was complete and carried a comparable collection scope; its fingerprint is
@@ -814,6 +819,15 @@ machines with the same scanner and signatures compare. Otherwise the report
 says why it is not comparable. Completion follows the sources: one incomplete
 source makes the merged report incomplete (exit 3). Reports with another
 finding identity schema are refused; rescan them first.
+
+## Fleet dashboard
+
+`shadowscan dashboard fleet.json -o dashboard.html --inventory-json inventory.json`
+writes a static page and a `shadowscan.inventory/v1` JSON document from one
+fleet report or several reports. Coverage per source and connector comes
+first; a source that was not collected reads "not collected", never 0.
+`--baseline` adds drift and `--history DIR` adds trends over earlier reports.
+An incomplete input exits 3. See [Fleet dashboard](operations/dashboard.md).
 
 ## Live collection scope
 

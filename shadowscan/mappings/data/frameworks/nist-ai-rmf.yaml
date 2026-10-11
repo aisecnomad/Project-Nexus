@@ -7,6 +7,7 @@ source_url: https://airc.nist.gov/airmf-resources/airmf/5-sec-core/
 licence: Public domain (US government work)
 checked: "2026-10-10"
 verification: secondary
+review: author
 notes: >-
   Subcategory identifiers from the AI RMF Core. Titles are short summaries in
   the project's own words, not the subcategory text. The NIST site could not

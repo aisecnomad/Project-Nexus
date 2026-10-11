@@ -393,9 +393,24 @@ def merge_autonomy(finding: Finding, sources: Sequence[Any]) -> None:
     for the agent it is registered to is kept, whatever the order of the reports, and compared
     with the merged interval as :func:`apply_autonomy` compares it.
     """
+    autonomy, understated = merged_autonomy(finding, sources)
     finding.metadata.pop("autonomy", None)
     if UNDERSTATED_TAG in finding.tags:
         finding.tags = [tag for tag in finding.tags if tag != UNDERSTATED_TAG]
+    if autonomy is None:
+        return
+    if understated:
+        finding.add_tag(UNDERSTATED_TAG)
+    finding.update_metadata(autonomy=autonomy)
+
+
+def merged_autonomy(finding: Finding, sources: Sequence[Any]) -> tuple[dict[str, Any] | None, bool]:
+    """What :func:`merge_autonomy` would record, without changing ``finding``.
+
+    Returns the interval (None for a kind autonomy does not describe) and whether the finding is
+    tagged ``autonomy-understated``. A caller can then leave a finding whose block and tag would
+    not change untouched. Classification never reads the derived block or tag being replaced.
+    """
     blocks = [block for block in sources if valid_autonomy(block)]
     autonomy = _classify(
         finding,
@@ -405,7 +420,7 @@ def merge_autonomy(finding: Finding, sources: Sequence[Any]) -> None:
         ),
     )
     if autonomy is None:
-        return
+        return None, False
     basis = {bound: [item for item in autonomy["basis"] if item["bound"] == bound] for bound in BOUNDS}
     for bound in BOUNDS:
         # max() keeps the first of equal blocks, so the classified interval wins ties.
@@ -423,16 +438,17 @@ def merge_autonomy(finding: Finding, sources: Sequence[Any]) -> None:
         for block in blocks
         if "declared" in block and block["declared_source"] == finding.registry_match
     ]
+    understated = False
     if declared and finding.shadow is False:
         lowest = min(declared, key=lambda block: block["declared"])
         autonomy["declared"] = lowest["declared"]
         autonomy["declared_source"] = lowest["declared_source"]
         if lowest["declared"] < autonomy["floor"]:
-            finding.add_tag(UNDERSTATED_TAG)
+            understated = True
         elif lowest["declared"] > autonomy["ceiling"]:
             notes.append({"bound": "ceiling", "rule": "declared-above-ceiling", "value": lowest["declared"]})
     autonomy["basis"] = _ordered(notes)
-    finding.update_metadata(autonomy=autonomy)
+    return autonomy, understated
 
 
 def _level(value: Any) -> bool:
