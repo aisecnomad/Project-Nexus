@@ -134,14 +134,14 @@ an approval step.
 | Model-selected tool dispatch loops (code) | Each tool the model picks runs and feeds back without approval | Approval bypass |
 | Signature `heuristic.autonomy` (code: `human_in_the_loop=False`, `--dangerously-skip-permissions`, `autoApprove` and similar) | Code disables an approval gate | Approval bypass, even next to a trigger |
 | Other signature capabilities (agent-loop idioms, autonomous agent frameworks, coding agents) | The signature author's claim that it runs without a person | Approval bypass, unless a trigger explains the capability |
-| ServiceNow AI agent `autonomous` flag or type | The agent is configured to act without a person | Approval bypass |
-| n8n, Make, Zapier, Workato schedule and webhook triggers | A schedule or event starts the flow (tags `scheduled`, `event-triggered`) | Initiation only |
+| ServiceNow AI agent `autonomous` flag, or `agent_type` exactly `autonomous` | The agent is configured to act without a person | Approval bypass |
+| n8n, Make, Zapier, Workato schedule, webhook and app triggers | A schedule or an event starts the flow (tags `scheduled`, `event-triggered`). A trigger a person operates (an n8n manual, chat, form or evaluation trigger; a Make on-demand scenario; a Workato Workbot command; a Zapier Chrome extension push or Interfaces form) records neither | Initiation only |
 | Power Automate recurrence | A schedule starts the flow (tag `scheduled`) | Initiation only |
 | Salesforce flow `TriggerType` | A schedule or a record or platform event starts the flow (`metadata.trigger_type`) | Initiation only |
-| ServiceNow use case and trigger records | An event starts the agent (tag `event-triggered`) | Initiation only |
+| ServiceNow use case and trigger records | A record or application event (tag `event-triggered`) or a schedule (tag `scheduled`) starts the use case. A use case without a trigger runs from a conversation and records neither | Initiation only |
 | Azure Logic App recurrence | A schedule starts the flow (`metadata.trigger_types`) | Initiation only |
 | GCP Cloud Function `eventTrigger` | An event starts the function (`metadata.trigger`) | Initiation only |
-| Gateway caller active around the clock | Cadence of an unattended caller (tag `always-on`) | Initiation only |
+| Gateway caller active around the clock | Cadence of an unattended caller (tag `always-on` with `metadata.activity.always_on_corroborated`) | Initiation only |
 | AWS Step Functions state machine with LLM steps | An unattended workflow definition | Neither: the kind `workflow` already sets L3 |
 | Signature `heuristic.scheduled-agent` | Code wired to a scheduler, queue or webhook | Explains the capability; not initiation evidence (it cannot tell a schedule from an event) |
 
@@ -176,7 +176,7 @@ client may still approve tools some other way. Lifecycle tags (`disabled`,
 | `approval-bypassed` | `bypassed` | Any approval-bypass evidence. |
 | `approval-gated` | `gated` | Otherwise, any `approval_gate` or tag `asks-user`. |
 | `no-oversight-evidence` | `unknown` | Otherwise. |
-| `schedule-trigger` | `schedule` | Tag `scheduled` or `always-on`; Salesforce `trigger_type: Scheduled`; workflow `trigger_types` `Recurrence` or `SlidingWindow`. |
+| `schedule-trigger` | `schedule` | Tag `scheduled`; tag `always-on` when the gateway corroborated the cadence (`metadata.activity.always_on_corroborated` is true; the tag alone is informational, since a team sharing one key across time zones is also active around the clock); Salesforce `trigger_type: Scheduled`; workflow `trigger_types` `Recurrence` or `SlidingWindow`. |
 | `event-trigger` | `event` | Tag `event-triggered`; Salesforce `trigger_type` `RecordAfterSave`, `RecordBeforeSave`, `RecordBeforeDelete` or `PlatformEvent`; workflow `trigger_types` `ApiConnection`, `ApiConnectionWebhook`, `OpenApiConnection`, `OpenApiConnectionWebhook` or `HttpWebhook`; a function `trigger` naming an event type. |
 | `interactive-client` | `human` | An endpoint editor extension, browser extension or command found in shell history (`resource_type` `ide-extension`, `browser-extension`, `cli-usage`), with no trigger evidence. |
 | `no-initiation-evidence` | `unknown` | Otherwise. A configured client (`agent-config`) can also run unattended, for example a personal agent gateway or a CI job, so it is not person-started evidence. |
@@ -215,13 +215,17 @@ interpreter or OpenAPI-schema action group has no per-function setting this
 reader verifies, so it leaves the gate partial, and a function entry that is
 not an object leaves it partial and marks the scan incomplete. A settings file
 of the client that could not be read (invalid syntax, a symbolic link the scan
-does not follow, a file over the size limit or one that cannot be decoded; a
-problem with one MCP server entry in a file that parsed does not count) adds a
+does not follow, a file over the size limit (whether or not skipping it is a
+coverage gap), one a remote API snapshot did not write or one that cannot be
+decoded; a problem with one MCP server entry in a file that parsed does not
+count) adds a
 `settings-file = unreadable` entry: it records no gate on its own and keeps a
 gate from the client's other settings at `some-actions`, because the unread
 file could loosen it. Endpoint replay that drops a malformed approval or
 posture entry, or skips a malformed settings record, also keeps the gate at
-`some-actions`.
+`some-actions`, and so does a `code.github` or `code.gitlab` API snapshot
+whose tree listing was truncated or held entries naming no path: a settings
+file nothing lists could loosen any gate in that repository.
 
 ## Per-surface evidence
 
@@ -230,10 +234,10 @@ posture entry, or skips a malformed settings record, also keeps the gate at
 | Code | Capabilities from verified source analysis and signatures; agent kind with `tool-use`; posture bypass tags; MCP auto-approval; `heuristic.autonomy` | Coding-agent `approval_gate` | `heuristic.scheduled-agent` explains `autonomous` only |
 | Endpoint | Configured clients' signature capabilities; posture bypass tags; MCP auto-approval | Coding-agent `approval_gate` | Editor and browser extensions, shell history: `human` |
 | Runtime | Capabilities of the observed product | None | None |
-| Low-code | Workflow kind (L3); agents with tools; `saas-actions`; ServiceNow autonomous agents | None | Schedule and event tags, Salesforce `trigger_type`, Power Automate recurrence |
+| Low-code | Workflow kind (L3); agents with tool records (a ServiceNow agent carries `tool-use` only with tool records, and `saas-actions` only when a tool is not a retrieval); `saas-actions`; ServiceNow autonomous agents | None | Schedule and event tags (a trigger a person operates records neither), Salesforce `trigger_type`, Power Automate recurrence |
 | SaaS | Bot and app capabilities; tag `write-access` | None | None |
 | Cloud | Agent resources with tools; action groups and code interpreters (`code-exec`); workflows (Step Functions, Logic Apps); `multi-agent` collaborators | Bedrock `requireConfirmation`; `asks-user` (partial) | Logic App `trigger_types`, Cloud Function `trigger` |
-| Gateway | Tool-use and multi-agent request shapes | None | Tag `always-on` |
+| Gateway | Tool-use and multi-agent request shapes | None | Tag `always-on`, when corroborated |
 | Identity, network | Not applicable: grants, identities, tokens and network contacts carry no autonomy | | |
 
 ## Declared and observed levels
@@ -307,6 +311,8 @@ can still include `tag:autonomy-understated` from a source whose own match
 was registered. A source whose autonomy block is malformed
 is rejected ("rescan before merging"). Findings from reports written before
 this field existed are classified from the merged finding alone.
+[`shadowscan dashboard`](../operations/dashboard.md) reads a single report
+the same way, so one report shows the tiers it would show among others.
 
 ## Limits
 

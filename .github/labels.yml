@@ -6,6 +6,14 @@
 # labels that exist here (tests/test_repository_policy.py checks this).
 
 # Type
+- name: "ai-review: blocked"
+  color: "b60205"
+  description: Maintainer block; AI Review Gate must fail and request changes.
+
+- name: "ai-review: high-risk"
+  color: "d93f0b"
+  description: Require additional security evidence; never an approval override.
+
 - name: bug
   color: "d73a4a"
   description: Something is not working correctly.
@@ -54,7 +62,7 @@
 
 - name: "surface: gateway"
   color: "c5def5"
-  description: Gateway connector (logs).
+  description: Gateway connectors (logs, OTLP spans).
 
 - name: "surface: lowcode"
   color: "c5def5"
@@ -67,6 +75,18 @@
 - name: "surface: cloud"
   color: "c5def5"
   description: Cloud connectors (AWS, GCP, Azure, OCI).
+
+- name: "surface: endpoint"
+  color: "c5def5"
+  description: Endpoint connectors (workstation host, MCP, model and eBPF inventories).
+
+- name: "surface: network"
+  color: "c5def5"
+  description: Network connector (DNS, TLS and flow logs).
+
+- name: "surface: runtime"
+  color: "c5def5"
+  description: Runtime connector (process exports).
 
 # Status
 - name: "good first issue"

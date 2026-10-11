@@ -120,6 +120,8 @@ class _NotAConnectorError(TypeError):
 
 
 _cache: dict[str, type[BaseConnector]] = {}
+# The import target each cached class was loaded from; a changed target reloads.
+_cache_targets: dict[str, str] = {}
 # Problems found by the most recent entry-point scan, replaced on every scan.
 _listing_errors: list[PluginDiagnostic] = []
 # Load-time refusals by entry-point name. A class is deterministic within one
@@ -386,16 +388,37 @@ def get_connector_class(name: str, *, allowed_plugins: Sequence[str] | None = No
         registry = available_connectors()
         if name not in registry:
             raise KeyError(f"unknown connector '{name}'. Known: {', '.join(sorted(registry))}")
-        if isinstance(allowed_plugins, str) or name not in (allowed_plugins or ()):
+        approvals = {} if isinstance(allowed_plugins, str) else _plugin_approvals(allowed_plugins or ())
+        if name not in approvals:
             raise ValueError(
                 f"third-party connector '{name}' is not approved; add its exact name to options.plugins"
             )
         path = registry[name]
-    if name in _cache:
+        pinned = approvals[name]
+        if pinned is not None and path != pinned:
+            # The approval names the import target it was reviewed with; any other
+            # distribution now claiming the name is refused before it is imported.
+            raise _refuse(
+                name,
+                "target-mismatch",
+                f"plugin {_display(name)} resolves to {_display(path)}, not its approved target "
+                f"{_display(pinned)}",
+            )
+    if name in _cache and _cache_targets.get(name) == path:
         return _cache[name]
     cls = _load(path) if name in _BUILTIN else _load_plugin(name, path)
     _cache[name] = cls
+    _cache_targets[name] = path
     return cls
+
+
+def _plugin_approvals(entries: Sequence[str]) -> dict[str, str | None]:
+    """``name`` or ``name=module:Class`` approvals as name -> pinned target (None when unpinned)."""
+    approvals: dict[str, str | None] = {}
+    for entry in entries:
+        name, pinned, target = entry.partition("=")
+        approvals[name.strip()] = target.strip() if pinned else None
+    return approvals
 
 
 def connectors_for_surface(surface: Surface | str) -> list[str]:

@@ -265,7 +265,9 @@ Tags (see [risk](../concepts/risk.md)):
 - `no-auth-declared` (10): the card declares no security scheme.
 - `a2a-plaintext-interface` (10): an interface uses `http://` or `ws://` to a
   host not known to be loopback, including one left out of the projection
-  because its host cannot be told.
+  because its host cannot be told. The URL is read as WHATWG URL parsers read
+  it: tab, CR and LF are removed, leading control characters stripped, and
+  `http:/host`, `http:\\host` or `http:///host` reaches `host`.
 - `a2a-card-signature-invalid` (10): a signature is malformed or fails
   verification.
 

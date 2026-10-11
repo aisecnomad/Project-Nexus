@@ -217,7 +217,13 @@ def test_bypassed_approval_with_side_effects_sets_the_high_autonomy_floor(
         (Kind.WORKFLOW, ("autonomous", "saas-actions"), (), {}, ()),
         (Kind.AGENT, ("autonomous", "code-exec"), ("scheduled",), {}, ()),
         (Kind.AGENT, ("autonomous", "code-exec"), ("event-triggered",), {}, ()),
-        (Kind.GATEWAY_CALLER, ("autonomous", "code-exec"), ("always-on",), {}, ()),
+        (
+            Kind.GATEWAY_CALLER,
+            ("autonomous", "code-exec"),
+            ("always-on",),
+            {"activity": {"always_on_corroborated": True}},
+            (),
+        ),
         (Kind.CLOUD_RESOURCE, ("autonomous", "code-exec"), (), {"trigger": "google.cloud.pubsub.v1"}, ()),
         (Kind.AGENT, ("autonomous", "code-exec"), (), {}, ("heuristic.scheduled-agent",)),
     ],
@@ -233,7 +239,7 @@ def test_evidence_that_does_not_prove_unapproved_side_effects(kind, caps, tags, 
     ("tags", "metadata", "initiation"),
     [
         (("scheduled",), {}, "schedule"),
-        (("always-on",), {}, "schedule"),
+        (("always-on",), {"activity": {"always_on_corroborated": True}}, "schedule"),
         (("event-triggered",), {}, "event"),
         ((), {"trigger_type": "Scheduled"}, "schedule"),
         ((), {"trigger_type": "RecordAfterSave"}, "event"),
@@ -337,6 +343,32 @@ def test_lifecycle_tags_do_not_change_the_bounds(status):
 
 
 # ---------------------------------------------------------------- initiation
+
+
+@pytest.mark.parametrize(
+    "metadata",
+    [
+        {},
+        {"activity": {"always_on": True, "always_on_corroborated": False}},
+        {"activity": {"always_on_corroborated": "true"}},
+        {"activity": "corroborated"},
+    ],
+)
+def test_uncorroborated_always_on_tag_is_not_initiation_evidence(metadata):
+    # Regression: the gateway tags every round-the-clock caller always-on, corroborated or not, and
+    # the tag alone was read as a schedule. A team sharing one key across time zones is also active
+    # around the clock, so only the connector's corroboration makes the cadence initiation evidence.
+    f = finding(Kind.GATEWAY_CALLER, caps=("tool-use",), tags=("always-on",), metadata=metadata)
+    autonomy = classify(f)
+    assert autonomy is not None and autonomy["initiation"] == "unknown"
+    assert rules(autonomy, "initiation") == {"no-initiation-evidence": "unknown"}
+    corroborated = finding(
+        Kind.GATEWAY_CALLER,
+        caps=("tool-use", "autonomous"),
+        tags=("always-on",),
+        metadata={"activity": {"always_on": True, "always_on_corroborated": True}},
+    )
+    assert interval(corroborated) == (1, 5, "unknown", "schedule")
 
 
 @pytest.mark.parametrize(

@@ -25,7 +25,7 @@ $ shadowscan scan -c examples/shadowscan.offline.yaml --max-rows 5
 
 ╭──────────────────────────────── ShadowScan ────────────────────────────────╮
 │ 133 findings  •  129 shadow (inventory: 4 registered agents)               │
-│ critical 16  high 62  medium 55  •  cloud 30 identity 19 endpoint 18 …     │
+│ critical 16  high 63  medium 54  •  cloud 30 identity 19 endpoint 18 …     │
 ╰────────────────────────────────────────────────────────────────────────────╯
  CRITICAL 100  SHADOW  code      mcp-server   MCP configuration: .mcp.json
  CRITICAL 100  SHADOW  saas      bot-app      GitHub App installed: claude
@@ -203,12 +203,14 @@ shadowscan jwt --file ./token.jwt --jwks-url https://acme.okta.com/oauth2/defaul
 shadowscan endpoint --list                                       # which AI client locations exist here
 shadowscan endpoint --format json -o laptop-$(hostname).json     # MCP configs, skills, rules, hooks
 shadowscan merge laptop-*.json --format json -o fleet.json       # one report for the fleet
+shadowscan dashboard fleet.json -o dashboard.html --inventory-json inventory.json   # static fleet dashboard
 
 # 7. Register what you found
 shadowscan inventory stubs report.json -o inventory/pending/    # capability-card stubs for shadow agents
 shadowscan diff last-week.json today.json                        # what is new / resolved/changed
 shadowscan diff baseline.json today.json --fail-on-drift inventory,capability,autonomy,governance  # exit 2 on adverse drift
 shadowscan scan -c shadowscan.yaml --format cyclonedx -o ai-bom.json   # CycloneDX 1.6 bill of materials
+shadowscan controls today.json --format csv -o controls.csv      # findings per NIST AI RMF / ISO 42001 / EU AI Act / AIUC-1 control
 ```
 
 Steps 1 and 2 need a repository checkout: `agent-card.yaml`, `examples/` and
@@ -370,7 +372,12 @@ heuristic risk level, never a CVSS `security-severity`, see
 filterable, with evidence drill-down), `cyclonedx` (a CycloneDX 1.6 AI bill
 of materials, see [AI-BOM](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/operations/ai-bom.md)), and `ocsf`
 (OCSF 1.1.0 Detection Finding events for SIEMs and security data lakes, see
-[OCSF](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/operations/ocsf.md)). Opt-in
+[OCSF](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/operations/ocsf.md)).
+`shadowscan dashboard` turns reports into a static fleet dashboard (coverage
+per source and connector first, autonomy against shadow status, registry
+reconciliation, threat and control reference counts, drift and history) and
+a versioned `shadowscan.inventory/v1` JSON export for BI and SIEM tools; see
+[fleet dashboard](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/operations/dashboard.md). Opt-in
 [LLM triage](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/operations/llm-triage.md) adds an advisory model verdict to
 the highest-risk findings; it is off by default and never changes scores.
 CSV inserts a literal `'` at the start of
@@ -383,6 +390,16 @@ read as text regardless of delimiter. Strip markers for programmatic use or use
 `markdown` output defangs links (`hxxps://`, `www[.]`) and writes `@` as `[@]`
 in untrusted text, so a report pasted into an issue or pull request creates no
 links, @-mentions or e-mail links; code spans keep identifiers verbatim.
+
+`shadowscan controls report.json` turns one or more JSON reports into a control
+evidence report (Markdown, CSV for GRC tools, or JSON): for each NIST AI RMF,
+ISO/IEC 42001, EU AI Act and AIUC-1 control, the findings that reference it by
+risk level, the highest-risk examples, and whether the evidence is complete. A
+control no finding references reads "not observed" only when every report is
+complete and no finding could reference it through a missing inventory or an
+undeclared risk class, and "unknown" otherwise; an incomplete input exits 3.
+Evidence references, not compliance determinations; see
+[control evidence report](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/operations/controls.md).
 
 ### Risk policy
 
@@ -416,7 +433,10 @@ discovery:
 
 Simple `agents.yaml` lists and CSV work too. A card with `schema_version: 2`
 declares `autonomy_profile.level` (0 to 5); an older card's level is ignored
-with a warning. `shadowscan inventory stubs`
+with a warning. Such a card may also declare governance facts the scanner
+cannot observe (`governance:`: EU AI Act risk class, intended purpose,
+oversight measures, AIUC-1 certificate, ISO/IEC 42001 scope); reports label
+them declared. `shadowscan inventory stubs`
 turns shadow findings into card skeletons for review. See
 [docs/inventory.md](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/inventory.md).
 
@@ -480,11 +500,13 @@ connectors. See [CONTRIBUTING.md](https://github.com/aisecnomad/Project-Nexus/bl
 
 ## Project status
 
-* **Release state.** Version `0.1.2` is prepared for public alpha distribution
-  as `NexusShadowScan`. Confirm publication and artifact identity on
+* **Release state.** Version `0.1.2` is published to PyPI as `NexusShadowScan`
+  and tagged `v0.1.2`, as an alpha pre-release. Verify the artifact identity on
   [PyPI](https://pypi.org/project/NexusShadowScan/0.1.2/) and the
-  [GitHub release](https://github.com/aisecnomad/Project-Nexus/releases/tag/v0.1.2).
-  The package classifier is `Development Status :: 3 - Alpha`.
+  [GitHub release](https://github.com/aisecnomad/Project-Nexus/releases/tag/v0.1.2)
+  before installing from the production index; publication does not establish
+  independent review or deployment acceptance. Commits on `main` after the tag
+  are unreleased. The package classifier is `Development Status :: 3 - Alpha`.
 * **Single maintainer, AI-assisted development.** Apart from Dependabot updates, every commit was written
   by a single maintainer or generated with an AI coding assistant (Claude, Codex, Grok, GitHub Copilot, Google Antigravity, Perplexity, Meta AI, etc.). The logs under
   [archive/reviews/](https://github.com/aisecnomad/Project-Nexus/tree/main/archive/reviews) are AI-assisted, not third-party reviews.

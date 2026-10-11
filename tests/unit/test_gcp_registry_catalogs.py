@@ -381,10 +381,13 @@ def test_unsafe_engine_names_are_never_requested(index, engine):
     scanner, fake = connector(
         index, ge_routes([{"name": engine, "appType": "APP_TYPE_INTRANET"}]), gemini_enterprise=True
     )
-    list(scanner._collect_project(P))
+    records = list(scanner._collect_project(P))
     assert not [url for url in fake.urls if "/v1alpha/" in url]
     assert any("invalid Discovery Engine engine name" in warning for warning in scanner.ctx.stats.warnings)
     assert scanner.ctx.stats.incomplete
+    # The gap is recorded, so a replay of the dump stays incomplete; the unsafe name is not kept.
+    (assistants,) = coverage(records, "gemini-enterprise", "assistants")
+    assert assistants["complete"] is False and "parent" not in assistants
 
 
 @pytest.mark.parametrize(
@@ -416,8 +419,10 @@ def test_engine_names_with_the_project_id_need_no_number(index):
     scanner, fake = connector(index, routes, gemini_enterprise=True)
     records = list(scanner._collect_project(P))
     assert f"https://discoveryengine.googleapis.com/v1alpha/{engine}/assistants" in fake.urls
-    assert not kinds(records, "project-number")
-    # The project lookup failed, and that is reported.
+    # The project lookup failed, and that is reported, in the dump as well.
+    assert kinds(records, "project-number") == [
+        {"_kind": "project-number", "_project": P, "project_number": None}
+    ]
     assert scanner.ctx.stats.incomplete
 
 
@@ -434,7 +439,9 @@ def test_invalid_project_lookup_leaves_the_number_unknown(index, response):
     routes = registry_routes(**{f"https://cloudresourcemanager.googleapis.com/v1/projects/{P}": response})
     scanner, _ = connector(index, routes, agent_registry=True)
     records = list(scanner._collect_project(P))
-    assert not kinds(records, "project-number")
+    assert kinds(records, "project-number") == [
+        {"_kind": "project-number", "_project": P, "project_number": None}
+    ]
     assert any("project number unknown" in warning for warning in scanner.ctx.stats.warnings)
 
 
@@ -450,7 +457,9 @@ def test_discovered_projects_carry_their_numbers_without_a_lookup(index, monkeyp
     monkeypatch.setattr(scanner, "_auth", lambda: setattr(scanner, "http", fake))
     records = list(scanner.collect())
     assert kinds(records, "project-number") == [
-        {"_kind": "project-number", "_project": P, "project_number": N}
+        {"_kind": "project-number", "_project": P, "project_number": N},
+        # The lookup below answers nothing here, and the dump records that the number is unknown.
+        {"_kind": "project-number", "_project": "two", "project_number": None},
     ]
     # A non-string number is not trusted; that project's number is looked up instead.
     assert [
@@ -1082,7 +1091,16 @@ def test_agent_registry_records_never_bind_or_claim_another_projects_engines(
         name=f"projects/{N}/locations/global/agents/wired",
         runtime_reference=f"//aiplatform.googleapis.com/projects/{segment}/locations/us-central1/reasoningEngines/7",
     )
-    trusted = [{"registry": "google-agent-registry", "id": AR_ID, "allow_registered_only": True}]
+    # The export is replayed offline, so the entry opts in to offline records: the cross-project
+    # rule, not the offline default, must keep the other project's engines unapproved.
+    trusted = [
+        {
+            "registry": "google-agent-registry",
+            "id": AR_ID,
+            "allow_registered_only": True,
+            "allow_offline_records": True,
+        }
+    ]
     result = scan(
         index,
         write_records(tmp_path, [*fixture_records(), *_victim_project(**coverage), record]),
@@ -1104,6 +1122,8 @@ def test_agent_registry_records_never_bind_or_claim_another_projects_engines(
     )
     assert RECONCILIATION_KEY not in findings[RE_SHADOW].metadata
     assert status(findings[RE_OK]) == "registered-and-observed"
+    # Positive control: the same trusted entry approves acme-ml's own bound engine.
+    assert findings[RE_OK].shadow is False
 
 
 @pytest.mark.parametrize(
@@ -1136,6 +1156,29 @@ def test_publishers_speak_only_for_the_project_they_were_listed_in(index, tmp_pa
     # The skill keeps the publisher its own project listed.
     assert skill.metadata[RECORD_KEY]["publisher"] == "Acme platform team"
     assert skill.metadata["publisher_tier"] == "PRIVATE"
+
+
+def test_a_skill_names_only_a_publisher_listed_in_its_own_project(index, tmp_path):
+    # Another project lists a publisher under a number this scan does not know, and acme-ml's
+    # skill names a publisher of exactly that name: the skill binds no publisher of another project.
+    publisher = "projects/555/locations/global/publishers/acme"
+    other = {
+        "_kind": "agent-registry-publisher",
+        "_project": "sandbox-dev",
+        "_location": "global",
+        "_api_version": "v1alpha",
+        "name": publisher,
+        "displayName": "Security Team (verified)",
+        "publisherTier": "FIRST_PARTY",
+    }
+    skill = next(record for record in fixture_records() if record["_kind"] == "agent-registry-skill")
+    skill = {**skill, "name": f"projects/{N}/locations/global/skills/acme-triage", "publisher": publisher}
+    result = scan(index, write_records(tmp_path, [*fixture_records(), other, skill]))
+    assert result.complete
+    finding = by_resource(result.findings)[skill["name"]]
+    # Neither the display name nor the tier of the other project's publisher: only the id it named.
+    assert finding.metadata[RECORD_KEY]["publisher"] == "acme"
+    assert finding.metadata["publisher_tier"] is None
 
 
 def test_project_numbers_tell_whose_name_a_segment_is():
@@ -1470,6 +1513,68 @@ def test_replayed_dump_of_an_incomplete_scan_stays_incomplete(index, tmp_path, m
     )
 
 
+LOOKUP = f"https://cloudresourcemanager.googleapis.com/v1/projects/{P}"
+UNKNOWN_NUMBER = (
+    "cloud.gcp: project number unknown in export; registry names that carry it are not comparable"
+)
+
+
+@pytest.mark.parametrize(
+    "routes,catalog,gap",
+    [
+        (
+            ge_routes(
+                [
+                    {
+                        "name": "projects/other/locations/global/collections/default_collection/engines/e",
+                        "appType": "APP_TYPE_INTRANET",
+                    }
+                ]
+            ),
+            "gemini_enterprise",
+            REPLAYED_GAP,
+        ),
+        (
+            registry_routes(
+                **{LOOKUP: HttpError(403, "https://cloudresourcemanager.googleapis.com", "denied")}
+            ),
+            "agent_registry",
+            UNKNOWN_NUMBER,
+        ),
+        (
+            registry_routes(**{LOOKUP: {"projectId": "other", "projectNumber": N}}),
+            "agent_registry",
+            UNKNOWN_NUMBER,
+        ),
+    ],
+    ids=["engine-name", "lookup-denied", "lookup-invalid"],
+)
+def test_replayed_dump_of_an_unvalidated_engine_or_unknown_number_stays_incomplete(
+    index, tmp_path, monkeypatch, routes, catalog, gap
+):
+    fake = FakeGoogle(routes)
+    monkeypatch.setattr(GcpConnector, "_auth", lambda self: setattr(self, "http", fake))
+    config = {"projects": [P], "locations": ["us-central1"], catalog: True}
+    dumped = tmp_path / "dump"
+    live = Engine(
+        ScanConfig(connectors=[ConnectorSpec("cloud.gcp", config)], dump_records=str(dumped)), index
+    ).run()
+    (dump,) = dumped.glob("*.jsonl")
+    replay = scan(index, dump)
+    # No listing of the export's records failed, yet the gap voids a claim about them: the export
+    # records it, so replaying it is as incomplete as the live scan.
+    assert not live.complete and not replay.complete
+
+    def warnings(result: ScanResult) -> list[str]:
+        return next(stats.warnings for stats in result.stats if stats.connector == "cloud.gcp")
+
+    assert warnings(replay).count(gap) == 1
+    assert gap not in warnings(live)
+    assert {f.id: f.metadata.get(RECORD_KEY) for f in live.findings} == {
+        f.id: f.metadata.get(RECORD_KEY) for f in replay.findings
+    }
+
+
 def test_the_documented_gcp_registry_example_is_valid(index):
     text = (Path(__file__).parents[2] / "docs" / "inventory.md").read_text(encoding="utf-8")
     section = text.split("### Example: Google Agent Registry and Gemini Enterprise", 1)[1]
@@ -1532,8 +1637,24 @@ UNRECOGNIZED = "cloud.gcp: Agent Registry runtime reference to Vertex AI or Dial
         (f"//aiplatform.googleapis.com/{RE_SHADOW}/", False),
         (f"//AIPLATFORM.googleapis.com/{RE_SHADOW}", False),
         (f"//dialogflow.googleapis.com/projects/{P}/locations/global/agents/abc/flows/x", False),
+        (f"//aiplatform.googleapis.com/{RE_SHADOW}/sessions/1", False),
+        (
+            f"//aiplatform.googleapis.com/projects/{P}/locations/us-central1/publishers/google/models/m/",
+            False,
+        ),
+        (
+            f"//aiplatform.googleapis.com/projects/{P}/locations/us-central1/endpoints/../reasoningEngines/1",
+            False,
+        ),
         # A plain resource name of a collection the scan does not observe names no engine.
         (f"//aiplatform.googleapis.com/projects/{P}/locations/us-central1/endpoints/1", True),
+        # So does a nested plain name outside the observed collections (a publisher model).
+        (
+            f"//aiplatform.googleapis.com/projects/{P}/locations/us-central1"
+            "/publishers/google/models/gemini-2.0-flash",
+            True,
+        ),
+        (f"//aiplatform.googleapis.com/projects/{P}/locations/us-central1/ragCorpora/1/ragFiles/2", True),
         # Neither Vertex AI nor Dialogflow.
         (f"//container.googleapis.com/projects/{P}/locations/us-central1/clusters/c", True),
         (f"https://aiplatform.googleapis.com.evil.example/{RE_SHADOW}", True),

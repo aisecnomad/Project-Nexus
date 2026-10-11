@@ -29,6 +29,7 @@ from shadowscan.connectors.cloud.aws_registry import (
     approval_mode,
     approval_unrecognized,
     binding,
+    bounded_summary,
     descriptor_summary,
     provenance,
     provenance_binds,
@@ -37,7 +38,12 @@ from shadowscan.connectors.cloud.aws_registry import (
 )
 from shadowscan.engine import Engine
 from shadowscan.models import Finding, Kind, ScanResult, ScanStats
-from shadowscan.registries import RECONCILIATION_KEY, RECORD_KEY, parse_registry_record
+from shadowscan.registries import (
+    RECONCILIATION_KEY,
+    RECORD_KEY,
+    parse_registry_record,
+    reconcile_registries,
+)
 from shadowscan.utils.redaction import SanitizationLimitError
 
 ACCOUNT = "123456789012"
@@ -617,25 +623,37 @@ def test_provenance_of_a_record_created_through_the_api_binds_nothing(index):
     assert not warnings(instance)
 
 
-def test_auto_detected_draft_record_binds_nothing(index):
+def test_auto_detected_draft_record_binds_for_scope_but_registers_nothing(index):
+    # Regression: drafts were stripped of their bindings, so a registry holding only
+    # auto-detected drafts claimed no account and its runtimes got no reconciliation at all.
     # The registry wrote the draft from the runtime it detected and nobody submitted it, so it
-    # registers nothing: the record is reported, the runtime stays unregistered.
+    # registers nothing, but its binding still says which account the listing covers.
     summary = record_summary(status="DRAFT")
     client = agent_registry_client(
         listings={"list_registry_records": [{"registryRecords": [summary]}]},
         records={"rec000000001": record_detail(status="DRAFT")},
     )
-    instance = connector(index, {"agent-registry-control": client, "bedrock-agentcore-control": FakeClient()})
-    [finding] = analyze(instance, collect(instance))
+    instance = connector(
+        index, {"agent-registry-control": client, "bedrock-agentcore-control": AgentCoreClient()}
+    )
+    findings = instance.run()
+    assert not warnings(instance) and not instance.ctx.stats.incomplete
+    [finding] = [f for f in findings if RECORD_KEY in f.metadata]
     contract = finding.metadata[RECORD_KEY]
-    assert (contract["status"], contract["bindings"]) == ("draft", [])
+    assert contract["status"] == "draft" and contract["listing_complete"] is True
+    assert [(b["resource"], b["coverage"]) for b in contract["bindings"]] == [(RUNTIME_ARN, "in-scope")]
     assert finding.metadata["created_by_auto_detection"] is True
-    assert finding.metadata["provenance"][0]["sourceId"] == RUNTIME_ARN
-    assert not [e for e in finding.evidence if e.signal == "aws:registry-record-reference"]
-    assert not warnings(instance)
-    # Any other status of the same auto-detected record binds its runtime.
+    reconcile_registries(findings)
+    assert finding.metadata[RECONCILIATION_KEY] == {
+        "status": "not-comparable",
+        "observed": [],
+        "reason": "record-status",
+    }
+    [runtime] = [f for f in findings if f.resource == RUNTIME_ARN]
+    assert runtime.metadata[RECONCILIATION_KEY]["status"] == "observed-not-registered"
+    # Every status of an auto-detected record binds; core status handling decides what registers.
     pending = {**record_detail(), "status": "PENDING_APPROVAL"}
-    assert provenance_binds(pending) and not provenance_binds({**pending, "status": "DRAFT"})
+    assert provenance_binds(pending) and provenance_binds({**pending, "status": "DRAFT"})
 
 
 def test_source_coverage_and_bindings_need_an_exact_agentcore_arn():
@@ -1581,7 +1599,7 @@ def test_trusted_registry_sanctions_only_the_runtime_of_an_approved_manual_recor
     shadow = findings[RUNTIME_ARN.replace("support_agent-AbCdE12345", "shadow_agent-KlMnO13579")]
     gateway = findings[GATEWAY_ARN]
     assert (support.shadow, support.registry_match) == (False, "aws-agent-registry:rec000000001")
-    # A pending record binds its object but never approves it; an auto-detected draft binds nothing.
+    # Neither a pending record nor an auto-detected draft approves the object it binds.
     assert billing.shadow is True and billing.registry_match is None
     assert gateway.shadow is True and gateway.registry_match is None
     assert shadow.shadow is True
@@ -1779,3 +1797,364 @@ def test_registry_calls_match_the_installed_sdk_models(index):
     contracts = {f.metadata[RECORD_KEY]["record_id"]: f.metadata[RECORD_KEY] for f in findings}
     assert contracts["rec000000001"]["approval_mode"] == "auto"
     assert contracts["ext000000001"]["listing_complete"] is False
+
+
+# ------------------------------------------------------------------ claims that depend on every record
+BILLING_ARN = RUNTIME_ARN.replace("support_agent-AbCdE12345", "billing_agent-FgHiJ67890")
+GATEWAY_URL = "https://tools-gateway-pq1rs2tu3v.gateway.bedrock-agentcore.us-east-1.amazonaws.com/mcp"
+ISSUER = "https://issuer.example.com/gateway/.well-known/openid-configuration"
+
+
+class GatewayClient(FakeClient):
+    """The AgentCore control plane of one region with one gateway, shaped like the SDK models.
+
+    ``ListGateways`` returns no ARN or URL (botocore ``GatewaySummary``); ``GetGateway`` does.
+    """
+
+    def __init__(self, detail: Any) -> None:
+        summary = {
+            "gatewayId": "tools-gateway-pq1rs2tu3v",
+            "name": "tools-gateway",
+            "status": "READY",
+            "protocolType": "MCP",
+            "authorizerType": "CUSTOM_JWT",
+            "createdAt": WHEN,
+            "updatedAt": WHEN,
+        }
+        super().__init__(listings={"list_gateways": [{"items": [summary]}]})
+        self.detail = detail
+
+    def get_gateway(self, *, gatewayIdentifier: str) -> Any:
+        self.calls.append(("get_gateway", {"gatewayIdentifier": gatewayIdentifier}))
+        if isinstance(self.detail, Exception):
+            raise self.detail
+        return self.detail
+
+
+def gateway_detail(**extra: Any) -> dict[str, Any]:
+    return {
+        "gatewayId": "tools-gateway-pq1rs2tu3v",
+        "gatewayArn": GATEWAY_ARN,
+        "gatewayUrl": GATEWAY_URL,
+        "name": "tools-gateway",
+        "status": "READY",
+        "protocolType": "MCP",
+        "authorizerType": "CUSTOM_JWT",
+        "authorizerConfiguration": {"customJWTAuthorizer": {"discoveryUrl": ISSUER}},
+        "ResponseMetadata": {"RequestId": "r"},
+        **extra,
+    }
+
+
+def _gateway_record_client() -> FakeClient:
+    """One approved, auto-detected MCP record whose provenance names the gateway."""
+    summary = {**record_summary(source=GATEWAY_ARN), "recordType": "MCP"}
+    detail = {
+        **record_detail(),
+        "recordType": "MCP",
+        "provenance": [
+            {
+                "relation": "DETECTED_FROM",
+                "sourceId": GATEWAY_ARN,
+                "sourceType": "AWS::BedrockAgentCore::Gateway",
+            }
+        ],
+    }
+    return agent_registry_client(
+        listings={"list_registry_records": [{"registryRecords": [summary]}]},
+        records={"rec000000001": detail},
+    )
+
+
+def _record_and_gateway(findings: list[Any]) -> tuple[Any, Any]:
+    [record] = [f for f in findings if RECORD_KEY in f.metadata]
+    [gateway] = [f for f in findings if f.resource_type == "agentcore-gateway"]
+    return record, gateway
+
+
+def test_live_gateway_carries_its_arn_and_matches_its_registry_binding(tmp_path, index):
+    # Regression: ListGateways returns no ARN, so the gateway finding was named by its id while
+    # the record bound its ARN in scope: a complete scan read the record as registered but not
+    # observed and the gateway as observed but not registered.
+    dump = tmp_path / "aws.jsonl"
+    core = GatewayClient(gateway_detail())
+    instance = connector(
+        index,
+        {"agent-registry-control": _gateway_record_client(), "bedrock-agentcore-control": core},
+        _dump_path=str(dump),
+    )
+    findings = instance.run()
+    assert not warnings(instance) and not instance.ctx.stats.incomplete
+    assert ("get_gateway", {"gatewayIdentifier": "tools-gateway-pq1rs2tu3v"}) in core.calls
+    record, gateway = _record_and_gateway(findings)
+    assert (gateway.resource, gateway.account, gateway.metadata["url"]) == (GATEWAY_ARN, ACCOUNT, GATEWAY_URL)
+    assert [(b["resource"], b["coverage"]) for b in record.metadata[RECORD_KEY]["bindings"]] == [
+        (GATEWAY_ARN, "in-scope")
+    ]
+    reconcile_registries(findings)
+    assert record.metadata[RECONCILIATION_KEY]["status"] == "registered-and-observed"
+    assert gateway.metadata[RECONCILIATION_KEY]["status"] == "registered-and-observed"
+    # Only the ARN and URL are kept from GetGateway: authorizer settings name token issuers.
+    exported = dump.read_text()
+    assert ISSUER not in exported and "authorizerConfiguration" not in exported
+    replay = context(index, input=str(dump))
+    offline = AwsConnector(replay).run()
+    assert not replay.stats.incomplete
+    assert _record_and_gateway(offline)[1].resource == GATEWAY_ARN
+
+
+@pytest.mark.parametrize(
+    "detail,expected",
+    [
+        (SDKError("AccessDeniedException"), "cloud.aws: get_gateway access denied (AccessDeniedException)"),
+        (
+            {"gatewayId": "tools-gateway-pq1rs2tu3v"},
+            "cloud.aws: AgentCore gateway ARN unavailable; gateway identity unresolved",
+        ),
+        (
+            ["not", "a", "mapping"],
+            "cloud.aws: invalid AgentCore gateway details; gateway identity unresolved",
+        ),
+    ],
+)
+def test_gateway_without_its_arn_leaves_its_region_out_of_scope(index, detail, expected):
+    clients = {
+        "agent-registry-control": _gateway_record_client(),
+        "bedrock-agentcore-control": GatewayClient(detail),
+    }
+    instance = connector(index, clients)
+    findings = instance.run()
+    assert instance.ctx.stats.incomplete and expected in warnings(instance)
+    record, _ = _record_and_gateway(findings)
+    assert [b["coverage"] for b in record.metadata[RECORD_KEY]["bindings"]] == ["out-of-scope"]
+    reconcile_registries(findings)
+    assert record.metadata[RECONCILIATION_KEY]["status"] == "not-comparable"
+
+
+def test_gateway_identity_follows_the_installed_sdk_models():
+    boto3 = pytest.importorskip("boto3")
+    client = boto3.client(
+        "bedrock-agentcore-control", region_name=REGION, aws_access_key_id="t", aws_secret_access_key="t"
+    )
+    model = client.meta.service_model
+    summary = model.shape_for("GatewaySummary").members
+    detail = model.operation_model("GetGateway").output_shape.members
+    # The listing has no ARN; the details have both fields the connector reads from them.
+    assert "gatewayArn" not in summary and "gatewayUrl" not in summary
+    assert {"gatewayArn", "gatewayUrl"} <= set(detail)
+
+
+def _fixture_lines(tmp_path: Path, edit: Any) -> Path:
+    """The synthetic fixture with ``edit`` applied to its lines (a list of JSON texts)."""
+    lines = FIXTURE.read_text().splitlines()
+    edit(lines)
+    export = tmp_path / "export.jsonl"
+    export.write_text("\n".join(lines))
+    return export
+
+
+def _line_of(lines: list[str], marker: str) -> int:
+    [position] = [i for i, line in enumerate(lines) if marker in line]
+    return position
+
+
+def _edit_record(lines: list[str], marker: str, **changes: Any) -> None:
+    position = _line_of(lines, marker)
+    lines[position] = json.dumps({**json.loads(lines[position]), **changes})
+
+
+def _truncate_line(lines: list[str], marker: str) -> None:
+    position = _line_of(lines, marker)
+    lines[position] = lines[position][:80]
+
+
+SUPPORT_LINE = '"agentRuntimeId": "support_agent-AbCdE12345"'
+SECOND_RECORD_LINE = '"recordId": "rec000000002"'
+
+
+def test_replayed_gateway_without_its_arn_leaves_its_region_out_of_scope(tmp_path, index):
+    # Regression: an export written before GetGateway was read names the gateway by its id.
+    def edit(lines: list[str]) -> None:
+        position = _line_of(lines, '"_kind": "agentcore-gateway"')
+        gateway = json.loads(lines[position])
+        del gateway["gatewayArn"]
+        lines[position] = json.dumps(gateway)
+        _edit_record(lines, '"recordId": "gtw000000001"', status="APPROVED")
+
+    result = _engine_run(index, fixture=_fixture_lines(tmp_path, edit))
+    record = _by_resource(result)[f"{REGISTRY_ARN}/record/gtw000000001"]
+    assert [b["coverage"] for b in record.metadata[RECORD_KEY]["bindings"]] == ["out-of-scope"]
+    assert record.metadata[RECONCILIATION_KEY]["status"] == "not-comparable"
+
+
+def _registry_claims(result: ScanResult) -> dict[str, Any]:
+    """Each control-plane record's listing completeness, binding coverage and reconciliation."""
+    return {
+        f.metadata[RECORD_KEY]["record_id"]: (
+            f.metadata[RECORD_KEY].get("listing_complete"),
+            [b["coverage"] for b in f.metadata[RECORD_KEY]["bindings"]],
+            f.metadata[RECONCILIATION_KEY]["status"],
+        )
+        for f in result.findings
+        if RECORD_KEY in f.metadata and "registry_coverage" not in f.metadata
+    }
+
+
+@pytest.mark.parametrize(
+    "edit",
+    [
+        # The replaying analyzer rejects the runtime record (version skew or an edited export).
+        pytest.param(
+            lambda lines: _edit_record(lines, SUPPORT_LINE, agentRuntimeArn=5), id="runtime-rejected"
+        ),
+        # A torn line: the loader drops the runtime with an error.
+        pytest.param(lambda lines: _truncate_line(lines, SUPPORT_LINE), id="runtime-line-truncated"),
+    ],
+)
+def test_replay_that_loses_a_runtime_claims_no_scope(tmp_path, index, edit):
+    # Regression: replay kept the exported in-scope coverage, so the record whose runtime was
+    # lost read as registered but not observed.
+    result = _engine_run(index, fixture=_fixture_lines(tmp_path, edit))
+    assert not result.complete
+    assert _registry_claims(result)["rec000000001"] == (False, ["unknown"], "not-comparable")
+
+
+@pytest.mark.parametrize(
+    "edit",
+    [
+        pytest.param(lambda lines: _edit_record(lines, SECOND_RECORD_LINE, status=None), id="status-null"),
+        pytest.param(lambda lines: _truncate_line(lines, SECOND_RECORD_LINE), id="record-line-truncated"),
+        # A byte budget that cuts the export after the second record, before its coverage records.
+        pytest.param(None, id="byte-budget"),
+    ],
+)
+def test_replay_that_loses_a_registry_record_claims_no_complete_listing(tmp_path, index, edit):
+    # Regression: the surviving record kept listing_complete, so the runtime only the lost
+    # record bound read as observed but not registered.
+    options: dict[str, Any] = {}
+    if edit is None:
+        lines = FIXTURE.read_text().splitlines()
+        options["max_input_bytes"] = sum(
+            len(line) + 1 for line in lines[: _line_of(lines, SECOND_RECORD_LINE)]
+        )
+        fixture = FIXTURE
+    else:
+        fixture = _fixture_lines(tmp_path, edit)
+    spec = ConnectorSpec("cloud.aws", {"input": str(fixture), **options})
+    result = Engine(ScanConfig(connectors=[spec]), index).run()
+    assert not result.complete
+    assert _registry_claims(result)["rec000000001"][0] is False
+    billing = _by_resource(result)[BILLING_ARN]
+    assert billing.metadata.get(RECONCILIATION_KEY, {}).get("status") != "observed-not-registered"
+
+
+class TwoRuntimesClient(FakeClient):
+    """The AgentCore control plane with the support and billing runtimes."""
+
+    def __init__(self) -> None:
+        runtimes = [
+            {"agentRuntimeId": arn.rsplit("/", 1)[1], "agentRuntimeArn": arn, "status": "READY"}
+            for arn in (RUNTIME_ARN, BILLING_ARN)
+        ]
+        super().__init__(listings={"list_agent_runtimes": [{"agentRuntimes": runtimes}]})
+
+    def get_agent_runtime(self, *, agentRuntimeId: str) -> dict[str, Any]:
+        return {}
+
+
+def _two_records_client(**second: Any) -> FakeClient:
+    """rec000000001 binds the support runtime and rec000000002 the billing runtime."""
+    summaries = [record_summary(), record_summary("rec000000002", source=BILLING_ARN)]
+    detail = record_detail("rec000000002", recordArn=f"{REGISTRY_ARN}/record/rec000000002")
+    detail["recordId"] = "rec000000002"
+    detail["provenance"] = [{**detail["provenance"][0], "sourceId": BILLING_ARN}]
+    return agent_registry_client(
+        listings={"list_registry_records": [{"registryRecords": summaries}]},
+        records={"rec000000001": record_detail(), "rec000000002": {**detail, **second}},
+    )
+
+
+def _billing_status(findings: list[Any]) -> Any:
+    reconcile_registries(findings)
+    [billing] = [f for f in findings if f.resource == BILLING_ARN]
+    return billing.metadata.get(RECONCILIATION_KEY, {}).get("status")
+
+
+@pytest.mark.parametrize("drop", ["export", "analysis", "report"])
+def test_live_registry_record_that_never_reaches_the_report_voids_listing_claims(tmp_path, index, drop):
+    # Regression: the surviving record kept listing_complete, so the billing runtime that only
+    # the lost record bound read as observed but not registered.
+    clean = connector(
+        index,
+        {"agent-registry-control": _two_records_client(), "bedrock-agentcore-control": TwoRuntimesClient()},
+    )
+    assert _billing_status(clean.run()) == "registered-and-observed" and not clean.ctx.stats.incomplete
+    second = {"status": 5} if drop == "analysis" else {}
+    clients = {
+        "agent-registry-control": _two_records_client(**second),
+        "bedrock-agentcore-control": TwoRuntimesClient(),
+    }
+    instance = connector(index, clients, _dump_path=str(tmp_path / "aws.jsonl"))
+    export = instance._export_record
+
+    def reject_the_second_record(record: dict[str, Any]) -> dict[str, Any]:
+        if drop == "export" and record.get("recordId") == "rec000000002":
+            raise SanitizationLimitError("synthetic")
+        return export(record)
+
+    sanitize = Finding.sanitize
+
+    def fail_for_the_second_record(finding: Finding) -> None:
+        if drop == "report" and finding.resource.endswith("/rec000000002") and finding.evidence:
+            raise SanitizationLimitError("synthetic")
+        sanitize(finding)
+
+    instance._export_record = reject_the_second_record  # type: ignore[method-assign]
+    with mock.patch.object(Finding, "sanitize", fail_for_the_second_record):
+        findings = instance.run()
+    assert instance.ctx.stats.incomplete
+    [record] = [f for f in findings if RECORD_KEY in f.metadata]
+    contract = record.metadata[RECORD_KEY]
+    assert (contract["record_id"], contract["listing_complete"]) == ("rec000000001", False)
+    assert [b["coverage"] for b in contract["bindings"]] == ["unknown"]
+    assert _billing_status(findings) is None
+
+
+def test_replayed_record_text_is_bounded_like_collected_text(tmp_path, index):
+    # Regression: replay copied an exported record's names, status reason and descriptor
+    # summary unbounded into the report (a 90,000-character capability name, for example).
+    def edit(lines: list[str]) -> None:
+        position = _line_of(lines, '"recordId": "rec000000001"')
+        record = json.loads(lines[position])
+        record["displayName"] = "n" * 50_000
+        record["statusReason"] = "s" * 70_000
+        record["recordVersion"] = "v" * 10_000
+        record["_registry"]["name"] = "r" * 10_000
+        record["_descriptor_summary"]["a2a"]["capabilities"] = ["k" * 90_000]
+        record["_descriptor_summary"]["a2a"]["skills"] = ["x"] * 10_000
+        record["_descriptor_summary"]["extra"] = "e" * 10_000
+        record["provenance"][0]["unexpected"] = "u" * 10_000
+        lines[position] = json.dumps(record)
+
+    ctx = context(index, input=str(_fixture_lines(tmp_path, edit)))
+    findings = AwsConnector(ctx).run()
+    assert not ctx.stats.incomplete
+    [record] = [f for f in findings if f.resource == f"{REGISTRY_ARN}/record/rec000000001"]
+    assert len(record.title) < 350 and len(record.metadata["display_name"]) == 300
+    assert len(record.metadata["status_reason"]) == 300
+    assert len(record.metadata["record_version"]) == 64 and len(record.metadata["registry_name"]) == 300
+    a2a = record.metadata["descriptor"]["a2a"]
+    assert [len(item) for item in a2a["capabilities"]] == [64] and len(a2a["skills"]) == 50
+    assert "extra" not in record.metadata["descriptor"]
+    assert "unexpected" not in record.metadata["provenance"][0]
+    assert all(len(e.description) < 1000 for e in record.evidence)
+
+
+def test_bounding_leaves_collected_and_exported_summaries_unchanged():
+    # Live and replayed findings keep one report shape.
+    for line in FIXTURE.read_text().splitlines():
+        record = json.loads(line)
+        if "_descriptor_summary" in record:
+            assert bounded_summary(record["_descriptor_summary"]) == record["_descriptor_summary"]
+    summary, parse = descriptor_summary(AGENT_REGISTRY, record_detail()["descriptors"])
+    assert parse == "ok" and bounded_summary(summary) == summary

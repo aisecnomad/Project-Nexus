@@ -5,6 +5,96 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## Unreleased
 
+### AI-assisted review gate
+
+- Add a deterministic, fail-closed AI Review Gate with read-only preflight,
+  base-commit-only synthesis, and narrowly scoped review/check publication.
+  Missing or malformed specialist evidence blocks the gate. AI cannot approve
+  or merge; human/CODEOWNER review and branch protections remain required.
+  This is not independent human review and does not authorize a release.
+- The gate's evidence is committed by the pull request's author, so it can
+  block a change but never pass one: with no blocking finding the check
+  concludes `neutral` (`advisory_only`), never `success`. Do not make it a
+  required check; GitHub counts `neutral` as passing.
+
+### Fleet dashboard and inventory export
+
+- Add `shadowscan dashboard REPORTS... -o dashboard.html`: a static,
+  self-contained page with no external assets and one hashed script. The
+  coverage panel comes first (completeness per source and connector,
+  last scan and staleness); a connector a source did not run reads
+  "not collected", never 0. Then counts by inventory status, risk level,
+  surface, kind, provider, account and owner; autonomy floor against shadow
+  status with the shadow L4 and L5 cells marked and linked; vendor registry
+  reconciliation per registry; threat and control reference counts
+  ("Evidence references, not compliance determinations."); and the AI
+  systems table. Every table reads without JavaScript.
+- One report is read as `merge` reads a source, so it shows what it would
+  show among others: each applicable finding's autonomy interval is
+  classified again (a report written before autonomy tiers shows its tiers
+  and priority quadrant), and a report without `inventory_present` counts as
+  having an inventory when its `inventory_size` is above zero or a finding
+  has a shadow status. A finding of an applicable kind without a valid
+  interval reads "not classified" (unknown, counted and warned about in the
+  priority section), not "not applicable".
+- Coverage has no column for scan-level `engine.*` records, stores a cell
+  only for the connectors each source ran (the document grows with the
+  runs, not with sources times connectors) and shows at most 100 connector
+  columns, with a note for the rest. An incomparable `--baseline` opens the
+  page with its own banner, and the coverage drift class counts reasons.
+- `--inventory-json FILE` writes the same data as the versioned
+  `shadowscan.inventory/v1` document for BI and SIEM tools. Credential
+  findings are counted and left out; records carry no evidence snippets,
+  evidence attributes, permissions or raw metadata.
+- `--baseline FILE` adds drift computed as `diff` computes it; missing
+  findings stay unknown unless the comparison is comparable.
+  `--history DIR` adds per-report totals and drift between comparable
+  consecutive reports (at most the newest 104; a non-comparable pair is a
+  gap, never zero). History counts drift without exporting findings
+  (`comparison.drift_counts`); 104 synthetic reports of 10,000 findings
+  took about 74 seconds. `--as-of TIME` sets the staleness reference, which
+  otherwise is the newest source's last scan, never the wall clock.
+- Exit 3 when an input or source is incomplete or the baseline comparison is
+  not comparable (the files are still written); exit 1 on invalid input.
+  Outputs are written with mode 0600 and never through a symbolic link.
+- `merge` now records `started_at`, `finished_at`, `inventory_present` and
+  each connector run's status for every source, under
+  `collection_scope.fleet.schema` `shadowscan.fleet-merge/v2`, and sets the
+  merged report's `inventory_present` when any source supplied an
+  inventory. The scope fingerprint is unchanged.
+- The dashboard reads shadow status as `shadowscan merge` records it
+  (registration only from sources with `inventory_present: true`), labels a
+  finding that inventories matched to different agents, and reads a fleet
+  report merged before `shadowscan.fleet-merge/v2` as having no inventory,
+  with a note to merge its sources again.
+- Add authored tests for each view, escaping of hostile report values,
+  coverage, determinism, private outputs, a 20,000-finding linear-time
+  render budget and a linear-time history budget.
+  They use synthetic reports and do not establish acceptance on a live fleet.
+
+### Triage, plugin identity, redaction and cache integrity hardening
+
+- LLM triage refuses a reply that carries more than one verdict object (for
+  example one quoted from injected finding text) as `status: unparseable`, and
+  requests ask for `temperature: 0`.
+- `--allow-plugin` and `options.allowed_plugins` accept `name=module:Class`.
+  A pinned approval refuses a plugin whose entry point resolves elsewhere
+  (`target-mismatch`); a bare name keeps the previous behavior. Duplicate
+  approvals for one name are refused.
+- Redaction withholds the value in `Bearer token <value>`, keys ending in
+  `secretvalue`, `tokenvalue`, `passwordvalue` or `apikeyvalue`, opaque
+  literals passed to setter calls such as `setProperty("openai.key", ...)`,
+  and `value`, `key` and `credential` fields inside an `auth` mapping.
+- `shadowscan jwt TOKEN...` and `shadowscan run --set` with a credential value
+  print a warning that command-line arguments are visible in process listings
+  and shell history. The value is never echoed and the scan still runs.
+- With a stable identity key, incremental cache entries carry
+  `payload_hmac_sha256` under a key derived from it, and entries without a
+  valid MAC are rescanned. Existing keyed entries miss once. Unkeyed caches
+  keep the SHA-256 checksum, which detects damage, not tampering.
+- Incremental Git fingerprinting reads `git` output through the bounded
+  metadata reader, so repository-controlled refs cannot exhaust memory.
+
 ### Redaction on CPython 3.12.0 to 3.12.3
 
 - Fixed: on CPython 3.12.0 to 3.12.3, redacting a long single line could
@@ -121,7 +211,13 @@ summarizes each release for people who install and operate ShadowScan.
   source that reported it had an inventory. A shadow or unassessed finding has
   no `registry_match`. The merged report carries `inventory_present`
   (true when any source had an inventory, even an empty one), and a source
-  whose `inventory_present` is not a boolean is refused (exit 1).
+  whose `inventory_present` is not a boolean is refused (exit 1). A source
+  without `inventory_present` (reports from the v0.1.x releases, which share
+  the finding identity schema) is refused (exit 1) when it records any
+  registration (`shadow`, `registry_match` or a nonzero `inventory_size`):
+  reading the missing key as "no inventory" silently turned its shadow
+  verdicts into `unassessed` and lowered the fleet's shadow count. Rescan
+  such sources before merging.
   The terminal table, Markdown and HTML reports label such a finding
   `unassessed` and count them in the summary when the merged report has an
   inventory, instead of leaving a blank cell that reads as registered.
@@ -171,6 +267,67 @@ summarizes each release for people who install and operate ShadowScan.
   cloud SDKs: the mypy overrides list the `google` namespace package, which
   `import google.auth` also binds. A new test type-checks every optional SDK
   import with installed packages hidden.
+
+### Control evidence report and declared governance facts
+
+- Add `shadowscan controls REPORT.json [...]` (`--format markdown|csv|json`,
+  `-o`, repeatable `--framework`). For every entry of the NIST AI RMF,
+  ISO/IEC 42001, EU AI Act and AIUC-1 catalogs it lists the findings whose
+  control references name it, split by risk level, with up to 10 examples
+  (highest risk first), an evidence status and the scope behind it (report
+  and connector completeness, whether an inventory was supplied). Several
+  reports are merged as `merge` merges them; a finding counts as shadow only
+  when a report reconciled with an inventory says so, and a report's own
+  `inventory_present: false` is believed over its shadow values. A report
+  that `merge` produced is refused (exit 1): pass the source reports.
+- A control no finding references reads `not observed` only when every report
+  is complete; otherwise it reads `unknown (scan incomplete)`, and counts of
+  referenced controls are marked as lower bounds. An incomplete input still
+  writes the output, with an `INCOMPLETE SCAN` banner (a first
+  `SCAN-INCOMPLETE` row in CSV), and exits 3. A control no finding references
+  reads `unknown (inventory not supplied)` when a finding whose shadow status
+  is unknown could reference it through a rule that reads shadow status or
+  declared facts (so `GOVERN-1.6`, ISO/IEC 42001 `A.4.2` and AIUC-1 `E` never
+  read `not observed` from a scan without an inventory), and
+  `unknown (risk class not declared)` when a finding without a declared EU AI
+  Act class could reference it through a declared-class rule. Controls no rule
+  maps read `not mapped`. The CSV has an `inventory` column (`supplied`,
+  `partial` or `not supplied`). The output never says a control is met and has
+  no score.
+- Every output carries the notice "Evidence references, not compliance
+  determinations. Mappings are author mappings and have not been
+  independently reviewed." Catalogs gain a required `review` field whose only
+  accepted value is `author`; the validator rejects anything else, and the
+  generated catalog reference shows it. CSV cells use the CSV reporter's
+  spreadsheet-injection protection, a `|` in a Markdown table code span is
+  escaped, and output files are written with mode 0600 and never through a
+  symbolic link. The JSON schema is `shadowscan.control-evidence/v1`.
+- Capability Cards with `schema_version: 2` accept an optional `governance:`
+  block: `eu_ai_act_risk_class` (`prohibited`, `high`, `limited`, `minimal`,
+  `gpai`, `gpai-systemic`, `unknown`), `intended_purpose`,
+  `oversight_measures`, `aiuc1_certificate` and `iso42001_scope`. Unknown keys,
+  malformed values and a block on an earlier card fail inventory validation.
+  `inventory check` lists the declared class, and `inventory stubs` writes a
+  `governance: {eu_ai_act_risk_class: unknown}` placeholder.
+- A finding registered by such a card records `metadata.declared_governance`
+  (the block plus `source`, the card's agent id). The value is rebuilt on every
+  reconciliation pass, so a connector, plugin or earlier run cannot plant it;
+  `merge` drops it from findings that are shadow, refuses a report with a
+  malformed block, and refuses a registered finding whose reports carry
+  different blocks instead of keeping the first report's. A report's block is
+  checked without the card's length limits, because export redaction can
+  lengthen a declared value. HTML and Markdown reports show the facts as
+  declared and not verified.
+- Mapping rules gain the `declared_risk_class_any` condition and two control
+  rules: a declared `high` class references EU AI Act Articles 12, 14 and 26,
+  and a declared `limited`, `gpai` or `gpai-systemic` agent, bot or AI
+  application references Article 50. Declared facts count only for registered
+  findings and never change risk, matching or approval.
+- Add authored positive and negative regressions for every format, the
+  incomplete and no-inventory statuses, framework selection, spreadsheet
+  injection, card validation and the declared rules. The declared facts and
+  the mappings are not verified against any tenant, and regression passes do
+  not supply independent human review.
 
 ### Drift classes, baseline pinning and weekly drift templates
 
@@ -279,8 +436,9 @@ summarizes each release for people who install and operate ShadowScan.
   vocabulary, up to 64 exact-resource bindings with collection coverage, and
   `listing_complete`. A malformed record is ignored and makes the scan
   incomplete (`engine.registries`, exit 3). Record evidence
-  (`registry:<type>`, confidence group `registry-record`) has weight 0.5. No
-  built-in connector emits records yet.
+  (`registry:<type>`, confidence group `registry-record`) has weight 0.5.
+  `cloud.aws`, `cloud.gcp` and `identity.entra` emit records (see their
+  entries below); no other built-in connector does.
 - Only a built-in connector that declares the new `emits_registry_records`
   engine hook may emit records. The engine drops `registry_record` from other
   connectors' findings, including cached ones and those of a plugin that
@@ -454,6 +612,27 @@ summarizes each release for people who install and operate ShadowScan.
   since an HTTP client can read another host from it
   (`http://remote.example\@localhost/` reaches `remote.example`); its evidence
   then names no host.
+- Identity and transport checks no longer read only the sanitized record.
+  Parsing redacts every `env` value of a file wherever it appears and keeps
+  twelve arguments, which could hide the `NODE_OPTIONS` or `PATH` name, the
+  `cmd /c` operator or `%VAR%`, or the `docker run -e` value that leaves a
+  launch unidentified, and let the approved catalog vouch for it. The parser
+  now decides on the configured values and marks a server whose record would
+  name a different package `launch_unidentified: true`, and a plaintext URL
+  that redaction hid `plaintext_transport: true` (it keeps the
+  `mcp-insecure-transport` tag and the `mcp-plain-http` factor); neither
+  marker holds a value. A record with a redacted env name, `docker run -e`
+  value, or `cmd /c` or batch-file argument names no package.
+- A launcher under `/proc` or `/dev` (`/proc/self/cwd/npx`) counts as a
+  relative path, and `PREFIX` and `DESTDIR`, under which npm reads its global
+  npmrc and so its registry, leave a launch unidentified.
+- A remote server with `remotes[]` beside its URL is matched by every
+  endpoint it lists, which one registry name must list together; before, only
+  the first URL was compared.
+- `mcp-insecure-transport` and `a2a-plaintext-interface` read a URL as WHATWG
+  URL parsers do: tab, CR and LF removed, leading control characters stripped,
+  and `http:/host`, `http:\\host` or `http:///host` taken as a plaintext
+  remote host (`http:///host` was not flagged before).
 - The tests use a synthetic snapshot shaped like the live registry API. No
   live registry fetch or tenant acceptance is part of the test suite.
 
@@ -523,7 +702,11 @@ summarizes each release for people who install and operate ShadowScan.
   is not a plain resource name (an `https:` URL, an API version segment, a
   trailing slash) makes that registry's listing incomplete and the scan
   incomplete (exit 3, one warning). It was previously ignored, so the engine
-  it registered could be reported `observed-not-registered`.
+  it registered could be reported `observed-not-registered`. So does a nested
+  name under a reasoning engine or Dialogflow agent (`agents/<id>/flows/<id>`).
+  A plain nested name of a collection the scan does not observe (a publisher
+  model, `publishers/google/models/<id>`) names no engine and is read like a
+  Vertex AI endpoint; it previously made every such scan exit 3.
 - A publisher record must be named as a publisher of the project and location
   it was listed in (`_project` and `_location` are now required), and one named
   with another project's number is dropped like a foreign record, so it can no
@@ -559,7 +742,12 @@ summarizes each release for people who install and operate ShadowScan.
   without a warning or error in that region for the scanned account (an
   export that rejects a runtime or gateway record counts) and every runtime and
   gateway finding of that region could be reported. An auto-detected record
-  still in `DRAFT` binds nothing: nobody submitted it, so it registers nothing.
+  binds whatever its status: a `DRAFT` nobody submitted registers nothing
+  (core reconciliation reports it `not-comparable`, `record-status`), but its
+  binding keeps the registry's account in scope, so the runtime or gateway
+  behind a registry of drafts only reads `observed-not-registered` when the
+  listing is complete. Stripping the draft's binding had left such a registry
+  without scope and its runtimes without any reconciliation.
   Provenance on a record created through the API is the publisher's assertion
   and binds nothing, and a provenance relation this release does not recognize
   binds nothing and makes the scan incomplete.
@@ -600,6 +788,27 @@ summarizes each release for people who install and operate ShadowScan.
   `registry_coverage: approved-only`, never set `listing_complete`, have no
   bindings and `approval_mode: unknown`, and keep their registry's account
   without being marked unresolved. Batch errors report only their codes.
+- AgentCore gateway findings are named by the gateway ARN, read through
+  `GetGateway` (already covered by `bedrock-agentcore:Get*`): `ListGateways`
+  returns no ARN, so live gateway findings were named by their id and a
+  registry binding to the gateway ARN could never match, reading the record
+  `registered-not-observed` and the gateway `observed-not-registered` in a
+  complete scan. Only the ARN and URL are kept from `GetGateway`. A failed
+  call, or details without an ARN, makes the scan incomplete; a gateway
+  replayed from an older export without its ARN takes its region's bindings
+  out of scope. Live gateway finding ids change: re-baseline them.
+- A runtime, gateway or registry record that analysis rejects, that an export
+  rejects or a replay drops, or whose finding `run` omits for failing
+  sanitization now withdraws the registry claims it could undercut: every
+  record's `listing_complete` becomes false and every in-scope binding
+  `unknown`. Surviving records had kept `listing_complete` and replay had kept
+  the exported in-scope coverage, so an incomplete scan still reported
+  `observed-not-registered` or `registered-not-observed` as facts.
+- Analysis bounds the text of a replayed registry record to the collection
+  limits (names, display names, status reasons and registry names to 300
+  characters, record versions to 64, provenance to the exported fields) and
+  rebuilds its descriptor summary with the collection limits and fields; an
+  edited export had carried unbounded text into titles and metadata.
 - The registry responses and `tests/fixtures/cloud/aws_registry_records.jsonl`
   are synthetic, modeled on the installed SDK models; nothing was validated
   against a live account. The README demo export is unchanged.
@@ -678,14 +887,26 @@ summarizes each release for people who install and operate ShadowScan.
   request, such as an agent a user shared, is `registered` instead of
   `approved`. A trusted tenant entry accepts it, with the app registration and
   agent identity it binds, only with `allow_registered_only`;
-  `allow_auto_approved` no longer approves it without a reviewer.
+  `allow_auto_approved` no longer approves it without a reviewer. Only a
+  Microsoft or partner package (`type` `microsoft` or `external`) with no
+  request is `approved`; a package with no request whose `type` is missing or
+  any other member (such as `unknownFutureValue`, which Graph returns for a
+  member added later) is `unknown`, so `allow_auto_approved` does not sanction
+  it or the agent identity it names.
 - A binding's coverage is `unknown` instead of `in-scope` when any record of the
   export was rejected as malformed, so a present but malformed app registration
-  or agent identity is not reported `registered-not-observed`.
+  or agent identity is not reported `registered-not-observed`. In a replay, a
+  record the offline loader dropped (an invalid or truncated JSON line, a
+  duplicate key, a provider error record) counts as rejected too: binding
+  coverage is `unknown` and `listing_complete` is `false`.
 - The coverage marker records the tenant the credential is bound to
   (`tenantId`). A replay whose `tenant_id` differs from it is incomplete and its
-  records get an empty registry id, so they cannot be trusted; an older export
-  without the field replays as before.
+  records get an empty registry id and no bindings, so they cannot be trusted
+  and cannot mark the configured tenant's objects `registered-and-observed`. A
+  pre-issued token's decoded `tid` is recorded also when `tenant_id` is not set
+  or names another tenant, and a run whose tenant is unknown writes
+  `tenantId: null`, which a replay with `tenant_id` treats as unattributed and
+  incomplete; only an older export without the field replays as before.
 - The fixtures and Graph payloads in the tests are synthetic, modeled on
   Microsoft's Graph reference pages; nothing was validated against a live
   tenant.
@@ -1108,9 +1329,10 @@ author-written and not independent review.
 - A project whose executable code constructs and serves an MCP server (the
   SDK plus a server-construction idiom outside test code) is reported through
   the `mcp-server` capability, `metadata.mcp_server` and an "MCP server in"
-  title (see "October 8 MCP server capability and model id attribution").
-  The finding kind, resource and identity are
-  unchanged; `mcp-server` findings remain MCP configuration inventories.
+  title (see "October 8 MCP server capability and model id attribution" under
+  "Candidate change history" in `docs/production.md`). The finding kind,
+  resource and identity are unchanged; `mcp-server` findings remain MCP
+  configuration inventories.
   MCP client code stays as before.
 - Spring AI: `ChatClient` builder chains that register concrete tools with
   `defaultTools(new ...)` after setting a system prompt or advisors, and
@@ -1269,9 +1491,9 @@ baselines; rebaseline before comparing (see `docs/production.md`).
 
 - The JS/TS/TSX lexer now lexes brace-less JSX elements as attribute values
   (`title=<span>…</span>`), a legal construct that marked real repositories
-  incomplete. Plain `.js`/`.mjs`/`.cjs` files keep the JSX retry that applies
-  only when the plain reading is ambiguous and the JSX reading completes.
-  Malformed JSX still fails closed.
+  incomplete. Malformed JSX still fails closed. How a plain `.js`, `.mjs` or
+  `.cjs` file is read as JSX is described under "Real-world benchmark
+  follow-up fixes" below.
 - Credential detection scales its per-execution regex allowance linearly
   with declared input size (`LINEAR_SECONDS_PER_MILLION_CHARS`, floor
   0.1 s, always inside the per-file wall budget), so keyword-dense
@@ -1350,8 +1572,8 @@ baselines; rebaseline before comparing (see `docs/production.md`).
   line break and reported `incomplete source lexical analysis`. It now stays open across the
   break, and an unclosed one is still incomplete.
 - Fixed: a `.js`, `.mjs` or `.cjs` file with JSX (React code in a `.js` file) was lexed as
-  plain JavaScript and reported incomplete. Plain lexing is retried as JSX only when it fails,
-  and the JSX reading is used only when it lexes completely. `.ts` files are never read as JSX.
+  plain JavaScript and reported incomplete. Such a file is now also read as JSX, under the rule
+  described under "Real-world benchmark follow-up fixes" below. `.ts` files are never read as JSX.
 - Fixed (fail-open in the two changes above): a quote the Rust lexer misread opened an ordinary
   string that now ran across lines to the next quote, masking the code in between while the file
   reported complete. Rust C raw strings (`cr"..."`, `cr#"..."#`) and character literals with a
@@ -1376,12 +1598,14 @@ baselines; rebaseline before comparing (see `docs/production.md`).
 
 ### Real-world benchmark follow-up fixes
 
-- `.js`, `.mjs` and `.cjs` files with a closing or self-closing tag are read
-  both as plain JavaScript and as JSX. When both readings complete, only what
-  both mask stays masked: element text such as `src/*.js` can no longer open a
-  plain-JavaScript comment that hides code up to a later `*/` while the scan
-  reports complete. A JSX reading that exhausts its look-ahead budget marks the
-  file incomplete.
+- A `.js`, `.mjs` or `.cjs` file is read as plain JavaScript first. When that
+  reading is ambiguous, or the file holds a closing or self-closing tag (`</a`,
+  `/>`), it is also read as JSX. When only one reading completes, that reading
+  is used. When both complete, only what both mask stays masked: element text
+  such as `src/*.js` can no longer open a plain-JavaScript comment that hides
+  code up to a later `*/` while the scan reports complete. When neither
+  completes, or the JSX reading exhausts its look-ahead budget, the file is
+  incomplete (exit 3).
 - Fixed: lossy text decoding checks every bounded window, so an ASCII prefix
   cannot hide an invalid or control-character body. Python and notebook files
   with a UTF-8 byte-order mark retain strict decoding of invalid bytes.
@@ -1838,12 +2062,14 @@ complete and empty. Each has a regression test; finding IDs are unchanged.
   between them: `yield <a> 1` and `await <a> 1` in a script (where both words
   are names), `of <a> 1` after an operand, a keyword cut out of a longer name
   (`a<ZWNJ>typeof <a> 1`, likewise at a combining mark or a `\u{...}` escape)
-  and the second `<` of a left shift (`mask<<shift>limit`). In `.js`, `.mjs`
-  and `.cjs` files JSX is now only tried when the plain walk is ambiguous, and
-  not used where an element follows a word other than a reserved word that
-  cannot be a name (`return`, `typeof`, `case` and the like) or in a file with
-  such a shift; the scan then stays incomplete. Before, the code connector
-  lexed these files as JSX from the start.
+  and the second `<` of a left shift (`mask<<shift>limit`; see "Lexical
+  coverage" above). Before, the code connector lexed `.js`, `.mjs` and `.cjs`
+  files as JSX from the start; they are now read as plain JavaScript first
+  (see "Real-world benchmark follow-up fixes" above). In their JSX reading, a
+  `<` after a word opens an element only after a reserved word that cannot be
+  a name (`return`, `typeof`, `case` and the like) that is not cut out of a
+  longer name; after `yield`, `await`, `of` or any other word the reading is
+  ambiguous and is not used.
 - Fixed: a `.ts` or `.tsx` file that started with `<TS>` or `<tileset` was
   masked whole as a Qt translation or Tiled tileset, although `<TS>expr` is a
   type assertion and `<TS></TS>` a JSX element. Only a file that opens with an
@@ -2379,9 +2605,9 @@ complete and empty. Each has a regression test; finding IDs are unchanged.
 
 ### October 2 integration of #134 and repository hygiene review
 
-Pull request #134 landed through an integration pull request as one
-signed-off commit, rebuilt on the current `main`: its branch predated #123,
-#132 and #133 and conflicted with the SARIF message escaping from #123. The
+Pull request #134 landed through an integration pull request as one signed-off
+commit, rebuilt on the current `main`: its branch predated #123, #132 and #133
+and conflicted with the SARIF message escaping from #123. The
 other changes come from an AI-assisted review of CI, documentation, code and
 repository layout. Each defect was reproduced before it was fixed and has a
 regression test or check; none had a second-person review. Migration notes are

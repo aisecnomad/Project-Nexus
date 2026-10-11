@@ -348,6 +348,10 @@ incomplete depends on what the file could hide:
   credential evidence is lost by skipping it. The warning still names each file
   so the omission is visible. Lockfiles, minified bundles, source maps and
   bytecode below the limit are skipped silently because they are never analyzed.
+  A coding-agent settings file that an operator's glob matches (a
+  `.claude/settings.json` under `*.json`) is still recorded as unread for its
+  project's approval gate, which then covers only some actions (see
+  [approval gating](concepts/autonomy.md#approval-gating-evidence)).
 * With `scan_secrets: false`, an oversize documentation file (`.md`, `.mdc`,
   `.mdx`, `.txt`, not a manifest name) is skipped with a warning and the scan
   stays complete: its body is matched by file name only, so no technology
@@ -363,7 +367,9 @@ incomplete depends on what the file could hide:
   `test_*.py`) is skipped with the warning `skipped oversize test fixture` and
   the scan stays complete: test code is discounted evidence that cannot
   establish a deployment, so its omission is disclosed and counted (one
-  summary warning per root) rather than treated as a gap. With credential
+  summary warning per root) rather than treated as a gap. A coding-agent
+  settings file under such a path is still recorded as unread for its
+  project's approval gate, which then covers only some actions. With credential
   detection on, or `include_tests: true`, the file is analyzable like any
   other and the gap returns; `strict_coverage` records it as an error.
 * Every other oversize file, for example a 2 MiB Python module, JSON or YAML
@@ -769,9 +775,12 @@ evidence and technologies union, the earliest `first_seen` and latest
 `last_seen` survive, the first report's metadata wins. Findings from
 different machines keep their own resources because the endpoint label
 prefixes every resource. Every finding records the reports it came from in
-`metadata.merged_from`, and `collection_scope.fleet.sources` lists each
-source with its completion state, finding count and scope fingerprint. A
-source is named by its path below the reports' common directory
+`metadata.merged_from`, and `collection_scope.fleet.sources`
+(`shadowscan.fleet-merge/v2`) lists each source with its completion state,
+finding count, scope fingerprint, `started_at` and `finished_at`, whether it
+supplied an inventory (`inventory_present`), and the status of each of its
+connector runs (`connectors`: `complete`, `cached`, `incomplete` or
+`skipped`). A source is named by its path below the reports' common directory
 (`host-a/report.json` for reports collected as `<host>/report.json`), or by
 its file name when the reports share a directory.
 
@@ -802,10 +811,17 @@ even an empty one, and `inventory_size` is the largest source inventory.
 Report files are untrusted input. A finding id that another report already
 uses for a finding with another identity (resource, connector, account and
 the other identity fields) is refused (exit 1) rather than merged, as is a
-report whose `inventory_present` is not a boolean. Machines that share a host
+report whose `inventory_present` is not a boolean. A report without
+`inventory_present`, such as one written by the v0.1.x releases, merges as
+inventory-less only when it records no registration (no `shadow` verdict, no
+`registry_match` and an `inventory_size` of 0); otherwise it is refused
+(exit 1) rather than having its shadow verdicts dropped to `unassessed`.
+Rescan such sources with this version before merging. Machines that share a host
 name and home directory, such as clones of one VM image, produce the same
 identities and merge as one machine scanned twice; give each a distinct
-`--label`, such as its asset tag.
+`--label`, such as its asset tag. A registered finding whose reports carry
+different [declared governance facts](inventory.md#declared-governance-facts)
+is refused too, so the result never depends on the order of the reports.
 
 The merged report is comparable with `shadowscan diff` only when every source
 was complete and carried a comparable collection scope; its fingerprint is
@@ -814,6 +830,15 @@ machines with the same scanner and signatures compare. Otherwise the report
 says why it is not comparable. Completion follows the sources: one incomplete
 source makes the merged report incomplete (exit 3). Reports with another
 finding identity schema are refused; rescan them first.
+
+## Fleet dashboard
+
+`shadowscan dashboard fleet.json -o dashboard.html --inventory-json inventory.json`
+writes a static page and a `shadowscan.inventory/v1` JSON document from one
+fleet report or several reports. Coverage per source and connector comes
+first; a source that was not collected reads "not collected", never 0.
+`--baseline` adds drift and `--history DIR` adds trends over earlier reports.
+An incomplete input exits 3. See [Fleet dashboard](operations/dashboard.md).
 
 ## Live collection scope
 

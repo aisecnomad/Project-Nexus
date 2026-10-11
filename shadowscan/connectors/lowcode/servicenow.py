@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from collections.abc import Iterable, Iterator
 from typing import Any, ClassVar
 
@@ -68,6 +69,58 @@ def _reference(v: Any) -> Any:
     if isinstance(v, dict):
         return v.get("value") or v.get("display_value")
     return v
+
+
+# Autonomy: what starts a use case, from the ``trigger_type`` of its sn_aia_trigger records and of
+# the use case itself. A record or application event or a schedule is initiation evidence (the
+# event-triggered and scheduled tags with the autonomous capability), not approval-bypass evidence.
+# A use case without a trigger runs when a person asks for it in a conversation and records neither.
+_SCHEDULE_TRIGGER = re.compile(
+    r"sched|\b(?:time|date)[ _-]?based\b|\b(?:hourly|daily|weekly|monthly|cron)\b|recurr", re.I
+)
+_NO_TRIGGER = frozenset(
+    {
+        "",
+        "none",
+        "manual",
+        "conversation",
+        "conversational",
+        "interaction",
+        "interactive",
+        "chat",
+        "on-demand",
+    }
+)
+# Tool types that only read: a knowledge or record retrieval has no side effect outside the conversation.
+_RETRIEVAL_TOOL = re.compile(r"retriev|search|knowledge|lookup", re.I)
+
+
+def _trigger_initiation(trigger_type: Any, *, configured: bool = False) -> str | None:
+    """``schedule`` or ``event`` for a ServiceNow trigger type, or None for no trigger.
+
+    ``configured`` marks the type of an existing sn_aia_trigger record: a trigger of an unrecorded
+    type still starts the use case without a person, so it counts as an event.
+    """
+    value = str(trigger_type or "").strip().lower()
+    if value in _NO_TRIGGER:
+        return "event" if configured and not value else None
+    return "schedule" if _SCHEDULE_TRIGGER.search(value) else "event"
+
+
+def _trigger_initiations(triggers: Iterable[dict[str, Any]], own: Any = None) -> set[str]:
+    """The initiations of a use case's trigger records and of its own ``trigger_type``."""
+    found = {_trigger_initiation(_val(t.get("trigger_type")), configured=True) for t in triggers}
+    found.add(_trigger_initiation(own))
+    return {initiation for initiation in found if initiation is not None}
+
+
+def _add_initiations(f: Finding, initiations: set[str]) -> None:
+    if "schedule" in initiations:
+        f.add_capability("autonomous")
+        f.add_tag("scheduled")
+    if "event" in initiations:
+        f.add_capability("autonomous")
+        f.add_tag("event-triggered")
 
 
 _PAGE_SIZE = 500
@@ -358,9 +411,9 @@ class ServiceNowConnector(BaseConnector):
             ):
                 f.add_capability("code-exec")
         else:
-            # Autonomy: initiation evidence (the event-triggered tag), not approval-bypass evidence.
-            f.add_capability("autonomous")
-            f.add_tag("event-triggered")
+            # Autonomy: initiation evidence (the scheduled and event-triggered tags), not
+            # approval-bypass evidence.
+            _add_initiations(f, _trigger_initiations(children))
         f.add_evidence(
             Evidence(
                 signal=f"servicenow:unresolved-{child_type}",
@@ -402,8 +455,13 @@ class ServiceNowConnector(BaseConnector):
             last_seen=_val(a.get("sys_updated_on")),
         )
         f.add_framework("platform.servicenow-now-assist")
-        f.add_capability("tool-use")
-        f.add_capability("saas-actions")
+        tool_types = sorted({str(_val(t.get("type")) or _val(t.get("tool_type")) or "?") for t in tools})
+        if tools:
+            # Autonomy: the agent's tool records prove tool access, and a tool other than a
+            # retrieval proves side effects. An export without tool records proves neither.
+            f.add_capability("tool-use")
+            if any(not _RETRIEVAL_TOOL.search(t) for t in tool_types):
+                f.add_capability("saas-actions")
         f.add_evidence(
             Evidence(
                 signal="servicenow:sn_aia_agent",
@@ -416,7 +474,6 @@ class ServiceNowConnector(BaseConnector):
                 signature="platform.servicenow-now-assist",
             )
         )
-        tool_types = sorted({str(_val(t.get("type")) or _val(t.get("tool_type")) or "?") for t in tools})
         if any("script" in t.lower() for t in tool_types):
             f.add_capability("code-exec")
             f.add_evidence(
@@ -426,11 +483,11 @@ class ServiceNowConnector(BaseConnector):
                     weight=0.4,
                 )
             )
-        if (
-            str(_val(a.get("autonomous"))).lower() in {"true", "1", "yes"}
-            or "autonomous" in str(_val(a.get("agent_type")) or "").lower()
-        ):
+        flagged = str(_val(a.get("autonomous")) or "").strip().lower() in {"true", "1", "yes"}
+        agent_type = str(_val(a.get("agent_type")) or "").strip().lower()
+        if flagged or agent_type == "autonomous":
             # Autonomy: approval-bypass evidence (the agent is configured to act without a person).
+            # Only the exact type counts: "semi-autonomous" or "non-autonomous" would say otherwise.
             f.add_capability("autonomous")
         apply_matches(f, self._optional_name_matches(name, _val(a.get("description"))), weight_scale=0.4)
         f.metadata.update(
@@ -480,10 +537,10 @@ class ServiceNowConnector(BaseConnector):
                 signature="platform.servicenow-now-assist",
             )
         )
-        if triggers or str(_val(u.get("trigger_type") or "")).lower() not in {"", "manual", "none"}:
-            # Autonomy: initiation evidence (the event-triggered tag), not approval-bypass evidence.
-            f.add_capability("autonomous")
-            f.add_tag("event-triggered")
+        # Autonomy: initiation evidence (the scheduled and event-triggered tags), not approval-bypass
+        # evidence: a schedule is not an event, and a use case a person starts in a conversation
+        # records neither.
+        _add_initiations(f, _trigger_initiations(triggers, _val(u.get("trigger_type"))))
         f.metadata.update(
             {
                 "active": _val(u.get("active")),

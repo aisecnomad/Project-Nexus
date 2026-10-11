@@ -160,8 +160,8 @@ no score by itself, and a server's publication never lowers its risk. Only an
 approved registry (`approved: true`) scores, through the
 `mcp-not-in-approved-registry` governance factor: once per finding, whatever
 the number of servers it counts, and like the other governance factors it is
-excluded from `danger_score` and reported with weight 0 under
-`risk_basis: danger`. When an approved registry fails to load, the factor is
+excluded from `danger_score`; under `risk_basis: danger` it weighs 0 and, like
+any zero-weight governance factor, is omitted from `risk.factors`. When an approved registry fails to load, the factor is
 not applied and the scan is incomplete.
 `options.risk_weights` overrides weights; see the README's risk policy. Its
 keys are checked, so a typo cannot silently change nothing: unknown groups,
@@ -200,8 +200,8 @@ as a `bounds` factor, so the listed factors always add up to `score`.
 `risk.danger_score` applies the same scale and bounds to the factors other than
 the governance factors (`shadow`, `registered`, `no-owner`,
 `mcp-not-in-approved-registry`). With
-`options.risk_basis: danger` the governance factors are reported with weight 0,
-so `score`, `level` and `--fail-on` follow the danger score.
+`options.risk_basis: danger` the governance factors weigh 0 and are omitted from
+`risk.factors`, so `score`, `level` and `--fail-on` follow the danger score.
 
 ## Shadow determination
 

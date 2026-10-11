@@ -10,7 +10,7 @@ import pytest
 from click.testing import CliRunner
 
 from shadowscan.cli import main
-from shadowscan.fleet import merge_reports
+from shadowscan.fleet import FLEET_SCHEMA, merge_reports
 from shadowscan.models import Kind
 from shadowscan.reporters import render
 
@@ -349,3 +349,50 @@ def test_merge_refuses_a_malformed_inventory_presence(tmp_path: Path, value: obj
     with pytest.raises(ValueError, match="inventory presence must be a boolean") as raised:
         merge_reports([("forged", report)])
     assert str(value) not in str(raised.value)
+
+
+@pytest.mark.parametrize("verdict", ["shadow", "registered", "inventory-size"])
+def test_merge_refuses_an_older_report_whose_registration_it_cannot_attribute(tmp_path: Path, verdict: str):
+    # Regression: reports from the v0.1.x tags share the identity schema but omit
+    # inventory_present. Reading the missing key as false turned their shadow verdicts into
+    # unassessed and the merge exited 0 with a lower fleet shadow count.
+    _report(tmp_path, "laptop", {".mcp.json": MCP})
+    agent_id = "fs-mcp" if verdict == "registered" else None
+    inventory = _inventory(tmp_path, "it", agent_id)
+    report = json.loads(
+        _scan(tmp_path / "laptop", tmp_path / "old.json", "--inventory", str(inventory)).read_text()
+    )
+    del report["inventory_present"]
+    if verdict == "inventory-size":
+        report["findings"][0].update(shadow=None, registry_match=None)
+        report["inventory_size"] = 1
+    current = json.loads(_report(tmp_path, "desktop", {".mcp.json": MCP}).read_text())
+    for inputs in ([("old.json", report)], [("old.json", report), ("new.json", current)]):
+        with pytest.raises(ValueError, match="old.json: report predates inventory_present"):
+            merge_reports(inputs)
+    legacy = tmp_path / "legacy.json"
+    legacy.write_text(json.dumps(report))
+    out = tmp_path / "merged.json"
+    result = CliRunner().invoke(main, ["merge", str(legacy), "--format", "json", "-o", str(out)])
+    assert result.exit_code == 1 and "rescan before merging" in result.output
+    assert not out.exists()
+
+
+def test_fleet_sources_record_collection_time_inventory_and_connector_runs(tmp_path: Path):
+    path = _report(tmp_path, "laptop", {".mcp.json": MCP})
+    report = json.loads(path.read_text())
+    broken = json.loads(path.read_text())
+    broken["stats"][0]["errors"] = ["connector timed out"]
+    broken["summary"]["complete"] = False
+    broken["inventory_present"] = True
+    result = merge_reports([("a.json", report), ("b.json", broken)])
+    fleet = result.collection_scope["fleet"]
+    assert fleet["schema"] == FLEET_SCHEMA == "shadowscan.fleet-merge/v2"
+    first, second = fleet["sources"]
+    assert (first["started_at"], first["finished_at"]) == (report["started_at"], report["finished_at"])
+    assert first["inventory_present"] is False and second["inventory_present"] is True
+    assert first["connectors"] == [{"connector": "code.filesystem", "status": "complete"}]
+    assert second["connectors"] == [{"connector": "code.filesystem", "status": "incomplete"}]
+    # Any source with an inventory makes the merged report one that was reconciled.
+    assert result.inventory_present is True
+    assert merge_reports([("a.json", report)]).inventory_present is False

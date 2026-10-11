@@ -12,7 +12,7 @@ body:
     id: version
     attributes:
       label: Full commit SHA
-      description: The full 40-character commit SHA you installed from (`git rev-parse HEAD` in a checkout). `shadowscan --version` prints `0.1.1` for every unreleased commit and cannot identify a revision.
+      description: The full 40-character commit SHA you installed from (`git rev-parse HEAD` in a checkout). `shadowscan --version` prints the package version, which is the same for every commit between releases and cannot identify a revision.
       placeholder: "0123456789abcdef0123456789abcdef01234567"
     validations:
       required: true

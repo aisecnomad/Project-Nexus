@@ -15,7 +15,7 @@ evidence and for the bundled regression corpora that `make evaluate` runs.
 | File-dialect holdout | Handwritten fixtures for missed file dialects | Authored with each case | `tests/test_evaluation.py` | [`sab-holdout/corpus.json`](sab-holdout/corpus.json) |
 | Repo and home-view surfaces | Public GitHub repositories, read as a working tree and as `$HOME` | Two model labelers, adjudicated | [`tools/benchmark_realworld/`](../tools/benchmark_realworld/README.md) | `tools/benchmark_realworld/results*/` |
 | Sampled real-world repositories (326) | Random and purposive samples of GitHub and GitLab | Deterministic oracle plus model adjudication | [`tools/benchmark/realworld/`](../tools/benchmark/realworld/README.md) | `tools/benchmark/realworld/results*/` |
-| Shadow AI discovery, code surface (87) | 87 public repositories pinned by SHA | Session-labeled facts with file pointers | [`tools/discovery_benchmark/`](../tools/discovery_benchmark/) | [`shadow-ai-discovery/`](shadow-ai-discovery/README.md) |
+| Shadow AI discovery, code surface (87) | 87 public repositories pinned by SHA | Session-labeled facts with file pointers | [`tools/discovery_benchmark/`](../tools/discovery_benchmark/README.md) | [`shadow-ai-discovery/`](shadow-ai-discovery/README.md) |
 
 Only the code-surface discovery benchmark runs in automation: the weekly
 [`benchmark.yml`](../.github/workflows/benchmark.yml) workflow runs ShadowScan

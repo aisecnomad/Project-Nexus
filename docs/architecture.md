@@ -23,6 +23,7 @@
                                    └─────────┬──────────┘
                                              ▼
               table · json · sarif · csv · markdown · html · cyclonedx · ocsf   (reporters)
+                   JSON reports → merge → dashboard + inventory.json   (fleet views)
 ```
 
 ## Modules
@@ -46,11 +47,16 @@
 | `shadowscan/risk.py` | additive, explainable risk model |
 | `shadowscan/autonomy.py` | autonomy tier interval (L0 to L5) for each applicable finding and its comparison with a declared level |
 | `shadowscan/mappings/` | edition-qualified threat and control catalogs and rules (`data/`), validator; derives `metadata.threats` and `metadata.controls` at export |
+| `shadowscan/governance.py` | governance facts a Capability Card declares (`governance:`), recorded on the findings it registers as `metadata.declared_governance` |
+| `shadowscan/controls.py`, `shadowscan/reporters/controls.py` | `shadowscan controls`: findings per control of the control catalogs, with the completeness of the evidence (Markdown, CSV, JSON) |
 | `shadowscan/engine.py` | parallel connector execution, merge, correlation, reconciliation, scoring; no connector names |
 | `shadowscan/config.py` | YAML config with `${ENV}` expansion, `--set` parsing, connector key validation |
 | `shadowscan/errors.py` | `SetupError`: setup failures whose messages are credential-free and printed verbatim by the CLI |
 | `shadowscan/reporters/` | output formats |
-| `shadowscan/cli.py` | `scan`, `run`, `code`, `gateway`, `jwt`, `connectors`, `signatures`, `inventory`, `diff` |
+| `shadowscan/fleet.py` | `merge` of several reports: identity-checked union, three-valued shadow status, per-source times, inventory and connector runs |
+| `shadowscan/dashboard.py` | the `shadowscan.inventory/v1` document behind `dashboard`: coverage per source and connector, counts, autonomy against shadow status, registry and reference summaries, drift and history |
+| `shadowscan/reporters/dashboard.py` | the static dashboard page rendered from that document; not a `--format` |
+| `shadowscan/cli.py` | `scan`, `run`, `code`, `gateway`, `jwt`, `endpoint`, `connectors`, `signatures`, `inventory`, `mcp-registry`, `diff`, `merge`, `dashboard` |
 
 ## Finding lifecycle
 
@@ -68,7 +74,9 @@
    findings (`metadata.registry_reconciliation`) and then with the inventory,
    including approved records of trusted registries (`shadow`,
    `registry_match`, inherited owner), **classifies** autonomy
-   (`metadata.autonomy`, compared with a matched entry's declared level) and
+   (`metadata.autonomy`, compared with a matched entry's declared level),
+   records the matched card's declared governance facts
+   (`metadata.declared_governance`) and
    **scores** risk. Findings below
    `min_confidence` are then dropped, together with the `related` links that
    name them; vendor registry record findings are kept whatever their

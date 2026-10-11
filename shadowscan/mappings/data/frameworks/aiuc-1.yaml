@@ -7,6 +7,7 @@ source_url: https://standard.aiuc-1.com/
 licence: Unverified; identifiers and own-words labels only
 checked: "2026-10-10"
 verification: secondary
+review: author
 notes: >-
   Versioned quarterly. References are at domain level (A to F). Requirement-level
   identifiers other than D003 are not used because they could not be verified

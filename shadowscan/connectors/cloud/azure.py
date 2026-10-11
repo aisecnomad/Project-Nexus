@@ -401,7 +401,7 @@ class AzureConnector(BaseConnector):
         """The visible subscriptions' ids; a listing without a GUID id is reported, never requested."""
         subs: list[str] = []
         invalid = 0
-        warnings = self.ctx._diagnostic_counts.get("warnings", 0)
+        before = self.ctx.diagnostics_recorded()
         for s in self._list("/subscriptions", _SUBSCRIPTIONS_API, allow_partial=True) or []:
             sub = s.get("subscriptionId")
             if isinstance(sub, str) and _SUBSCRIPTION_ID.fullmatch(sub):
@@ -414,7 +414,7 @@ class AzureConnector(BaseConnector):
                 "were not scanned; coverage incomplete",
                 incomplete=True,
             )
-        if subs and self.ctx._diagnostic_counts.get("warnings", 0) == warnings:
+        if subs and self.ctx.diagnostics_recorded() == before:
             # Every subscription the listing returned, read without a gap, is the principal.
             verified = ",".join(sorted({sub.lower() for sub in subs}))
             self.ctx.attest_principal("azure", "subscriptions", verified, "arm:GET /subscriptions")

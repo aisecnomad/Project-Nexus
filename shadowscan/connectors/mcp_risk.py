@@ -27,7 +27,7 @@ fetched from (registry type, normalized identifier and exact version), which
 MCP registry snapshots are matched against; :func:`registry_package`
 normalizes a registry's own package listing the same way. A launch names a
 package only when nothing in it can change what is fetched or run: a launcher
-run from a relative path, another registry, index, configuration file, cache
+run from a relative or /proc path, another registry, index, configuration file, cache
 or container host (as an option or an environment variable), an environment
 variable that changes how a launcher or interpreter starts or where it finds
 programs and files, a working directory or environment file, a container
@@ -39,12 +39,14 @@ path or alias source.
 from __future__ import annotations
 
 import ipaddress
+import posixpath
 import re
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlsplit
 
 from shadowscan.models import Evidence, Finding
+from shadowscan.utils.redaction import REDACTED
 
 RISK_DESCRIPTIONS: dict[str, str] = {
     "mcp-unpinned-package": "fetches its package or image without an exact version",
@@ -127,12 +129,13 @@ _DOCKER_ENV_FLAGS = frozenset({"-e", "--env"})
 # Environment variables that can change what a launch fetches or runs, matched by namespace:
 # launcher, package manager, interpreter and container settings (another registry, index,
 # configuration, cache, container host or startup option), the program search path, loader
-# preloads, the home, configuration and temporary directories launchers read files from, the
+# preloads, the home, configuration and temporary directories launchers read files from (npm
+# reads its global npmrc under PREFIX, or under DESTDIR joined to its default prefix), the
 # shell a launcher runs commands with, and TLS trust.
 _SOURCE_ENV = re.compile(
     r"(?i)(?:npm|node|bun|yarn|pnpm|corepack|uv|pipx?|docker|containers?|podman|registr(?:y|ies))_\w*"
     r"|python\w*|ld_\w+|dyld_\w+|xdg_\w+|path|pathext|home|homedrive|homepath|userprofile"
-    r"|(?:local)?appdata|programdata|tmp|temp|tmpdir|comspec|shell|bash_env|env"
+    r"|(?:local)?appdata|programdata|tmp|temp|tmpdir|comspec|shell|bash_env|env|prefix|destdir"
     r"|ssl_\w+|(?:requests|curl)_ca_bundle"
 )
 # Variables in those namespaces that change neither the package nor what it runs.
@@ -145,6 +148,8 @@ _CMD_METACHARACTERS = re.compile(r'[&|<>^()"%!]')
 # A Windows absolute path (C:\ or C:/); a relative path resolves against the server's working
 # directory, which is usually the scanned repository.
 _WINDOWS_ABSOLUTE = re.compile(r"[A-Za-z]:[\\/]")
+# Top-level directories whose paths the kernel resolves per process (/proc/self/cwd, /dev/fd/N).
+_PROCESS_RELATIVE_ROOTS = frozenset({"proc", "dev"})
 _BROAD_ROOTS = {"/", "~", "~/", "$HOME", "${HOME}", "%USERPROFILE%", "/home", "/Users", "/root"}
 _DRIVE_ROOT = re.compile(r"^[A-Za-z]:[\\/]?$")
 _HOME_DIR = re.compile(r"^(?:/home/[^/]+|/Users/[^/]+|[A-Za-z]:[\\/]Users[\\/][^\\/]+)[\\/]?$")
@@ -206,19 +211,26 @@ def assess_server(server: dict[str, Any]) -> list[McpRisk]:
     argv = _argv(server)
     if argv is not None:
         risks += _launcher_risks(argv)
-    raw_urls = server.get("urls")
-    urls = [u for u in raw_urls if isinstance(u, str)] if isinstance(raw_urls, list) else []
-    if not urls and isinstance(server.get("url"), str):
-        urls = [server["url"]]
-    for url in urls:
-        if isinstance(url, str) and _plaintext_remote(url):
-            risks.append(McpRisk("mcp-insecure-transport", _host(url)))
-            break
+    plaintext = assess_transport(server)
+    if plaintext is not None:
+        risks.append(McpRisk("mcp-insecure-transport", _host(plaintext)))
+    elif server.get("plaintext_transport") is True:
+        # The parser saw a plaintext URL that redaction then hid from the record.
+        risks.append(McpRisk("mcp-insecure-transport", "remote server"))
     approve = server.get("auto_approve")
     if approve is True or (isinstance(approve, list) and approve):
         detail = "all tools" if approve is True or "*" in approve else f"{len(approve)} tool(s)"
         risks.append(McpRisk("mcp-auto-approve", detail))
     return _unique(risks)
+
+
+def assess_transport(server: dict[str, Any]) -> str | None:
+    """The first projected endpoint of a server record that is plaintext to a remote host, if any."""
+    raw_urls = server.get("urls")
+    urls = [u for u in raw_urls if isinstance(u, str)] if isinstance(raw_urls, list) else []
+    if not urls and isinstance(server.get("url"), str):
+        urls = [server["url"]]
+    return next((url for url in urls if _plaintext_remote(url)), None)
 
 
 def record_server_risks(finding: Finding, server: dict[str, Any], location: str) -> None:
@@ -251,10 +263,17 @@ def server_package(server: dict[str, Any]) -> PackageRef | None:
     scanned repository. A shell command line, a local path, a URL or Git source, an npm alias,
     a GitHub shorthand, a working directory or environment file (``launch_context``), and a
     launch with an option or environment variable that can change what is fetched or run name
-    no package.
+    no package. Neither does a record the parser marked ``launch_unidentified`` (redaction or
+    truncation hid part of its launch), nor one whose env name, ``docker -e`` name or cmd.exe
+    argument is redacted: what it hid may be what changes the launch.
     """
     argv = _argv(server)
-    if argv is None or not _found_program(argv[0]) or server.get("launch_context"):
+    if (
+        argv is None
+        or not _found_program(argv[0])
+        or server.get("launch_context")
+        or server.get("launch_unidentified")
+    ):
         return None
     argv = _cmd_wrapped(argv)
     if (
@@ -329,9 +348,7 @@ def _cmd_wrapped(argv: list[str]) -> list[str] | None:
     Windows runs a batch file (``npx.cmd``) through cmd.exe as well, which reads the same
     operators and variable references in its arguments.
     """
-    if argv[0].strip().lower().endswith((".cmd", ".bat")) and any(
-        _CMD_METACHARACTERS.search(arg) for arg in argv[1:]
-    ):
+    if argv[0].strip().lower().endswith((".cmd", ".bat")) and any(_cmd_unsafe(arg) for arg in argv[1:]):
         return None
     if _basename(argv[0]) != "cmd":
         return argv
@@ -343,9 +360,14 @@ def _cmd_wrapped(argv: list[str]) -> list[str] | None:
     inner = argv[i + 1 :]
     if len(inner) == 1 and " " in inner[0].strip():
         inner = inner[0].split()
-    if not inner or any(_CMD_METACHARACTERS.search(arg) for arg in inner):
+    if not inner or any(_cmd_unsafe(arg) for arg in inner):
         return None
     return inner
+
+
+def _cmd_unsafe(arg: str) -> bool:
+    """Whether cmd.exe may read more than plain text in ``arg``; a redaction may hide an operator."""
+    return bool(_CMD_METACHARACTERS.search(arg)) or REDACTED in arg
 
 
 def _shell_command(argv: list[str]) -> bool:
@@ -353,8 +375,10 @@ def _shell_command(argv: list[str]) -> bool:
 
 
 def _env_changes_source(names: Any) -> bool:
+    """Whether an environment name can change what a launch fetches or runs; a redacted one may."""
     return isinstance(names, list) and any(
-        isinstance(name, str) and _SOURCE_ENV.fullmatch(name) and not _HARMLESS_ENV.fullmatch(name)
+        isinstance(name, str)
+        and (REDACTED in name or (_SOURCE_ENV.fullmatch(name) and not _HARMLESS_ENV.fullmatch(name)))
         for name in names
     )
 
@@ -363,14 +387,18 @@ def _found_program(command: str) -> bool:
     """Whether ``command`` is a bare program name, found on the PATH, or an absolute path.
 
     A relative path such as ``./npx`` or ``tools\\uvx.cmd`` resolves against the working
-    directory; a UNC path names a file on another host.
+    directory; a UNC path names a file on another host. A path under ``/proc`` or ``/dev``
+    (``/proc/self/cwd/npx``, ``/dev/fd/3``) is absolute only in spelling: the kernel resolves
+    it in the started process, against its working directory or open files.
     """
     name = command.strip()
     if "/" not in name and "\\" not in name:
         return bool(name)
     if name.startswith(("//", "\\\\")):
         return False
-    return name.startswith("/") or bool(_WINDOWS_ABSOLUTE.match(name))
+    if name.startswith("/"):
+        return posixpath.normpath(name).split("/")[1] not in _PROCESS_RELATIVE_ROOTS
+    return bool(_WINDOWS_ABSOLUTE.match(name))
 
 
 def _npm_split(spec: str) -> tuple[str, str]:
@@ -620,11 +648,19 @@ def _broad_root(arg: str) -> bool:
 
 
 def _plaintext_remote(url: str) -> bool:
-    """Whether ``url`` is plaintext HTTP or WebSocket to a host that is not known to be loopback."""
-    text = url.strip()
-    scheme, separator, rest = text.partition("://")
-    if separator and scheme.lower() in {"http", "ws"} and _hidden_host(rest):
-        return True
+    """Whether ``url`` is plaintext HTTP or WebSocket to a host that is not known to be loopback.
+
+    The URL is first read as WHATWG URL parsers (Node and browser clients) read it: tab, CR
+    and LF are removed and C0 controls and spaces stripped from its ends. Those parsers take
+    the host of an ``http:`` or ``ws:`` URL after any run of slashes and backslashes
+    (``http:/host``, ``http:\\\\host``, ``http:///host``), which :func:`urlsplit` does not, so any
+    form other than ``//`` and a plain authority counts as a host that cannot be told.
+    """
+    text = _whatwg_text(url)
+    scheme, colon, rest = text.partition(":")
+    if colon and scheme.lower() in {"http", "ws"} and rest.lstrip("/\\"):
+        if not rest.startswith("//") or rest[2:3] in {"/", "\\"} or _hidden_host(rest[2:]):
+            return True
     try:
         parts = urlsplit(text)
     except ValueError:
@@ -651,8 +687,13 @@ def _hidden_host(rest: str) -> bool:
     return "\\" in authority or "@" in authority
 
 
+def _whatwg_text(url: str) -> str:
+    """``url`` without tab, CR and LF and with C0 controls and spaces stripped from its ends."""
+    return re.sub(r"[\t\n\r]", "", url).strip("".join(map(chr, range(0x21))))
+
+
 def _host(url: str) -> str:
-    text = url.strip()
+    text = _whatwg_text(url)
     if _hidden_host(text.partition("://")[2]):
         return "remote server"
     try:

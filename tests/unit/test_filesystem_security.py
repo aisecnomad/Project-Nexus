@@ -1375,3 +1375,41 @@ def test_manifest_comments_still_expose_committed_credentials(tmp_path, run_conn
     secrets = [finding for finding in findings if finding.kind == Kind.SECRET]
     assert secrets and not ctx.stats.incomplete
     assert key not in json.dumps([finding.to_dict() for finding in findings])
+
+
+@pytest.mark.parametrize(
+    "rel",
+    [
+        "../elsewhere/.claude/settings.json",
+        "/etc/.claude/settings.json",
+        "C:/.claude/settings.json",
+        "..\\elsewhere\\.claude\\settings.json",
+    ],
+)
+def test_unread_settings_path_outside_the_root_drives_no_lookup_outside_it(tmp_path, index, monkeypatch, rel):
+    # Regression: the remote connectors hand the filesystem scan the settings paths an API snapshot
+    # did not write; a traversal or absolute path reached the project lookup as root / path and
+    # listed directories (and probed setup.py) outside the scan root. The snapshot writer refuses
+    # such a path first; this layer confines whatever reaches it and does not trust the listing.
+    repo = tmp_path / "repo"
+    (repo / ".claude").mkdir(parents=True)
+    (repo / ".claude" / "settings.json").write_text(json.dumps({"permissions": {"defaultMode": "default"}}))
+    looked_up: list[str] = []
+    real = filesystem_module._project_root
+
+    def recording(root, path, *args, **kwargs):
+        looked_up.append(path)
+        return real(root, path, *args, **kwargs)
+
+    monkeypatch.setattr(filesystem_module, "_project_root", recording)
+    ctx = ConnectorContext(config={"path": str(repo), "label": "repo", "use_git": False}, index=index)
+    connector = FilesystemConnector(ctx)
+    connector.unread_settings = [rel, ".claude/settings.local.json"]
+    findings = connector.run()
+    assert looked_up == [".claude/settings.local.json"]
+    assert ctx.stats.incomplete
+    assert any("unread settings path outside the scanned tree" in warning for warning in ctx.stats.warnings)
+    [claude] = [f for f in findings if f.kind == Kind.AGENT_CONFIG]
+    gate = claude.metadata["approval_gate"]
+    assert gate["scope"] == "some-actions"
+    assert rel not in json.dumps(claude.to_dict())

@@ -5,14 +5,15 @@ repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: 3e8a8703264a2f4a69428a0aa4dcb512790b2c8c # v6.0.0
     hooks:
-      # Fixtures reproduce foreign files byte for byte and the retained licence
-      # texts are digest-bound to their upstream copies; never rewrite them.
+      # Fixtures reproduce foreign files byte for byte, the retained licence
+      # texts are digest-bound to their upstream copies and archive/ holds
+      # retained review artifacts; never rewrite them.
       - id: trailing-whitespace
         # Two trailing spaces are a Markdown line break (.editorconfig keeps them).
         args: [--markdown-linebreak-ext=md]
-        exclude: ^(tests/fixtures/|tools/evaluation/independent_licenses/)
+        exclude: ^(archive/|tests/fixtures/|tools/evaluation/independent_licenses/)
       - id: end-of-file-fixer
-        exclude: ^(tests/fixtures/|tools/evaluation/independent_licenses/)
+        exclude: ^(archive/|tests/fixtures/|tools/evaluation/independent_licenses/)
       # mkdocs.yml uses Material's `!!python/name:` tags, which the safe loader
       # rejects; `mkdocs build --strict` in CI validates that file instead.
       - id: check-yaml

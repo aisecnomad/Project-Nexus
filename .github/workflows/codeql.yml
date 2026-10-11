@@ -4,7 +4,7 @@ on:
     branches: [main]
   pull_request:
   schedule:
-    - cron: "17 5 * * 1"
+    - cron: "17 5 * * 1"  # Monday 05:17 UTC
 permissions:
   contents: read
 # A newer push to the same pull request supersedes its analysis. Runs on main

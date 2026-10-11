@@ -191,6 +191,11 @@ def test_agent_registry_fixture(run_connector, fixtures):
         ({"type": "LOB", "requestStatus": None}, "registered"),
         ({"type": "external", "requestStatus": None}, "approved"),
         ({"type": "microsoft", "requestStatus": None}, "approved"),
+        # Only a known vendor type is approved without a request: any other may be the tenant's own.
+        ({"type": None, "requestStatus": None}, "unknown"),
+        ({"type": "", "requestStatus": None}, "unknown"),
+        ({"type": "unknownFutureValue", "requestStatus": None}, "unknown"),
+        ({"type": "lineOfBusiness", "requestStatus": None}, "unknown"),
         ({"type": "shared", "requestStatus": "approved"}, "approved"),
         # Without its details a package's request status is unknown, so it is never approved.
         ({"_detail": "unavailable", "requestStatus": None}, "unknown"),
@@ -602,7 +607,7 @@ _TENANT_APP = [
 ]
 
 
-@pytest.mark.parametrize("package_type", ["external", "microsoft", "unknownFutureValue"])
+@pytest.mark.parametrize("package_type", ["external", "microsoft"])
 def test_vendor_packages_never_approve_tenant_objects(index, tmp_path, package_type):
     # Vendor-declared ids name a tenant app registration and a service principal that is not an
     # agent identity. An approved vendor package has no known reviewer in this tenant, so it
@@ -662,6 +667,65 @@ def test_rejected_records_leave_binding_coverage_unknown(index, tmp_path):
     assert not result.complete
     package = _by_resource(result.findings)["entra:copilot-package:P_1"]
     assert [b["coverage"] for b in _record(package)["bindings"]] == ["unknown"]
+    assert package.metadata["registry_reconciliation"]["status"] == "not-comparable"
+
+
+@pytest.mark.parametrize("package_type", [None, "", "unknownFutureValue", "lineOfBusiness"])
+def test_unknown_package_types_without_a_request_never_approve(index, tmp_path, package_type):
+    # Graph returns unknownFutureValue for a type member added after its sentinel; such a package
+    # (or one with no type) may be the organization's own, so allow_auto_approved, which accepts
+    # vendor packages, must not sanction it or the agent identity it names.
+    identity = {
+        "_kind": "agentIdentity",
+        "id": "ai-1",
+        "displayName": "Helper",
+        "agentIdentityBlueprintId": "bp",
+    }
+    package = {
+        key: value
+        for key, value in _package(
+            "P_x", type=package_type, requestStatus=None, agentIdentityId="ai-1"
+        ).items()
+        if value is not None
+    }
+    source = tmp_path / "entra.json"
+    source.write_text(json.dumps([COMPLETE_MARKER, identity, package]), encoding="utf-8")
+    result = _scan(index, source, allow_auto_approved=True)
+    assert result.complete
+    by = _by_resource(result.findings)
+    record = registry_record(by["entra:copilot-package:P_x"])
+    assert record is not None and (record.status, record.approval_mode) == ("unknown", "unknown")
+    for resource in ("entra:copilot-package:P_x", "entra:sp:ai-1"):
+        assert by[resource].shadow is True and by[resource].registry_match is None, resource
+
+
+def _jsonl_with_dropped_app_line(tmp_path, app_line: str):
+    marker = json.dumps({**COMPLETE_MARKER, "tenantId": TENANT})
+    package = json.dumps(_package(appId="app-1"))
+    source = tmp_path / "entra.jsonl"
+    source.write_text("\n".join([marker, app_line, package]) + "\n", encoding="utf-8")
+    return source
+
+
+@pytest.mark.parametrize(
+    "app_line",
+    [
+        # Truncated JSON, a duplicate key and a provider error body: the offline loader drops each.
+        '{"_kind": "application", "id": "reg-1", "appId": "app-1"',
+        '{"_kind": "application", "id": "reg-1", "appId": "app-1", "appId": "app-1"}',
+        '{"_kind": "application", "id": "reg-1", "appId": "app-1", "error": {"code": "Throttled"}}',
+    ],
+)
+def test_records_dropped_by_the_loader_leave_binding_coverage_unknown(index, tmp_path, app_line):
+    # The loader drops the app registration the package names before analysis sees it; the package
+    # must not be reported registered-not-observed for an object that was in the export.
+    source = _jsonl_with_dropped_app_line(tmp_path, app_line)
+    result = _scan(index, source, trusted=False)
+    assert not result.complete
+    package = _by_resource(result.findings)["entra:copilot-package:P_1"]
+    record = _record(package)
+    assert [b["coverage"] for b in record["bindings"]] == ["unknown"]
+    assert record["listing_complete"] is False
     assert package.metadata["registry_reconciliation"]["status"] == "not-comparable"
 
 
@@ -747,6 +811,8 @@ def _live(index, graph, **config):
     ctx = _context(index, tenant_id=TENANT, **config)
     connector = EntraConnector(ctx)
     connector._auth = Mock()
+    # The mocked authentication stands for one that bound the token to tenant_id.
+    connector._bound_tenant = TENANT
     connector.http = graph
     return connector, ctx
 
@@ -831,6 +897,7 @@ def test_opted_in_collection_requests_exact_paths_and_strips_member_ids(index):
         "agentIdentities": "complete",
         "applications": "complete",
         "listingScope": "registry",
+        "tenantId": TENANT,
     }
     findings = list(connector.analyze(records))
     assert not ctx.stats.incomplete
@@ -1439,6 +1506,79 @@ def test_replay_of_another_tenants_export_never_approves(index, tmp_path):
     assert record is not None and record.registry_id == "" and not record.identified
     assert by["entra:copilot-package:P_1"].registry_match is None
     assert by["entra:app:app-tenant"].shadow is True and by["entra:app:app-tenant"].registry_match is None
+    # Its bindings are not attributed to tenant_id either, so they register none of its objects.
+    assert record.bindings == ()
+    reconciliation = by["entra:app:app-tenant"].metadata.get("registry_reconciliation") or {}
+    assert reconciliation.get("status") != "registered-and-observed"
+
+
+def test_foreign_export_bindings_never_register_the_configured_tenants_objects(index, tmp_path):
+    # Two jobs with tenant_id T: T's own export lists app-1; another tenant's export, replayed by
+    # mistake, holds a package naming app-1. That record must not register T's app registration.
+    own = tmp_path / "own.json"
+    own.write_text(json.dumps([{**COMPLETE_MARKER, "tenantId": TENANT}, *_TENANT_APP]), encoding="utf-8")
+    foreign = tmp_path / "foreign.json"
+    foreign.write_text(
+        json.dumps([{**COMPLETE_MARKER, "tenantId": "tenant-y"}, _package("P_Y", appId="app-tenant")]),
+        encoding="utf-8",
+    )
+    cfg = ScanConfig.from_dict(
+        {
+            "connectors": [
+                {"name": "identity.entra", "input": str(own), "tenant_id": TENANT},
+                {"name": "identity.entra", "input": str(foreign), "tenant_id": TENANT},
+            ]
+        }
+    )
+    result = Engine(cfg, index).run()
+    assert not result.complete
+    by = _by_resource(result.findings)
+    assert _record(by["entra:copilot-package:P_Y"])["bindings"] == []
+    reconciliation = by["entra:app:app-tenant"].metadata.get("registry_reconciliation") or {}
+    assert reconciliation.get("status") != "registered-and-observed"
+
+
+@responses.activate
+def test_marker_records_the_token_tenant_without_tenant_id(monkeypatch, index, tmp_path, run_connector):
+    # A pre-issued app-only token of another tenant, collected without tenant_id: the marker must
+    # name the token's tenant, so a replay with tenant_id does not attribute it as an older export.
+    monkeypatch.delenv("AZURE_TENANT_ID", raising=False)
+    monkeypatch.setenv("GRAPH_ACCESS_TOKEN", _token(scp=None, idtyp="app", tid="tenant-b"))
+    _mock_graph()
+    dump = tmp_path / "entra.jsonl"
+    ctx = _context(index, include_agent_registry=True, _dump_path=str(dump))
+    EntraConnector(ctx).run()
+    exported = [json.loads(line) for line in dump.read_text(encoding="utf-8").splitlines()]
+    assert [r.get("tenantId") for r in exported if r.get("_kind") == COVERAGE_KIND] == ["tenant-b"]
+    replay, replay_ctx = run_connector("identity.entra", input=str(dump), tenant_id=TENANT)
+    _assert_incomplete(replay_ctx, replay)
+    assert replay_ctx.stats.warnings == [FOREIGN_TENANT_WARNING]
+    assert {_record(f)["registry_id"] for f in replay if "registry_record" in f.metadata} == {""}
+
+
+UNBOUND_TENANT_WARNING = (
+    "identity.entra: the export was collected without a known tenant; its registry records are not "
+    "attributed to tenant_id and coverage is incomplete"
+)
+
+
+def test_replay_of_an_unbound_marker_is_not_attributed(tmp_path, run_connector):
+    # A marker with an explicit null tenantId comes from a run whose tenant was unknown.
+    marker = {**COMPLETE_MARKER, "tenantId": None}
+    findings, ctx = _offline(tmp_path, run_connector, [marker, _package()], tenant_id=TENANT)
+    _assert_incomplete(ctx, findings)
+    assert ctx.stats.warnings == [UNBOUND_TENANT_WARNING]
+    assert _record(findings[0])["registry_id"] == "" and _record(findings[0])["bindings"] == []
+
+
+@responses.activate
+def test_marker_of_an_undecodable_token_names_no_tenant(monkeypatch, index):
+    monkeypatch.delenv("AZURE_TENANT_ID", raising=False)
+    monkeypatch.setenv("GRAPH_ACCESS_TOKEN", "opaque-app-only-value")
+    _mock_graph()
+    marker = list(EntraConnector(_context(index, include_agent_registry=True)).collect())[-1]
+    assert marker["_kind"] == COVERAGE_KIND
+    assert "tenantId" in marker and marker["tenantId"] is None
 
 
 def test_replay_of_an_export_without_a_tenant_is_attributed_as_before(tmp_path, run_connector):

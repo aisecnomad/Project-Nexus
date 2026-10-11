@@ -50,6 +50,21 @@ def test_azure_live_deployments_keep_collected_account(index, monkeypatch):
     assert records[0]["_account"] == account["id"] and records[0]["_account_name"] == "a"
 
 
+def test_azure_listed_subscriptions_are_not_the_principal_after_an_error(index, monkeypatch):
+    connector = AzureConnector(context(index))
+    subscription = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+
+    def listing(path, api, *, allow_partial=False):
+        # A gap recorded as an error rather than a warning while the subscriptions were listed.
+        connector.ctx.error("cloud.azure: synthetic listing error")
+        return [{"subscriptionId": subscription}]
+
+    monkeypatch.setattr(connector, "_list", listing)
+    assert connector._listed_subscriptions() == [subscription]
+    assert connector.ctx.scope_record([])["principal"] is None
+    assert connector.ctx.stats.incomplete
+
+
 def test_azure_live_role_assignments_keep_collected_subscription_and_role(index, monkeypatch):
     connector = AzureConnector(context(index, subscriptions=["s1"]))
     connector.http = Mock()

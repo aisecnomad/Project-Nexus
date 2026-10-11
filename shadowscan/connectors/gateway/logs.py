@@ -993,8 +993,9 @@ def _temporal_evidence(f: Finding, c: _Caller, framework_user_agent: bool) -> No
         f.add_tag("always-on")
         shape = f"Activity across {active_hours}/24 hours, {night:.0%} at night, {weekend:.0%} on weekends"
         if corroborated:
-            # Autonomy: cadence, recorded as initiation evidence through the always-on tag. An
-            # unattended caller says nothing about whether its actions are approved.
+            # Autonomy: cadence, recorded as initiation evidence through the always-on tag together
+            # with activity.always_on_corroborated (the tag alone stays informational). An unattended
+            # caller says nothing about whether its actions are approved.
             f.add_capability("autonomous")
             f.add_evidence(
                 Evidence(

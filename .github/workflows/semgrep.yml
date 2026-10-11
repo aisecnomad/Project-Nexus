@@ -1,21 +1,23 @@
 name: Semgrep
 
 # Optional Semgrep scan with the project's configuration on semgrep.dev
-# (https://semgrep.dev/docs), through returntocorp/semgrep-action pinned by full
-# commit SHA. The job runs only when the repository variable SEMGREP_ENABLED is
-# "true" and the SEMGREP_APP_TOKEN (and, if used, SEMGREP_DEPLOYMENT_ID) secrets
-# exist; until then it is skipped rather than failing every run. Pull requests
-# from forks receive no secrets and a read-only token, so they are skipped too.
-# Results are uploaded to code scanning as SARIF. semgrep-action is deprecated
-# upstream in favour of running `semgrep ci` in the semgrep/semgrep image; move
-# to that before relying on this workflow.
+# (https://semgrep.dev/docs/semgrep-ci/sample-ci-configs#github-actions): the
+# job runs `semgrep ci` inside the official semgrep/semgrep image, pinned by
+# its registry index digest (tag 1.180.0, 2026-10-07). A GitHub Action pinned
+# by commit would still run a mutable image tag, so the image digest is the
+# pin that matters here. The job runs only when the repository variable
+# SEMGREP_ENABLED is "true" and the SEMGREP_APP_TOKEN secret exists; until
+# then it is skipped rather than failing every run. Pull requests from forks
+# and Dependabot receive no secrets and a read-only token, so they are skipped
+# too. Results are uploaded to code scanning as SARIF. Blocking findings fail
+# the scan step; the SARIF is uploaded either way.
 on:
   push:
     branches: [main]
   pull_request:
     branches: [main]
   schedule:
-    - cron: "24 8 * * 5"
+    - cron: "24 8 * * 5"  # Friday 08:24 UTC
 
 permissions:
   contents: read
@@ -25,6 +27,7 @@ jobs:
     name: Scan
     if: >-
       vars.SEMGREP_ENABLED == 'true' &&
+      github.actor != 'dependabot[bot]' &&
       (github.event_name != 'pull_request' ||
        github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-latest
@@ -33,15 +36,17 @@ jobs:
       contents: read
       security-events: write
       actions: read
+    container:
+      # semgrep/semgrep:1.180.0; refresh the digest and the tag together after review.
+      image: semgrep/semgrep@sha256:529ee8a277ec8adc5b534d7c74eea0a47e9de21d62852b6ba7ac6ba9566845c3
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: returntocorp/semgrep-action@fcd5ab7459e8d91cb1777481980d1b18b4fc6735
-        with:
-          publishToken: ${{ secrets.SEMGREP_APP_TOKEN }}
-          publishDeployment: ${{ secrets.SEMGREP_DEPLOYMENT_ID }}
-          generateSarif: "1"
+      - name: Semgrep scan
+        env:
+          SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
+        run: semgrep ci --sarif > semgrep.sarif
       # Upload findings even when the scan step reports them as a failure.
       - name: Upload SARIF file
         if: always()

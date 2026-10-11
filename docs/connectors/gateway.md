@@ -1,12 +1,13 @@
 # Gateway connectors
 
-The gateway connector reconstructs LLM API callers from proxy and gateway
-logs, identifying agentic patterns like high tool-use ratios, 24/7 activity,
-and specific framework user-agent strings.
+The gateway surface has two connectors. `gateway.logs` reconstructs LLM API
+callers from proxy and gateway logs, identifying agentic patterns like high
+tool-use ratios, 24/7 activity, and specific framework user-agent strings.
+`gateway.otel` aggregates offline OpenTelemetry GenAI span exports.
 
-!!! info "Log-based"
-    The gateway connector is inherently offline — it reads log files and
-    exports from LLM proxies. It does not call any live API.
+!!! info "Export-based"
+    Both gateway connectors are offline: they read log files and span exports
+    from LLM proxies and tracing pipelines. Neither calls a live API.
 
 See the [shared connector entry guide](../connectors.md#connector-entry-guide)
 for the common modes, permissions, options, fail-closed and evidence-limit
@@ -126,7 +127,24 @@ also marks the scan incomplete, so a forged record cannot offset real usage.
 Hour-of-day and weekday statistics (`night_share`, `weekend_share`,
 `always-on`) are computed in UTC and the connector has no timezone option. A
 single-timezone team sharing one unattributed key can look round-the-clock, so
-read `always-on` against the organization's local working hours.
+read `always-on` against the organization's local working hours. The tag alone
+is informational: the [autonomy classification](../concepts/autonomy.md) reads
+it as initiation evidence only when `metadata.activity.always_on_corroborated`
+is true, that is, when tool use, an agent-framework user agent or an unattended
+identity corroborates the cadence.
 
+## `gateway.otel`
+Aggregates OpenTelemetry GenAI span exports without retaining prompt content.
+The connector has no live mode. Its one connector-specific key is `input`, an
+offline OTLP span export (JSON, JSONL or YAML; a file or a directory) read
+under the offline limits `max_input_bytes`, `max_input_file_bytes` and
+`max_input_files`; `label` is also accepted. From spans that carry GenAI
+semantic-convention attributes it selects only the service, agent, provider,
+model and operation attributes; prompt and completion content is never copied
+into findings. The connector shares its export handling with the offline
+endpoint inventories and is described with them in the
+[endpoint guide](endpoint.md#offline-host-mcp-model-and-ebpf-inventories);
+its keys are listed in the
+[configuration reference](reference.md#gatewayotel).
 
 See the [main connector reference](../connectors.md) for shared options and offline safety limits.

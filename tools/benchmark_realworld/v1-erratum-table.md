@@ -1,3 +1,8 @@
+# v1 erratum table
+
+Output of `python -m tools.benchmark_realworld.erratum_v1 --results tools/benchmark_realworld/results`:
+the v1 results re-scored under the v2 error rule, which counts an error on a
+clean case as a false alarm rather than a true negative. See `PROTOCOL-v2.md`.
 
 ## v1 repo surface: v1 rule and v2 error rule
 | Tool | Scored | Errors on clean cases | Errors on positives | Specificity v1 | Specificity v2 | Recall v1 | Recall v2 | BA v1 | BA v2 |

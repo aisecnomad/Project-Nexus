@@ -2,7 +2,9 @@
 
 This benchmark runs shadow-AI discovery tools over public GitHub repositories
 at pinned commits. Labels come from a written protocol, not from any tool.
-The protocol is [`PROTOCOL.md`](PROTOCOL.md). Results are in [`results/`](results/).
+The v1 protocol is [`PROTOCOL.md`](PROTOCOL.md) and its results are in
+[`results/`](results/); the v2 protocol is [`PROTOCOL-v2.md`](PROTOCOL-v2.md)
+and its results are in [`results-v2/`](results-v2/).
 
 ## What it measures, and what it does not
 
@@ -32,7 +34,20 @@ The protocol is [`PROTOCOL.md`](PROTOCOL.md). Results are in [`results/`](result
 | `run.py` | Runs tools as a non-root account in user, network and PID namespaces |
 | `score.py` | Metrics, intervals, McNemar tests, kappa, stratum counts, and `REPORT.md` |
 | `install_tools.sh` | Installs every tool at its pinned version |
-| `results/` | Committed verdicts (JSONL), run manifest, `REPORT.md`, summary |
+| `results/` | Committed v1 verdicts (JSONL), run manifest, `REPORT.md`, summary |
+| `erratum_v1.py` | Re-scores the v1 results under the v2 error rule and prints both readings side by side, per tool and surface (read-only diagnostic) |
+| `v1-erratum-table.md` | Output of `erratum_v1.py`: the v1 rule and the v2 error rule for each v1 surface |
+| `PROTOCOL-v2.md` | Protocol v2: the v2 corpus, surfaces, statistics and harness, written after the v2 labelers returned and frozen before the run; the label rules stay v1.1 |
+| `v2/` | v2 labeling inputs: the candidate table and attach lists fixed before any repository was attached, the labeler brief and chunks, the three blinded labelers' sheets (`labels/`), agreement, disagreements, adjudication decisions and the exit-code probe (`exit-probe/`) |
+| `build_manifest_v2.py` | Builds `corpus_v2.json` from `corpus.json`, `v2/candidates-S1.tsv`, `v2/attach-*.list`, `v2/labels/` and `v2/adjudication.json`; fails closed on a missing labeler row, an undecided disagreement or evidence that cites no existing path |
+| `corpus_v2.json` | The v2 manifest: the v1 entries unchanged plus the v2 repository and endpoint entries |
+| `score_v2.py` | v2 scorer: balanced accuracy and MCC with stratified bootstrap intervals per surface, composite and estate views; an error counts as wrong on both classes; writes `REPORT-v2.md` and `summary-v2.json` |
+| `REPORT-v2.md` | Generated v2 report, with the run record added after the run |
+| `summary-v2.json` | Machine-readable v2 metrics written by `score_v2.py --json` |
+| `FREEZE-v2.txt` | SHA-256 of the protocol, manifest, inputs and code, recorded before the v2 run |
+| `FREEZE-v2-post-run.txt` | Post-run changes to the freeze: the `score_v2.py` error-category label fix, which changed no count, rate or interval |
+| `results-v2/` | Committed v2 verdicts (JSONL per tool), run manifest and the descriptive ShadowScan self-check |
+| `results-v2-rerun/` | The serial re-run of the v2 cases: plan, subset manifest, case lists and verdicts; 0 status changes across 90 cases |
 
 Raw tool output stays outside the repository, in the `--raw` directory, after
 redaction. It is never committed.

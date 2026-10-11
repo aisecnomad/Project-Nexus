@@ -14,6 +14,9 @@ body:
         - Low-code (automation / citizen-dev platforms)
         - SaaS (collaboration / productivity apps)
         - Cloud (hyperscaler / managed AI services)
+        - Endpoint (workstation inventories / MCP / local models / eBPF)
+        - Network (DNS / TLS / flow logs)
+        - Runtime (process exports)
         - New surface
     validations:
       required: true

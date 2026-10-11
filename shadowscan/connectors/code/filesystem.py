@@ -1740,6 +1740,25 @@ def _check_enumeration_time(walk: _WalkCounters) -> None:
         raise _WalkLimitError(f"connector deadline: listing stopped after {walk.examined} entries")
 
 
+def _below_root(rel: str) -> bool:
+    """Whether ``rel`` names a file below the scan root: a relative posix path with no ``..`` or drive.
+
+    A remote tree path reaches ``_project_root`` and the manifest probes under it as
+    ``root / rel``; an absolute path, a ``..`` component, a backslash (a separator on
+    Windows) or a drive-like first component could list or read outside the tree.
+    """
+    path = PurePosixPath(rel)
+    parts = path.parts
+    return (
+        bool(parts)
+        and not path.is_absolute()
+        and ".." not in parts
+        and "\\" not in rel
+        and "\x00" not in rel
+        and ":" not in parts[0]
+    )
+
+
 def _validated_include(value: Any) -> frozenset[str]:
     """``include``: relative posix paths below a root, normalized; nothing may escape or be absolute."""
     out: set[str] = set()
@@ -2054,6 +2073,10 @@ class FilesystemConnector(BaseConnector):
         # Settings files of the scanned tree that a remote API snapshot did not include (set by
         # the code.github / code.gitlab connectors that delegate to this one).
         self.unread_settings: list[str] = []
+        # Whether the remote API listing of the tree was cut short or held entries it could not
+        # name: settings files may exist that nothing lists, so no approval gate of this tree can
+        # claim every action (``record_approval(complete=False)``).
+        self.tree_listing_incomplete = False
         self._checked_submodules: set[tuple[Path, str]] = set()
         self._gitlink_roots: set[Path] = set()
         # Oversize files under test paths skipped with a warning (include_tests false).
@@ -2260,7 +2283,8 @@ class FilesystemConnector(BaseConnector):
         for credentials, so an unread copy may hide a real key and stays a gap
         (fail closed). ``strict_coverage`` keeps the test-path case a gap too.
         A file the scanner never reads at any size is yielded and ignored, as
-        before.
+        before. A coding-agent settings file skipped here is still recorded as
+        unread for its project's approval gate (``_iter_entries``).
         """
         if self._oversize_skippable(rel, name):
             self._skip_oversize(rel, size)
@@ -2536,6 +2560,11 @@ class FilesystemConnector(BaseConnector):
                         self._unread_settings.append((proj, rel))
                     continue
                 if info.st_size > self._size_limit(fn) and self._skipped_oversize(rel, fn, info.st_size):
+                    if posture_client(rel) is not None:
+                        # Skipped without a coverage gap (a fixture, or a name in
+                        # oversize_skip_globs), but an unread settings file could still
+                        # loosen the approval gate its readable siblings set.
+                        self._unread_settings.append((proj, rel))
                     continue
                 if _never_read_by_name(fn):
                     continue
@@ -2933,9 +2962,19 @@ class FilesystemConnector(BaseConnector):
             ):
                 self._scan_file(scan, rel, path, proj_root)
         # A settings file the walk skipped can only loosen the gate of a project it read.
-        self._unread_settings.extend(
-            (_project_root(scan.root, rel), rel) for rel in self.unread_settings if scan.root.is_dir()
-        )
+        for rel in self.unread_settings:
+            if not _below_root(rel):
+                # The snapshot writer refuses such a path before this point; a path that is not
+                # confined to the tree must drive no listing or manifest probe outside it, and a
+                # listing that names one is not trusted to be complete.
+                self.ctx.warn(
+                    f"code.filesystem: {scan.label}: unread settings path outside the scanned tree "
+                    "ignored; coverage incomplete",
+                    incomplete=True,
+                )
+                self.tree_listing_incomplete = True
+            elif scan.root.is_dir():
+                self._unread_settings.append((_project_root(scan.root, rel), rel))
         for proj_root, rel in self._unread_settings:
             if (proj := scan.projects.get(proj_root)) is not None:
                 _note_unread_settings(proj, rel)
@@ -5131,7 +5170,9 @@ class FilesystemConnector(BaseConnector):
         posture = proj.posture.get(sig_id, [])
         if posture:
             record_posture(f, posture)
-        record_approval(f, proj.approvals.get(sig_id, []))
+        # A tree whose listing was cut short may hold a settings file nothing names: no gate of
+        # it can claim every action.
+        record_approval(f, proj.approvals.get(sig_id, []), complete=not self.tree_listing_incomplete)
         defs = [d for d in proj.agent_defs if any(d["file"] == x for x in files)]
         if defs:
             f.metadata["agent_definitions"] = defs

@@ -60,6 +60,7 @@ OBSERVED_LISTINGS = {
     "reasoning-engine": (VERTEX_CATALOG, "reasoningEngines"),
     "dialogflow-agent": (DIALOGFLOW_CATALOG, "agents"),
 }
+_OBSERVED_COLLECTIONS = frozenset(collection for _, collection in OBSERVED_LISTINGS.values())
 _COVERAGE_COLLECTIONS = {
     AR_REGISTRY: frozenset({"locations", *AR_COLLECTIONS, *AR_ALPHA_COLLECTIONS}),
     GE_REGISTRY: frozenset({"engines", "assistants", "agents"}),
@@ -123,6 +124,11 @@ COLLECTION_ID = re.compile(r"[a-z0-9][a-z0-9_-]*")
 _RESOURCE = re.compile(
     r"projects/(?P<project>[A-Za-z0-9._:-]+)/locations/(?P<location>[a-z][a-z0-9-]*)"
     r"/(?P<collection>[A-Za-z]+)/(?P<id>[^/\s?#]+)"
+)
+# A plain resource name with sub-resources (``publishers/google/models/x``, ``agents/a/flows/f``).
+_NESTED_RESOURCE = re.compile(
+    r"projects/[A-Za-z0-9._:-]+/locations/[a-z][a-z0-9-]*"
+    r"/(?P<collection>[A-Za-z]+)/(?P<ids>[^/\s?#]+(?:/[A-Za-z]+/[^/\s?#]+)+)"
 )
 _REGISTRY_NAME = re.compile(
     r"(?://agentregistry\.googleapis\.com/)?projects/([A-Za-z0-9._:-]+)/locations/([a-z][a-z0-9-]*)"
@@ -506,13 +512,23 @@ def unrecognized_reference(uri: Any) -> bool:
 
     Such a reference (an ``https:`` URL, a version segment, a trailing slash) may register a
     reasoning engine or Dialogflow agent that would otherwise look unregistered. A plain resource
-    name of a collection this scan does not observe (a Vertex AI endpoint) is read: it names no
-    engine.
+    name of a collection this scan does not observe (a Vertex AI endpoint, or a nested name such as
+    a publisher model) is read: it names no engine. A nested name under an observed collection (a
+    Dialogflow agent's flow, a reasoning engine's session) is not: it may stand for that engine.
     """
     if not isinstance(uri, str) or not _RUNTIME_HOST.match(uri):
         return False
     match = _RUNTIME_REFERENCE.fullmatch(uri)
-    return match is None or _resource(match["resource"]) is None
+    if match is None:
+        return True
+    if _resource(match["resource"]) is not None:
+        return False
+    nested = _NESTED_RESOURCE.fullmatch(match["resource"])
+    return (
+        nested is None
+        or nested["collection"] in _OBSERVED_COLLECTIONS
+        or not all(_safe_segment(segment) for segment in match["resource"].split("/"))
+    )
 
 
 class ProjectNumbers:
@@ -785,9 +801,10 @@ class RegistryCatalogs:
     number of a project other than the one it was listed in (counted in :attr:`foreign` and
     dropped): it would claim that other project's registry identity.
 
-    :attr:`failed_listings` counts coverage records of listings that did not complete, and
-    :attr:`unrecognized` the Agent Registry records whose runtime reference names Vertex AI or
-    Dialogflow in a form this scan cannot read.
+    :attr:`failed_listings` counts coverage records of listings that did not complete,
+    :attr:`failed_lookups` the project-number records of lookups that did, and :attr:`unrecognized`
+    the Agent Registry records whose runtime reference names Vertex AI or Dialogflow in a form
+    this scan cannot read.
     """
 
     def __init__(self) -> None:
@@ -796,8 +813,9 @@ class RegistryCatalogs:
         self._observed: list[tuple[Reference, _Observed]] = []
         self._identities: dict[str, list[str]] = {}
         self._observed_urls: dict[str, list[str]] = {}
-        # Publisher name -> (display name, tier), and each publisher with the project it was listed in.
-        self._publishers: dict[str, tuple[str, str | None]] = {}
+        # (project listed in, publisher name) -> (display name, tier): a skill names only a
+        # publisher of its own project. Each listed publisher keeps its name's project segment.
+        self._publishers: dict[tuple[str, str], tuple[str, str | None]] = {}
         self._listed_publishers: list[tuple[str, str, str, tuple[str, str | None]]] = []
         self._deferred: list[tuple[Finding, RecordEntry]] = []
         # Projects with an Agent Registry record whose runtime references this scan cannot resolve
@@ -806,6 +824,7 @@ class RegistryCatalogs:
         self.tainted = False
         self.foreign = 0
         self.failed_listings = 0
+        self.failed_lookups = 0
         self.unrecognized = 0
 
     # ------------------------------------------------------------ intake
@@ -822,9 +841,14 @@ class RegistryCatalogs:
             self.failed_listings += rec["complete"] is False
         elif kind == PROJECT_NUMBER_KIND:
             project, number = rec.get("_project"), rec.get("project_number")
-            if not valid_project(project) or not isinstance(number, str) or not is_number(number):
+            if not valid_project(project) or not (
+                number is None or (isinstance(number, str) and is_number(number))
+            ):
                 raise ValueError("project number")
-            if not self.numbers.add(str(project), number):
+            if number is None:
+                # The lookup failed when collected (and was warned then); the export records that.
+                self.failed_lookups += 1
+            elif not self.numbers.add(str(project), number):
                 raise ValueError("conflicting project number")
         else:
             # Publishers only name the publisher of a skill; they are not records themselves, but
@@ -912,7 +936,7 @@ class RegistryCatalogs:
         if self.foreign:
             self.taint()
         self._deferred = kept
-        self._publishers = {name: publisher for name, _, _, publisher in publishers}
+        self._publishers = {(project, name): publisher for name, project, _, publisher in publishers}
         canonical: dict[tuple[str, str, str, str], _Observed] = {}
         literal: dict[str, _Observed] = {}
         for reference, item in self._observed:
@@ -1012,7 +1036,9 @@ class RegistryCatalogs:
         if entry.updated_at:
             record["updated_at"] = entry.updated_at
         if entry.publisher:
-            display, tier = self._publishers.get(entry.publisher, (entry.publisher.rsplit("/", 1)[-1], None))
+            # Only a publisher listed in the skill's own project names it, as with bindings.
+            fallback = (entry.publisher.rsplit("/", 1)[-1], None)
+            display, tier = self._publishers.get((entry.project, entry.publisher), fallback)
             record["publisher"] = display
             finding.metadata["publisher_tier"] = tier
         if entry.registry == AR_REGISTRY:

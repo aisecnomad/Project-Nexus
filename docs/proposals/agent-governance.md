@@ -1,8 +1,9 @@
 # Agent governance proposals
 
-Status: proposal, drafted 2026-10-10. This page expands six roadmap ideas into
-scoped items. It is intent, not a contract, and nothing here is implemented
-unless an item says so. [ROADMAP.md](https://github.com/aisecnomad/Project-Nexus/blob/main/ROADMAP.md)
+Status: proposal, drafted 2026-10-10; all six items are now implemented,
+unreleased (each section's status line gives the details and what remains
+open). This page expands six roadmap ideas into scoped items. It is intent,
+not a contract, and nothing here is implemented unless an item says so. [ROADMAP.md](https://github.com/aisecnomad/Project-Nexus/blob/main/ROADMAP.md)
 carries the one-line summary of each item.
 
 The six items are:
@@ -12,7 +13,7 @@ The six items are:
    and A2A Agent Cards.
 2. [Scheduled drift detection](#2-scheduled-drift-detection-drift) for a
    weekly enterprise CI run.
-3. [Autonomy tiers](#3-autonomy-tiers-tier) L1 to L5.
+3. [Autonomy tiers](#3-autonomy-tiers-tier) L0 to L5.
 4. An [enterprise inventory dashboard](#4-enterprise-inventory-dashboard-dash).
 5. [Threat mapping](#5-threat-mapping-threat): OWASP, MITRE ATLAS and MAESTRO.
 6. [Control mapping](#6-control-mapping-ctrl): ISO/IEC 42001, NIST AI RMF, the
@@ -77,6 +78,10 @@ outside every registry, and registry entries whose agents no longer exist or
 changed.
 
 ### What exists
+
+*State when drafted, since superseded: the opt-in `agent_registry` (REG-3,
+status below) and the pinned MCP Registry snapshots behind
+`options.mcp_registries` (`shadowscan/mcp_registry.py`) have since landed.*
 
 - `cloud.aws` lists Bedrock Agents and AgentCore runtimes, gateways, memories,
   browsers, code interpreters and workload identities (`_AGENTCORE_LISTS` in
@@ -299,6 +304,9 @@ when it cannot see, rather than report "no change".
 
 ### What exists
 
+*State when drafted, since superseded; the status lines in this section record
+what has been implemented, including attested live scope.*
+
 - `shadowscan diff baseline.json current.json --fail-on-new` exits 2 on new
   findings or a higher risk level, and 3 when the comparison is incomplete
   (`shadowscan/comparison.py`). Findings missing from an incomplete comparison
@@ -406,6 +414,9 @@ and a Kubernetes CronJob variant:
 
 ## 3. Autonomy tiers (TIER)
 
+Status: TIER-1 implemented, unreleased; see [autonomy tiers](../concepts/autonomy.md).
+The rest of this section records the proposal as drafted.
+
 ### Problem
 
 "Agent" covers everything from an FAQ bot to a scheduled coding agent that
@@ -413,6 +424,10 @@ merges its own changes. Risk owners need one label that says how much an AI
 system can do without a person, and how sure the scanner is about that label.
 
 ### What exists
+
+*State when drafted, since superseded.* `autonomy_profile.level` is now defined
+as the L0 to L5 scale behind card `schema_version: 2`, and `card_stub_for`
+writes the finding's observed autonomy floor.
 
 - Capabilities `autonomous`, `tool-use`, `code-exec`, `multi-agent` and others,
   set by many connectors. Posture tags such as
@@ -497,6 +512,11 @@ Rules:
 
 ## 4. Enterprise inventory dashboard (DASH)
 
+Status: DASH-0 to DASH-3 are implemented, unreleased, as `shadowscan
+dashboard` and its `shadowscan.inventory/v1` export; see
+[Fleet dashboard](../operations/dashboard.md). The tests use synthetic
+reports, not a live fleet.
+
 ### Constraint
 
 The roadmap does not plan a hosted scanning service. The dashboard is
@@ -557,9 +577,14 @@ section records the proposal as drafted.
 
 ### What exists
 
-`shadowscan/compliance.py` maps nine tags to OWASP LLM, `OWASP-ASI` and MITRE
-ATLAS identifiers. The HTML report shows them under "Compliance", SARIF
-results carry them as tags, and JSON findings carry them as
+*State when drafted, since superseded.* `shadowscan/compliance.py` and
+`metadata.compliance` were removed; `shadowscan/mappings` now writes
+`metadata.threats` and `metadata.controls` (`compliance` is dropped from any
+imported report).
+
+`shadowscan/compliance.py` mapped nine tags to OWASP LLM, `OWASP-ASI` and MITRE
+ATLAS identifiers. The HTML report showed them under "Compliance", SARIF
+results carried them as tags, and JSON findings carried them as
 `metadata.compliance`.
 
 ### Problems found while drafting
@@ -618,8 +643,11 @@ results carry them as tags, and JSON findings carry them as
 Status: CTRL-1 catalogs are implemented, unreleased, as `metadata.controls`,
 and the HTML and Markdown reports list each finding's control references; see
 [Threat and control mappings](../concepts/mappings.md). The control evidence
-report (CTRL-0 and the rest of CTRL-2) and declared facts (CTRL-3) remain
-proposals.
+report (CTRL-0 and CTRL-2) is implemented, unreleased, as
+[`shadowscan controls`](../operations/controls.md) with Markdown, CSV and JSON
+output; the HTML report has no controls section yet. Declared facts (CTRL-3)
+are implemented, unreleased, as the Capability Card
+[`governance:` block](../inventory.md#declared-governance-facts).
 
 ### Frameworks
 

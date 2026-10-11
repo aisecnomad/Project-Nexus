@@ -348,8 +348,16 @@ class GitHubConnector(RemoteRepositoryConnector):
                 f"code.github: API mode samples repository {full}; source coverage partial",
                 incomplete=True,
             )
+        # A truncated listing, or one with entries that name no path, may have lost a settings
+        # file: no approval gate of this repository can then claim every action.
         dest, fetched = self._write_api_snapshot(
-            repo, blobs, selected, tmp, f" in {full}", tree_paths=[t["path"] for t in entries]
+            repo,
+            blobs,
+            selected,
+            tmp,
+            f" in {full}",
+            tree_paths=[t["path"] for t in entries],
+            tree_complete=not tree.get("truncated") and len(entries) == len(tree["tree"]),
         )
         self.log.info("code.github: %s fetched %d/%d files via API", full, fetched, len(paths))
         return dest

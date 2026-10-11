@@ -10,13 +10,16 @@ name: CI Black Duck security scan
 # action gets no GitHub token, so it neither comments on pull requests nor
 # uploads SARIF; either would need a write scope that
 # tests/test_repository_policy.py must allow for this job explicitly.
+# Only the wrapper action is pinned: at run time it downloads the current
+# Bridge CLI. Pin that too with `bridgecli_download_version` once a reviewed
+# version is chosen.
 on:
   push:
     branches: [main]
   pull_request:
     branches: [main]
   schedule:
-    - cron: "25 6 * * 3"
+    - cron: "25 6 * * 3"  # Wednesday 06:25 UTC
 
 permissions:
   contents: read
@@ -37,7 +40,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Black Duck security scan
-        uses: blackduck-inc/black-duck-security-scan@805cbd09e806b01907bbea0f990723c2bb85abe9
+        uses: blackduck-inc/black-duck-security-scan@152247222aa9cd38124acd5c0cf60f4db71adc3f # v2.11.0
         with:
           blackducksca_url: ${{ vars.BLACKDUCKSCA_URL }}
           blackducksca_token: ${{ secrets.BLACKDUCKSCA_TOKEN }}

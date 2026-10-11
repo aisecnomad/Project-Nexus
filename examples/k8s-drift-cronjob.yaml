@@ -28,7 +28,10 @@ spec:
         metadata:
           labels:
             app.kubernetes.io/name: shadowscan
-            shadowscan-mode: drift
+            # The drift scan collects live, so it carries the label that the
+            # live egress policy in k8s-network-policy.yaml selects; without it
+            # the default-deny policy leaves the pod with no egress at all.
+            shadowscan-mode: live
         spec:
           restartPolicy: Never
           # Bind this account to read-only cloud roles through the platform's

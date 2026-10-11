@@ -16,6 +16,24 @@ disabled. On 2026-10-06 both read back active again with the same gaps as on
 GitHub connector has no administration-write operation; an administrator must
 restore the reviewed settings and verify exact readback.
 
+On 2026-10-10 (administrator readback; both rulesets last updated at 15:53
+UTC), both read back active. The review/CI ruleset now requires `CI gate`
+alongside `test (3.11)`, `test (3.12)` and `analyze`, binds each check to the
+GitHub Actions application (15368) under the strict up-to-date policy, and
+requires last-push approval and review-thread resolution. `Protect main` now
+requires one approving review with the same stale-dismissal, last-push and
+thread-resolution settings. Both rulesets list four `always` bypass actors:
+the repository administrator role (`RepositoryRole` 5) and integrations
+1144995, 1236702 and 2875373, which were not resolved to application names.
+`python -m tools.governance_check` fails on that readback with
+`bypass_actors_not_empty` (and, for `Protect main`, `status_checks_required`,
+because that ruleset carries no status-check rule). The `verify` command
+reports `readback differs from reviewed payload: bypass_actors` for both
+against the committed payloads. The merge gate is therefore not yet enforced
+against a repository administrator. Removal of the bypass actors and a
+readback showing `bypass_actors: []` remain outstanding; the committed
+`observed/` snapshots record this readback.
+
 The policy retains the existing CodeQL, signature and status requirements and
 adds the aggregate `CI gate`. Required checks are bound to the GitHub Actions
 application observed on this repository's check runs (application ID 15368).

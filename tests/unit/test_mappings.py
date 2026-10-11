@@ -129,6 +129,8 @@ EXPECTED_REFS: dict[str, list[str]] = {
     "mcp-unvetted-component": [f"{NIST}GOVERN-6.1", f"{ISO}A.10.3"],
     "user-facing-ai": [f"{EU}Art.50"],
     "agentic-monitoring": [f"{NIST}MANAGE-4.1", f"{ISO}A.6.2.6"],
+    "declared-high-risk": [f"{EU}Art.12", f"{EU}Art.14", f"{EU}Art.26"],
+    "declared-transparency": [f"{EU}Art.50"],
 }
 
 
@@ -138,6 +140,11 @@ def _autonomy(floor: int, oversight: str = "unknown") -> dict[str, Any]:
 
 def _registry(status: str) -> dict[str, Any]:
     return {"registry_reconciliation": {"status": status}}
+
+
+def _declared(risk_class: str) -> dict[str, Any]:
+    # What the engine records for a finding matched to a card that declares the class.
+    return {"metadata": {"declared_governance": {"eu_ai_act_risk_class": risk_class, "source": "card"}}}
 
 
 # A minimal finding each rule should match.
@@ -194,6 +201,8 @@ RULE_CASES: dict[str, dict[str, Any]] = {
     "mcp-unvetted-component": {"kind": Kind.MCP_SERVER, "tags": ["mcp-registry-deleted"]},
     "user-facing-ai": {"kind": Kind.AI_APP},
     "agentic-monitoring": {"metadata": _autonomy(3)},
+    "declared-high-risk": {"shadow": False, **_declared("high")},
+    "declared-transparency": {"kind": Kind.AGENT, "shadow": False, **_declared("gpai")},
 }
 
 
@@ -418,10 +427,18 @@ def test_credentials_in_agent_configuration_need_both_kind_and_tag(make_finding)
         {"registry_reconciliation": {"status": 3}},
         {"registry_reconciliation": {"status": ["observed-not-registered"]}},
         {"registry_reconciliation": {"status": "Observed-Not-Registered"}},
+        {"declared_governance": None},
+        {"declared_governance": "high"},
+        {"declared_governance": {"eu_ai_act_risk_class": "high"}},
+        {"declared_governance": {"eu_ai_act_risk_class": "High", "source": "card"}},
+        {"declared_governance": {"eu_ai_act_risk_class": ["high"], "source": "card"}},
+        {"declared_governance": {"eu_ai_act_risk_class": "high", "source": " "}},
+        {"declared_governance": {"eu_ai_act_risk_class": "high", "source": "card", "score": 1}},
+        {"declared_governance": {"eu_ai_act_risk_class": "high", "source": "card", "iso42001_scope": "yes"}},
     ],
 )
 def test_malformed_autonomy_and_registry_metadata_never_match(make_finding, metadata):
-    finding = make_finding(kind=Kind.NETWORK_CONTACT, owner="team", metadata=metadata)
+    finding = make_finding(kind=Kind.NETWORK_CONTACT, owner="team", shadow=False, metadata=metadata)
     assert finding_references(finding) == ([], [])
     exported = finding.to_dict()["metadata"]
     assert "threats" not in exported and "controls" not in exported
@@ -746,6 +763,17 @@ def test_copied_packaged_data_loads(tmp_path):
             lambda d: _rule(d, "registry-gap")["when"].update(registry_status_any=["unregistered"]),
             "has unknown registry statuses: unregistered",
         ),
+        (
+            "rules/controls.yaml",
+            lambda d: _rule(d, "declared-high-risk")["when"].update(declared_risk_class_any=["High"]),
+            "has unknown declared risk classes: High",
+        ),
+        (
+            "frameworks/eu-ai-act.yaml",
+            lambda d: d.update(review="independent"),
+            "frameworks/eu-ai-act.yaml: review must be one of author",
+        ),
+        ("frameworks/eu-ai-act.yaml", lambda d: d.pop("review"), "missing keys: review"),
         (
             "rules/threats.yaml",
             lambda d: _rule(d, "tool-poisoning").update(when={}),

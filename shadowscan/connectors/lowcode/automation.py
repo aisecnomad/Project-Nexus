@@ -18,7 +18,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Collection, Iterable, Iterator
 from typing import Any, ClassVar
 from urllib.parse import quote
 
@@ -41,10 +41,47 @@ from shadowscan.utils.http import HttpClient, HttpError
 from shadowscan.utils.safe_json import strict_json_loads
 from shadowscan.utils.text import get_path, truncate
 
+# Autonomy: what starts a run, read from a definition's triggers. A schedule or an event is
+# initiation evidence (the ``scheduled`` and ``event-triggered`` tags with the ``autonomous``
+# capability), not approval-bypass evidence: the connector does not inspect approval steps in
+# the flow. A trigger a person operates records neither: autonomy has no tag for a person-started
+# run, and an unrecorded initiation never counts as low.
+SCHEDULE = "schedule"
+EVENT = "event"
+HUMAN = "human"
+
+# Trigger names of the platform's own clock, and of a webhook, a poller or an event.
+_SCHEDULE_NAMES = re.compile(r"cron|schedule|interval|timer|recurr", re.I)
+_EVENT_NAMES = re.compile(r"webhook|trigger|event|poll", re.I)
+# n8n trigger nodes a person operates: the workflow's "Execute workflow" button, chat window, form
+# and evaluation runner. Every other trigger node reacts to something outside the workflow: a
+# webhook, a polled service, another workflow or an MCP client.
+_N8N_HUMAN_TRIGGERS = re.compile(r"\.(manualTrigger|chatTrigger|formTrigger|evaluationTrigger)$", re.I)
+_N8N_SCHEDULE_TRIGGERS = re.compile(r"\.(scheduleTrigger|cron|interval)$", re.I)
+# Make ``scheduling.type``: an on-demand scenario waits for the Run once button or an API call,
+# an instant trigger runs immediately on its webhook, and every other type is a schedule.
+_MAKE_SCHEDULE_TYPES = frozenset({"indefinitely", "interval", "once", "daily", "weekly", "monthly", "yearly"})
+_MAKE_WEBHOOK_MODULES = re.compile(r"hook", re.I)
+# Workato trigger providers: Scheduler by Workato (``clock``) and the Workbot commands a person
+# issues in Slack or Teams. Every other trigger line reacts to its app, a webhook, an API call or
+# another recipe.
+_WORKATO_SCHEDULE_PROVIDERS = re.compile(r"^(?:clock|scheduler)\b|schedul", re.I)
+_WORKATO_HUMAN_PROVIDERS = re.compile(r"workbot", re.I)
+# Zapier apps a person operates: the Chrome extension's push, an Interfaces form and a chatbot.
+_ZAPIER_HUMAN_APPS = re.compile(r"zapier (?:chrome extension|interfaces|chatbots)|\bmanual\b", re.I)
+
 
 class _AutomationBase(BaseConnector):
     surface: ClassVar[Surface] = Surface.LOWCODE
     platform_signature: ClassVar[str] = ""
+
+    def _trigger_initiation(self, trigger: str) -> str | None:
+        """``schedule``, ``event`` or ``human`` for one trigger, or None when it names no initiation."""
+        if _SCHEDULE_NAMES.search(trigger):
+            return SCHEDULE
+        if _EVENT_NAMES.search(trigger):
+            return EVENT
+        return None
 
     def _guarded_finding(
         self,
@@ -82,8 +119,13 @@ class _AutomationBase(BaseConnector):
         extra: dict[str, Any] | None = None,
         url: str | None = None,
         hints: list[Match] | None = None,
+        initiations: Collection[str] | None = None,
     ) -> Finding | None:
-        """One finding per AI-enabled definition; ``hints`` (model or step names) count at half weight."""
+        """One finding per AI-enabled definition; ``hints`` (model or step names) count at half weight.
+
+        ``initiations`` are what starts the definition (:data:`SCHEDULE`, :data:`EVENT`,
+        :data:`HUMAN`); by default each trigger is classified by :meth:`_trigger_initiation`.
+        """
         matches = blob_matches(self.index, blob)
         if not matches and not ai_steps:
             return None
@@ -116,12 +158,15 @@ class _AutomationBase(BaseConnector):
                 )
             )
             f.add_capability("tool-use")
-        # Autonomy: both triggers are initiation evidence (the scheduled and event-triggered tags),
-        # not approval-bypass evidence: the connector does not inspect approval steps in the flow.
-        if any(re.search(r"(?i)cron|schedule|interval|timer|recurr", t) for t in triggers):
+        # Autonomy: a schedule or an event is initiation evidence (the scheduled and event-triggered
+        # tags), not approval-bypass evidence; a trigger a person operates records neither.
+        if initiations is None:
+            found = {self._trigger_initiation(t) for t in triggers}
+            initiations = {initiation for initiation in found if initiation is not None}
+        if SCHEDULE in initiations:
             f.add_capability("autonomous")
             f.add_tag("scheduled")
-        if any(re.search(r"(?i)webhook|trigger|event|poll", t) for t in triggers):
+        if EVENT in initiations:
             f.add_capability("autonomous")
             f.add_tag("event-triggered")
         if active is False:
@@ -189,6 +234,13 @@ class N8nConnector(_AutomationBase):
             arrays=("nodes", "tags"),
         ) and isinstance(w.get("nodes"), list)
 
+    def _trigger_initiation(self, trigger: str) -> str | None:
+        if _N8N_HUMAN_TRIGGERS.search(trigger):
+            return HUMAN
+        if _N8N_SCHEDULE_TRIGGERS.search(trigger):
+            return SCHEDULE
+        return EVENT
+
     def _n8n_finding(self, w: dict[str, Any]) -> Finding | None:
         # Exported blueprints can contain useful AI evidence without a provider
         # object ID. A display name (or the string "None") is not that identity.
@@ -222,7 +274,7 @@ class N8nConnector(_AutomationBase):
                 re.I,
             )
         ]
-        triggers = [t for t in types if re.search(r"trigger|cron|schedule|webhook", t, re.I)]
+        triggers = [t for t in types if re.search(r"trigger|cron|schedule|interval|webhook", t, re.I)]
         models = [
             str(
                 get_path(
@@ -440,6 +492,26 @@ class MakeConnector(_AutomationBase):
             hints=model_matches(self.index, model),
         )
 
+    @staticmethod
+    def _scenario_initiations(scheduling: Any, triggers: list[str]) -> set[str]:
+        """What starts a scenario: its ``scheduling.type`` when the export has it, and its webhooks.
+
+        A module name alone says little: the first module of an on-demand scenario runs only when a
+        person presses Run once, and a polling (``watch``) module runs on the scenario's schedule.
+        """
+        kind = scheduling.get("type") if isinstance(scheduling, dict) else None
+        kind = kind.strip().lower() if isinstance(kind, str) else ""
+        if kind == "on-demand":
+            return {HUMAN}
+        found: set[str] = set()
+        if kind == "immediately":
+            found.add(EVENT)
+        elif kind in _MAKE_SCHEDULE_TYPES:
+            found.add(SCHEDULE)
+        if any(_MAKE_WEBHOOK_MODULES.search(t) for t in triggers):
+            found.add(EVENT)
+        return found
+
     def _scenario_finding(self, rec: dict[str, Any]) -> Finding | None:
         bp = rec.get("blueprint") or rec
         flow = bp.get("flow") if isinstance(bp, dict) else None
@@ -456,6 +528,7 @@ class MakeConnector(_AutomationBase):
         ]
         triggers = modules[:1] + [m for m in modules if re.search(r"webhook|watch|schedule|trigger", m, re.I)]
         return self._workflow_finding(
+            initiations=self._scenario_initiations(rec.get("scheduling"), triggers),
             wid=str(rec.get("id") or rec.get("name")),
             name=str(rec.get("name") or bp.get("name") if isinstance(bp, dict) else rec.get("name")),
             blob=json.dumps(bp, default=str)[:300_000],
@@ -558,6 +631,11 @@ class ZapierConnector(_AutomationBase):
             and any(field in rec for field in _ZAP_IDENTITY_FIELDS)
             and all(isinstance(value, str) and not value.strip() for value in rec.values())
         )
+
+    def _trigger_initiation(self, trigger: str) -> str | None:
+        if _ZAPIER_HUMAN_APPS.search(trigger):
+            return HUMAN
+        return super()._trigger_initiation(trigger)
 
     def _zap_finding(self, rec: dict[str, Any]) -> Finding | None:
         # JSON exports may carry numeric titles; CSV columns are always text.
@@ -667,6 +745,15 @@ class WorkatoConnector(_AutomationBase):
             and (r.get("code") is None or isinstance(r["code"], (str, dict, list)))
         )
 
+    def _trigger_initiation(self, trigger: str) -> str | None:
+        if not trigger:
+            return None
+        if _WORKATO_SCHEDULE_PROVIDERS.search(trigger):
+            return SCHEDULE
+        if _WORKATO_HUMAN_PROVIDERS.search(trigger):
+            return HUMAN
+        return EVENT
+
     def _recipe_finding(self, r: dict[str, Any]) -> Finding | None:
         code = r.get("code") or ""
         config = r.get("config") or []
@@ -683,14 +770,19 @@ class WorkatoConnector(_AutomationBase):
             )
         ]
         blob = (code if isinstance(code, str) else json.dumps(code)) + " " + json.dumps(config, default=str)
-        parsed: Any = {}
+        parsed: Any = code if isinstance(code, dict) else {}
         if isinstance(code, str) and code.startswith("{"):
             try:
                 parsed = strict_json_loads(code)
             except (ValueError, RecursionError):
                 # A corrupt recipe body loses only its trigger attribution.
                 self.ctx.warn("lowcode.workato: recipe code is not valid JSON; trigger coverage incomplete")
-        triggers = [str(get_path(parsed, "keyword", "provider") or "")] if code else []
+        # The root line of a recipe is its trigger (keyword "trigger" on every recipe); the provider
+        # and trigger name say what starts it, the keyword alone does not.
+        triggers: list[str] = []
+        if isinstance(parsed, dict) and str(parsed.get("keyword") or "").lower() == "trigger":
+            parts = (parsed.get("provider"), parsed.get("name"))
+            triggers.append(":".join(str(part) for part in parts if isinstance(part, str) and part))
         return self._workflow_finding(
             wid=str(r.get("id") or r.get("name")),
             name=str(r.get("name")),
