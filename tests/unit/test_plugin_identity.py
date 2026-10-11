@@ -338,3 +338,51 @@ def test_every_builtin_connector_satisfies_the_plugin_identity_rules():
         cls = registry.get_connector_class(name)
         assert registry._verify_connector_class(name, path, cls) is cls
     assert registry.plugin_registry_errors() == ()
+
+
+def test_pinned_approval_loads_only_the_reviewed_target(monkeypatch):
+    plugin = _connector()
+    _publish(monkeypatch, (ENTRY, plugin))
+    target = f"{MODULE}:Target0"
+    assert registry.get_connector_class(ENTRY, allowed_plugins=[f"{ENTRY}={target}"]) is plugin
+
+
+def test_pinned_approval_refuses_another_target_claiming_the_name(monkeypatch):
+    # A later-installed distribution registers the approved name with its own class.
+    _publish(monkeypatch, (ENTRY, _connector()))
+    imported: list[str] = []
+    monkeypatch.setattr(registry, "_load", lambda path: imported.append(path))
+    with pytest.raises(PluginRegistryError) as info:
+        registry.get_connector_class(ENTRY, allowed_plugins=[f"{ENTRY}=reviewed_pkg.connector:Hub"])
+    assert info.value.diagnostic.rule == "target-mismatch"
+    assert imported == [] and ENTRY not in registry._cache
+    config = ScanConfig(plugins=[f"{ENTRY}=reviewed_pkg.connector:Hub"])
+    assert config.plugins == [f"{ENTRY}=reviewed_pkg.connector:Hub"]
+
+
+def test_a_cached_class_is_not_reused_after_its_target_changes(monkeypatch):
+    first, second = _connector(), _connector()
+    _publish(monkeypatch, (ENTRY, first))
+    assert registry.get_connector_class(ENTRY, allowed_plugins=[ENTRY]) is first
+    module = sys.modules[MODULE]
+    module.Other = second
+    other = EntryPoint(name=ENTRY, value=f"{MODULE}:Other", group="shadowscan.connectors")
+    monkeypatch.setattr(registry, "entry_points", lambda **kwargs: [other])
+    assert registry.get_connector_class(ENTRY, allowed_plugins=[ENTRY]) is second
+
+
+@pytest.mark.parametrize(
+    "entries",
+    [
+        [f"{ENTRY}="],
+        [f"{ENTRY}=not a target"],
+        [f"{ENTRY}=pkg"],
+        [ENTRY, f"{ENTRY}=pkg.mod:Cls"],
+        ["=pkg.mod:Cls"],
+    ],
+)
+def test_malformed_or_conflicting_plugin_approvals_are_refused(entries):
+    from shadowscan.config import ConfigValidationError
+
+    with pytest.raises(ConfigValidationError):
+        ScanConfig(plugins=entries)

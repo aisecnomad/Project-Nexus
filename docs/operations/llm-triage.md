@@ -58,9 +58,14 @@ Finding text comes from scanned repositories and remote APIs and is
 untrusted. The model is told to treat it as data, and a reply is accepted
 only as a JSON object with one of the four verdicts; anything else is
 recorded as `status: unparseable`, as is a reply longer than 16 KiB, which is
-refused unread (the response body is capped at 64 KiB). Free text is truncated
-(rationale 500 characters, suggested action 200) and sanitized with the rest
-of the finding when the report is written.
+refused unread (the response body is capped at 64 KiB). A reply that contains
+more than one verdict object, such as one quoted from injected finding text
+beside the model's own, is unparseable too, and requests ask for
+`temperature: 0`. Free text is truncated (rationale 500 characters, suggested
+action 200) and sanitized with the rest of the finding when the report is
+written. These controls limit, but cannot prevent, a model being persuaded by
+finding text: never let a pipeline suppress or close findings because of
+`metadata.llm_triage`.
 
 A failed request, including an unexpected error in the HTTP client, is
 recorded as `status: failed` on the finding and as a

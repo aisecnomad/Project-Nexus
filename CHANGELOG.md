@@ -5,6 +5,37 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## Unreleased
 
+### Triage, plugin identity, redaction and cache integrity hardening
+
+- LLM triage refuses a reply that carries more than one verdict object (for
+  example one quoted from injected finding text) as `status: unparseable`, and
+  requests ask for `temperature: 0`.
+- `--allow-plugin` and `options.allowed_plugins` accept `name=module:Class`.
+  A pinned approval refuses a plugin whose entry point resolves elsewhere
+  (`target-mismatch`); a bare name keeps the previous behavior. Duplicate
+  approvals for one name are refused.
+- Redaction withholds the value in `Bearer token <value>`, keys ending in
+  `secretvalue`, `tokenvalue`, `passwordvalue` or `apikeyvalue`, opaque
+  literals passed to setter calls such as `setProperty("openai.key", ...)`,
+  and `value`, `key` and `credential` fields inside an `auth` mapping.
+- `shadowscan jwt TOKEN...` and `shadowscan run --set` with a credential value
+  print a warning that command-line arguments are visible in process listings
+  and shell history. The value is never echoed and the scan still runs.
+- With a stable identity key, incremental cache entries carry
+  `payload_hmac_sha256` under a key derived from it, and entries without a
+  valid MAC are rescanned. Existing keyed entries miss once. Unkeyed caches
+  keep the SHA-256 checksum, which detects damage, not tampering.
+- Incremental Git fingerprinting reads `git` output through the bounded
+  metadata reader, so repository-controlled refs cannot exhaust memory.
+- The HTTP destination policy judges a well-known NAT64 address
+  (`64:ff9b::/96`) by the IPv4 address it embeds, so IPv6-only runners
+  behind DNS64 can reach public APIs. NAT64 forms of private, loopback,
+  link-local and metadata addresses stay refused, as does the local-use
+  prefix `64:ff9b:1::/48`.
+- `shadowscan merge` sets the fleet `finished_at` to the latest source time
+  compared as an instant, not the lexically largest string. A source value
+  that is not an offset-aware ISO 8601 time is ignored.
+
 ### Redaction on CPython 3.12.0 to 3.12.3
 
 - Fixed: on CPython 3.12.0 to 3.12.3, redacting a long single line could

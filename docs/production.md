@@ -410,7 +410,9 @@ signature override opt-in. JWT CLI verification additionally accepts
 `--expected-issuer` and repeatable `--jwt-algorithm`.
 
 The shared HTTP transport enforces destination policy at connection time and
-retains TLS hostname checks. HTTP proxies are unsupported; environment proxies
+retains TLS hostname checks. A well-known NAT64 address (`64:ff9b::/96`, what
+a DNS64 resolver returns on an IPv6-only runner) is judged by the IPv4 address
+it embeds; the local-use prefix `64:ff9b:1::/48` is always refused. HTTP proxies are unsupported; environment proxies
 are ignored. Cloud SDK and Git transport behavior remains separate. Do not assume
 that the shared client's policy controls every network connection in the process.
 Inject only trusted `requests.Session` implementations. Calls to the shared
@@ -995,6 +997,15 @@ exception raised inside a third-party SDK or plugin reports only its type
 or opaque credentials that redaction does not recognize. The scan is still
 incomplete (exit 3). Alerting keyed on SDK exception text should key on the
 connector name and exception type.
+
+Plugin approvals can pin the import target (`--allow-plugin
+name=module:Class`); a pin binds the import path, not a version or file hash,
+so keep installing plugins from reviewed, hash-pinned requirements. Give JWTs
+and connector credentials through files, stdin or `${ENV_VAR}` references:
+the CLI warns, but still runs, when they arrive as arguments. Incremental
+cache entries are authenticated only when a stable identity key is
+configured; without one, keep the state directory writable only by the
+scanner account.
 
 ## Candidate change history
 

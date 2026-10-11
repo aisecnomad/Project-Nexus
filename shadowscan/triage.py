@@ -74,6 +74,7 @@ _KEYS = {
 }
 # A verdict reply is a few hundred characters (max_tokens is 400); anything
 # longer than this is refused unparsed, and the response body is capped too.
+_MAX_REPLY_OBJECTS = 64
 _MAX_REPLY_CHARS = 16 * 1024
 _MAX_RESPONSE_BYTES = 64 * 1024
 
@@ -263,21 +264,34 @@ def skip(findings: list[Finding], settings: TriageSettings) -> int:
 def parse_reply(text: str) -> dict[str, str] | None:
     """The verdict object in a model reply, or None when the reply does not follow the contract.
 
-    The reply is untrusted, so the object is located in linear time (first
-    ``{`` to last ``}``, as a greedy match would) and a reply longer than any
-    verdict needs is refused unread.
+    The reply is untrusted, so one longer than any verdict needs is refused
+    unread. Each JSON object in it is then decoded in turn, up to a fixed
+    number of attempts so decoding stays bounded; exactly one may carry a
+    ``verdict`` key. A reply that quotes several verdict objects, for example
+    one copied from injected finding text next to its own, is ambiguous and
+    refused rather than resolved by position.
     """
     if len(text) > _MAX_REPLY_CHARS:
         return None
-    start, end = text.find("{"), text.rfind("}")
-    if start < 0 or end < start:
+    decoder = json.JSONDecoder()
+    found: list[dict[str, Any]] = []
+    position = text.find("{")
+    attempts = 0
+    while position != -1:
+        attempts += 1
+        if attempts > _MAX_REPLY_OBJECTS:
+            return None
+        try:
+            data, end = decoder.raw_decode(text, position)
+        except (ValueError, RecursionError):  # ValueError also covers an over-long integer
+            position = text.find("{", position + 1)
+            continue
+        if isinstance(data, dict) and "verdict" in data:
+            found.append(data)
+        position = text.find("{", end)
+    if len(found) != 1 or found[0].get("verdict") not in VERDICTS:
         return None
-    try:
-        data = json.loads(text[start : end + 1])
-    except (ValueError, RecursionError):  # ValueError also covers an over-long integer
-        return None
-    if not isinstance(data, dict) or data.get("verdict") not in VERDICTS:
-        return None
+    data = found[0]
     rationale = data.get("rationale")
     action = data.get("suggested_action")
     return {
@@ -332,12 +346,14 @@ class Triage:
             return {
                 "model": self.settings.model,
                 "max_tokens": 400,
+                "temperature": 0,
                 "system": _SYSTEM,
                 "messages": [{"role": "user", "content": content}],
             }
         return {
             "model": self.settings.model,
             "max_tokens": 400,
+            "temperature": 0,
             "messages": [{"role": "system", "content": _SYSTEM}, {"role": "user", "content": content}],
         }
 
