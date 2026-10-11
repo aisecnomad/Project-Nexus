@@ -1044,6 +1044,47 @@ Read them when you have baselines, reports or inventories produced
 by an earlier candidate build; a deployment that starts from a reviewed
 revision and a fresh baseline does not need them.
 
+### October 10 fleet dashboard, inventory export and fleet sources (unreleased)
+
+This candidate adds the [fleet dashboard](operations/dashboard.md) and its
+`shadowscan.inventory/v1` export, and changes what `merge` records. It does
+not change the published 0.1.2 artifact, create a release, or establish
+acceptance on a live fleet; the views are tested with synthetic,
+author-written reports.
+
+| Area | Changed behavior | Migration check |
+| --- | --- | --- |
+| Dashboard confidentiality | `shadowscan dashboard` writes a page and, with `--inventory-json`, a JSON document holding resource identifiers, owners, accounts and registry identifiers. Both are mode 0600 and never written through a symbolic link. Credential findings are left out, and no evidence, permissions or raw metadata is included. | Store and share both files as you store the reports behind them. Do not publish them to a public site or an unrestricted share. |
+| Dashboard exit code | Exit 3 when an input or source is incomplete or the `--baseline` comparison is not comparable; the files are still written. History never changes the exit code. | Treat exit 3 as "incomplete", as for `scan`, `merge` and `diff`; do not let a pipeline ignore it. |
+| Fleet source schema | `collection_scope.fleet.schema` is `shadowscan.fleet-merge/v2`. Each source adds `started_at`, `finished_at`, `inventory_present` and `connectors` (each run's `complete`, `cached`, `incomplete` or `skipped` status). The merged report's `inventory_present` is true when any source supplied an inventory; a source written before that key existed counts as having one when its `inventory_size` is above zero or a finding has a shadow status. The scope fingerprint and comparability are unchanged. | Consumers that require an exact key set or the v1 schema string must accept v2. The dashboard reads a v1 fleet report and shows its connector coverage as unknown. |
+| Earlier fleet reports | A v1 fleet report recorded findings without an inventory as shadow and never `inventory_present: true`. Read by `merge` or `dashboard` (including `--history`), its findings have no shadow status, and the dashboard says why. | Merge the source reports again with this version rather than reading a v1 fleet report; the dashboard's `legacy_fleet` field marks one. |
+| Dashboard autonomy and coverage | One report is classified as a fleet source is: a report without `metadata.autonomy` shows its tiers. An applicable finding without a valid interval is `not-classified` (unknown), not `not-applicable`. `sources[].coverage` holds only the connectors a source ran, without scan-level `engine.*` records. | Consumers of `shadowscan.inventory/v1` read a missing coverage cell as `not-collected` (or `unknown` when the source's `connectors` is null), and treat `not-classified` as unknown, never as below L4. |
+
+The dashboard reads reports, not live systems. Its counts are what the
+sources recorded; a source that was not collected cannot be inferred, and the
+threat and control reference counts are evidence references, not compliance
+determinations.
+
+### October 10 control evidence report and declared governance facts (unreleased)
+
+This candidate adds the [control evidence report](operations/controls.md) and
+the Capability Card [`governance:` block](inventory.md#declared-governance-facts).
+It does not change the published 0.1.2 artifact, create a release, or establish
+independent review of the mappings or live tenant acceptance. The fixtures are
+synthetic and author-written.
+
+| Area | Changed behavior | Migration check |
+| --- | --- | --- |
+| Control evidence | `shadowscan controls` writes per-control findings, risk-level counts, examples and evidence status as Markdown, CSV or JSON (`shadowscan.control-evidence/v1`). An incomplete input writes the banner and exits 3; zero-reference controls then read `unknown (scan incomplete)`, never `not observed`. A zero-reference control that a finding with unknown shadow status or without a declared risk class could reference reads `unknown (inventory not supplied)` or `unknown (risk class not declared)`. The CSV carries an `inventory` column. A report that `merge` produced is refused (exit 1). | Gate pipelines on exit 3 like other commands. Treat the output as evidence references for an analyst, not as a compliance determination or an assessment of any control. Pass source reports, not a merged report. Supply an inventory, and declare risk classes in cards, before reading `not observed` for inventory and EU AI Act rows. |
+| Capability Cards | `schema_version: 2` cards accept `governance:` (EU AI Act risk class, intended purpose, oversight measures, AIUC-1 certificate, ISO/IEC 42001 scope). Unknown keys, malformed values and a block on an earlier card fail inventory validation (exit 1). | Run `shadowscan inventory check` before deploying cards with the block. Declare a risk class only after your own legal assessment; ShadowScan never infers or checks it. |
+| Report fields | Findings registered by such a card carry `metadata.declared_governance` (the block plus `source`), rebuilt on every run. `merge` drops it from shadow findings, refuses a report with a malformed block, and refuses a registered finding whose reports carry different blocks. A report's block may exceed the card's length limits after redaction. Finding identity, risk scores and `diff` change detection are unchanged. | Consumers that read metadata must tolerate the new key and must not apply the card's length limits to it. Regenerate hand-edited reports that `merge` refuses; make inventories agree when reports declare different facts for one finding. |
+| Control references | New rules: a declared `high` class references EU AI Act Articles 12, 14 and 26; a declared `limited`, `gpai` or `gpai-systemic` agent, bot or AI application references Article 50. Catalogs carry `review: author`, the only accepted value. | Expect `metadata.controls` of registered findings to change once cards declare a class. The references remain author mappings. |
+| Inventory stubs | Stubs carry `governance: {eu_ai_act_risk_class: unknown}`. | Replace the placeholder, or remove the block, when reviewing a stub. |
+
+The report shows what the scanned sources contained and how the author mappings
+relate it to each control. It does not establish that a control is designed or
+operating, that an obligation applies, or that declared facts are true.
+
 ### October 10 drift classes and baseline lifecycle (unreleased)
 
 This candidate adds drift classes, baseline pinning and expiry to

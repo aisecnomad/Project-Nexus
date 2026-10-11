@@ -26,6 +26,7 @@ from shadowscan.connectors import ConnectorContext, builtin_connector_names, get
 from shadowscan.connectors.base import BaseConnector, ConnectorError
 from shadowscan.correlation import correlate, correlate_lifecycle, correlate_runtime
 from shadowscan.errors import SetupError
+from shadowscan.governance import apply_declared_governance
 from shadowscan.incremental import IncrementalCache
 from shadowscan.mcp_registry import LoadedRegistries, enrich_mcp_findings, load_registries
 from shadowscan.merge import merge
@@ -1231,6 +1232,8 @@ class Engine:
                     f.owner = entry.owner
             # Before scoring: a declared level below the observed floor adds a weighted tag.
             apply_autonomy(f, entry)
+            # Declared facts come only from the card that approved this finding in this run.
+            apply_declared_governance(f, entry)
             f.risk = assess(f, self.index, inventory_present=inventory is not None, policy=risk_policy)
         if outcome is not None and approvals is not None:
             outcome.approval_entries = approvals.entries

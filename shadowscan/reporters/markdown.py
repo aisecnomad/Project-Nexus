@@ -5,6 +5,7 @@ from __future__ import annotations
 import html
 import re
 
+from shadowscan.governance import declared_facts
 from shadowscan.mappings import describe, finding_references
 from shadowscan.models import Finding, ScanResult
 from shadowscan.reporters._publication import (
@@ -230,6 +231,11 @@ def _finding_section(f: Finding) -> list[str]:
         out.append(f"- **Threats:** {_references(threats)}  ")
     if controls:
         out.append(f"- **Controls:** {_references(controls)}  ")
+    declared = declared_facts(f)
+    if declared:
+        source, facts = declared
+        items = "; ".join(f"{label}: {_text(value)}" for label, value in facts)
+        out.append(f"- **Declared governance** (card {_code(source)}, not verified): {items}  ")
     if f.permissions:
         more = " …" if len(f.permissions) > 15 else ""
         out.append(f"- **Permissions:** {', '.join(map(_text, f.permissions[:15]))}{more}  ")

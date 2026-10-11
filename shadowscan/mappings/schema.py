@@ -18,12 +18,18 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Any
 
+from shadowscan.governance import EU_AI_ACT_RISK_CLASSES, declared_risk_class
 from shadowscan.models import Finding, Kind, Surface
 from shadowscan.risk import TAG_WEIGHTS
 from shadowscan.signatures.schema import CAPABILITIES
 
 CATALOG_KINDS = ("threat", "layer", "control")
 VERIFICATION_LEVELS = ("primary", "secondary")
+# Who reviewed a catalog's mappings, and the sentence reports print for it. Only the
+# project's own (author) review exists; a data file cannot claim an independent review.
+REVIEW_STATEMENTS = {
+    "author": "Mappings are author mappings and have not been independently reviewed.",
+}
 # Each rule file references entries of exactly one catalog kind.
 RULE_FILES = {"threats.yaml": "threat", "layers.yaml": "layer", "controls.yaml": "control"}
 # What ``metadata.threats`` and ``metadata.controls`` collect.
@@ -56,6 +62,7 @@ _CATALOG_REQUIRED = (
     "licence",
     "checked",
     "verification",
+    "review",
     "entries",
 )
 _CATALOG_KEYS = frozenset({*_CATALOG_REQUIRED, "notes"})
@@ -68,6 +75,7 @@ _LIST_CONDITIONS = (
     "surfaces_any",
     "oversight_any",
     "registry_status_any",
+    "declared_risk_class_any",
 )
 _BOOL_CONDITIONS = ("shadow", "owner_missing")
 _CONDITION_KEYS = frozenset({*_LIST_CONDITIONS, *_BOOL_CONDITIONS, "autonomy_floor_at_least"})
@@ -109,6 +117,7 @@ class Catalog:
     # sources ``verification`` names; not a claim that ``source_url`` was retrieved.
     checked: str
     verification: str
+    review: str  # a key of REVIEW_STATEMENTS
     notes: str
     entries: tuple[MappingEntry, ...]
     source: str  # file name below the data directory
@@ -127,6 +136,7 @@ class FindingFacts:
     autonomy_floor: int | None
     oversight: str | None
     registry_status: str | None
+    declared_risk_class: str | None
 
     @classmethod
     def of(cls, finding: Finding) -> FindingFacts:
@@ -149,6 +159,8 @@ class FindingFacts:
             autonomy_floor=floor if type(floor) is int and floor in AUTONOMY_LEVELS else None,
             oversight=oversight if isinstance(oversight, str) else None,
             registry_status=status if isinstance(status, str) else None,
+            # Declared by the card that registered the finding; never inferred.
+            declared_risk_class=declared_risk_class(finding),
         )
 
 
@@ -162,6 +174,7 @@ class Condition:
     surfaces_any: frozenset[str] | None = None
     oversight_any: frozenset[str] | None = None
     registry_status_any: frozenset[str] | None = None
+    declared_risk_class_any: frozenset[str] | None = None
     autonomy_floor_at_least: int | None = None
     shadow: bool | None = None
     owner_missing: bool | None = None
@@ -178,6 +191,11 @@ class Condition:
         if self.oversight_any is not None and facts.oversight not in self.oversight_any:
             return False
         if self.registry_status_any is not None and facts.registry_status not in self.registry_status_any:
+            return False
+        if (
+            self.declared_risk_class_any is not None
+            and facts.declared_risk_class not in self.declared_risk_class_any
+        ):
             return False
         if self.autonomy_floor_at_least is not None and (
             facts.autonomy_floor is None or facts.autonomy_floor < self.autonomy_floor_at_least
@@ -248,6 +266,8 @@ def parse_catalog(data: Any, source: str, problems: list[str]) -> Catalog | None
         problems.append(f"{source}: kind must be one of {', '.join(CATALOG_KINDS)}")
     if fields["verification"] and fields["verification"] not in VERIFICATION_LEVELS:
         problems.append(f"{source}: verification must be one of {', '.join(VERIFICATION_LEVELS)}")
+    if fields["review"] and fields["review"] not in REVIEW_STATEMENTS:
+        problems.append(f"{source}: review must be one of {', '.join(REVIEW_STATEMENTS)}")
     if fields["source_url"] and not fields["source_url"].startswith("https://"):
         problems.append(f"{source}: source_url must be an https:// URL")
     checked = fields["checked"]
@@ -298,6 +318,7 @@ def parse_catalog(data: Any, source: str, problems: list[str]) -> Catalog | None
         licence=fields["licence"],
         checked=checked,
         verification=fields["verification"],
+        review=fields["review"],
         notes=notes,
         entries=tuple(entries),
         source=source,
@@ -339,6 +360,7 @@ def parse_condition(
         "surfaces_any": ({surface.value for surface in Surface}, "surfaces"),
         "oversight_any": (OVERSIGHT_VALUES, "oversight values"),
         "registry_status_any": (REGISTRY_STATUSES, "registry statuses"),
+        "declared_risk_class_any": (EU_AI_ACT_RISK_CLASSES, "declared risk classes"),
     }
     values: dict[str, Any] = {}
     for key, (allowed, noun) in vocabularies.items():
