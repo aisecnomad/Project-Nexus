@@ -62,7 +62,7 @@
 
 - name: "surface: gateway"
   color: "c5def5"
-  description: Gateway connector (logs).
+  description: Gateway connectors (logs, OTLP spans).
 
 - name: "surface: lowcode"
   color: "c5def5"
