@@ -102,9 +102,16 @@ Plugins still require an explicit allowlist in `options.plugins` or
 existing behavior. For reviewed plugins that can block inside an SDK or native
 extension, select a dedicated spawned process per connector:
 
+An approval may also pin the entry point's import target as
+`name=module:Class` (`--allow-plugin name=module:Class`). A name alone approves
+whatever distribution installs that entry point; a pinned approval refuses any
+other target before importing it, for example a later package that registers
+the same name. Pinning binds the import path, not a distribution version or
+file hashes, so keep the plugin itself in a hash-locked install.
+
 ```yaml
 options:
-  plugins: [platform.example]
+  plugins: [platform.example=example_connectors.platform:ExampleConnector]
   plugin_execution: process
   connector_timeout_seconds: 120
 connectors:

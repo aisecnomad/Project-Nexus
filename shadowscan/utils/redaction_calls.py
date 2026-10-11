@@ -29,6 +29,8 @@ from shadowscan.utils.redaction_rules import (
     _name_before,
     _placeholder,
     _sensitive_assignment_key,
+    _setting_level,
+    _setting_value_withheld,
 )
 
 _CALL_START = re.compile(r"(?<![\w.])[A-Za-z_][A-Za-z0-9_.]*[ \t]*\(")
@@ -322,6 +324,7 @@ def _credential_call_values(
     """Whether a call pairs a literal credential key with values, and their spans."""
     sensitive = False
     values: list[tuple[int, int]] = []
+    key_span: tuple[int, int] | None = None
     positional = 0
     for number, (start, end) in enumerate(spans):
         bounded = closed or number < len(spans) - 1
@@ -330,15 +333,39 @@ def _credential_call_values(
             name = keyword.group("name")
             if name in {"key", "name"}:
                 sensitive = sensitive or _credential_key_argument(text, keyword.end(), end, bounded)
+                key_span = key_span or (keyword.end(), end)
             elif name in {"default", "value"}:
                 values.append((keyword.end(), end))
         else:
             if positional == 0:
                 sensitive = sensitive or _credential_key_argument(text, start, end, bounded)
+                key_span = key_span or (start, end)
             elif positional == 1:
                 values.append((start, end))
             positional += 1
-    return sensitive, values
+    if sensitive or key_span is None or not values:
+        return sensitive, values
+    # A setting path whose last word names a credential ('openai.key', 'Azure:Key')
+    # withholds only an opaque literal, as the same names do in settings files.
+    key = _call_string_literal(text[key_span[0] : key_span[1]])
+    if key is None or _setting_level(key) != 1:
+        return False, values
+    opaque = [
+        span for span in values if _setting_value_withheld(1, _call_string_literal(text[span[0] : span[1]]))
+    ]
+    return bool(opaque), opaque
+
+
+def _call_string_literal(argument: str) -> str | None:
+    """A short plain string literal argument's value; None for anything else."""
+    argument = argument[_call_argument_start(argument, 0, len(argument)) :].strip()
+    if len(argument) > 4096 or not _CALL_LITERAL.match(argument):
+        return None
+    try:
+        value = ast.literal_eval(argument)
+    except (ValueError, SyntaxError, RecursionError):
+        return None
+    return value if isinstance(value, str) else None
 
 
 def _redact_credential_calls(text: str) -> str:

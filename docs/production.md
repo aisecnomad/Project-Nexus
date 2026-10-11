@@ -1028,6 +1028,15 @@ or opaque credentials that redaction does not recognize. The scan is still
 incomplete (exit 3). Alerting keyed on SDK exception text should key on the
 connector name and exception type.
 
+Plugin approvals can pin the import target (`--allow-plugin
+name=module:Class`); a pin binds the import path, not a version or file hash,
+so keep installing plugins from reviewed, hash-pinned requirements. Give JWTs
+and connector credentials through files, stdin or `${ENV_VAR}` references:
+the CLI warns, but still runs, when they arrive as arguments. Incremental
+cache entries are authenticated only when a stable identity key is
+configured; without one, keep the state directory writable only by the
+scanner account.
+
 ## Candidate change history
 
 These notes record unreleased corrections and earlier candidate changes.

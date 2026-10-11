@@ -38,7 +38,12 @@ from shadowscan.connectors.code.filesystem import (
 from shadowscan.models import Finding, ScanStats, now_iso
 from shadowscan.signatures import SignatureIndex
 from shadowscan.utils.digest import scanner_source_digest
-from shadowscan.utils.git import metadata_git_argv_prefix, metadata_git_env, require_local_git_metadata
+from shadowscan.utils.git import (
+    metadata_git_argv_prefix,
+    metadata_git_env,
+    require_local_git_metadata,
+    run_bounded_metadata,
+)
 from shadowscan.utils.redaction import sanitize
 from shadowscan.utils.safe_json import strict_json_loads
 
@@ -224,26 +229,36 @@ def _git_state(root: Path, budget: _HashBudget) -> str | None:
     require_local_git_metadata(root, timeout=budget.timeout(10))
     budget.check()
 
+    class _BudgetContext:
+        # run_bounded_metadata needs only a deadline and a cancellation check.
+        deadline = budget.deadline
+
+        @staticmethod
+        def check_deadline() -> None:
+            budget.check()
+
     def git(*args: str) -> bytes:
         budget.check()
         try:
-            result = subprocess.run(
+            # Bound output as well as time: refs and paths come from the
+            # scanned repository and are untrusted.
+            result = run_bounded_metadata(
                 [*metadata_git_argv_prefix(), "-C", str(root), *args],
-                check=False,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,
+                metadata_git_env(),
+                _BudgetContext(),  # type: ignore[arg-type]
                 timeout=budget.timeout(10),
-                env=metadata_git_env(),
+                strict_utf8=True,
             )
-        except subprocess.TimeoutExpired:
+        except (subprocess.TimeoutExpired, TimeoutError):
             # A connector cancellation/deadline must propagate instead of
             # degrading into an uncached scan that continues doing work.
             budget.check()
             raise
-        budget.check(size=len(result.stdout))
+        stdout = result.stdout.encode()
+        budget.check(size=len(stdout))
         if result.returncode:
             raise ValueError("cannot resolve checkout metadata")
-        return result.stdout
+        return stdout
 
     # Author enrichment depends on effective history, not merely HEAD: replacement
     # refs and shallow boundaries can change git log output without moving HEAD.
@@ -474,6 +489,13 @@ class IncrementalCache:
         # key itself. Changing stable keys must not replay old pseudonyms.
         self._credential_key_scope = (
             hmac.digest(identity_key, b"shadowscan.incremental.credential-key.v1", "sha256").hex()
+            if identity_key is not None
+            else None
+        )
+        # With a private key, a cache entry is authenticated rather than only
+        # checksummed, so a writer without the key cannot forge a clean result.
+        self._integrity_key = (
+            hmac.digest(identity_key, b"shadowscan.incremental.integrity.v1", "sha256")
             if identity_key is not None
             else None
         )
@@ -873,7 +895,7 @@ class IncrementalCache:
             if data["format"] != _FORMAT or data["fingerprint"] != snapshot.fingerprint:
                 return None
             payload = data["payload"]
-            if hashlib.sha256(_json(payload)).hexdigest() != data["payload_sha256"]:
+            if not hmac.compare_digest(self._payload_digest(payload), data[self._digest_field()]):
                 return None
             if not isinstance(payload["findings"], list) or not isinstance(payload["warnings"], list):
                 return None
@@ -902,6 +924,14 @@ class IncrementalCache:
             return findings, stats
         except (OSError, ValueError, KeyError, TypeError, AttributeError, RecursionError):
             return None
+
+    def _digest_field(self) -> str:
+        return "payload_sha256" if self._integrity_key is None else "payload_hmac_sha256"
+
+    def _payload_digest(self, payload: Any) -> str:
+        if self._integrity_key is None:
+            return hashlib.sha256(_json(payload)).hexdigest()
+        return hmac.new(self._integrity_key, _json(payload), "sha256").hexdigest()
 
     def save(
         self,
@@ -953,7 +983,7 @@ class IncrementalCache:
                     "format": _FORMAT,
                     "fingerprint": snapshot.fingerprint,
                     "payload": payload,
-                    "payload_sha256": hashlib.sha256(_json(payload)).hexdigest(),
+                    self._digest_field(): self._payload_digest(payload),
                 }
             )
             if len(data) > min(_MAX_CACHE_BYTES, _MAX_CACHE_TOTAL_BYTES):
