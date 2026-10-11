@@ -96,6 +96,11 @@ agents:
     autonomy_level: 3          # optional declared level, 0-5
 ```
 
+The `agents:` mapping is optional: a file holding a bare list of the same
+entries, as in
+[`examples/inventory/sanctioned.yaml`](https://github.com/aisecnomad/Project-Nexus/blob/main/examples/inventory/sanctioned.yaml),
+is read the same way.
+
 ### CSV
 
 ```

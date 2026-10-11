@@ -32,8 +32,13 @@ were written in this repository and which cannot say anything about code in the 
 | `sandbox.py`, `run.py`, `freeze.py` | network-less, unprivileged, file-system-restricted runs; the parallel resumable runner; the hash freeze |
 | `score.py`, `adjudicate.py`, `report.py`, `corpus_summary.py` | statistics, blinded adjudication, rendering |
 | `rerun_errors.py`, `record_environment.py` | re-run timeouts alone (declared sensitivity); hash the stored corpus and tool packages |
+| `diagnose_shadowscan.py` | a diagnostic, not a score: repeats the ShadowScan scans that were partial or incomplete and counts the causes into `results/shadowscan-incomplete-causes.json` (labels and counts only) |
 | `install_tools.sh` | pinned installation of the third-party tools (ShadowScan from this checkout) |
+| [SHADOWSCAN-FIXES.md](SHADOWSCAN-FIXES.md) | what was changed in ShadowScan after reading its failures in REPORT.md, and what was measured afterwards; not a second person's audit |
 | `results/` | normalised per-repository outcomes, scored summary, run manifest, freeze record (no raw tool output) |
+| `results-rerun/` | the timeout, kill and adapter-exception pairs re-run alone with two workers (`rerun_errors.py --out`); a declared deviation that REPORT.md describes and PROTOCOL.md does not |
+| `results-merged/` | a copy of `results/` in which each re-run pair replaces its first row (`rerun_errors.py --merged`); the input to the re-run sensitivity table, never the headline |
+| `results/summary-rerun.json` | `score.py` output for `results-merged/`, read by `report.py --rerun-summary` |
 
 ## Reproduce
 
