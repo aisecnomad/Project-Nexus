@@ -306,8 +306,10 @@ Do not read a merged pull request, green check, AI review or version number as
 evidence that a second person examined the change. Repository settings are
 separate from this policy: inspect the
 [live rules](https://github.com/aisecnomad/Project-Nexus/rules) and PR checks
-before merging. The review/CI ruleset has no configured bypass actors; other
-rulesets may differ. Every ruleset blocks nothing while disabled. Apply and
+before merging. The versioned policy requires no bypass actors; the 2026-10-10
+readback listed four `always` bypass actors on both `main` rulesets, so a
+repository administrator can merge without the non-author approval until they
+are removed. Every ruleset blocks nothing while disabled. Apply and
 verify the [versioned merge policy](docs/operations/merge-policy.md) with repository
 administration access. Do not disable checks or review rules to make a
 merge possible, and recheck live enforcement before relying on it.
@@ -356,6 +358,11 @@ to block merges follows the live repository rules (see
 Dependabot commits are authored by GitHub's Dependabot app and signed off by
 GitHub as `support@github.com`; the workflow accepts exactly that pairing and
 no other mismatched sign-off.
+
+The `main` rulesets also require verified commit signatures
+(`required_signatures`). A DCO `Signed-off-by` trailer is not a signature.
+Either sign your commits (SSH or GPG) or expect the maintainer to
+squash-merge, which produces a GitHub-signed commit.
 
 ## License
 

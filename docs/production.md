@@ -667,8 +667,9 @@ Ruleset
 [23913372, Require CI and CodeQL](https://github.com/aisecnomad/Project-Nexus/rules/23913372)
 is configured to require `test (3.11)`, `test (3.12)` and `analyze`, an
 up-to-date branch, and one approving review from a reviewer with write access,
-alongside `Protect main`. Add the new aggregate `CI gate` to that required-check
-list without removing the existing checks or approval rule. Its enforcement
+alongside `Protect main`. The 2026-10-10 readback below shows the aggregate
+`CI gate` added to that required-check list with the existing checks and
+approval rule retained. Its enforcement
 state has changed more than once during 2026-09: the 2026-09-24 review recorded
 it disabled; on 2026-09-25 (13:10 UTC) a merge attempted without an approving
 review was refused with "Repository rule violations found", so it was enforced
@@ -698,7 +699,8 @@ At 19:08 UTC on 2026-10-02 both again read back as `enforcement: disabled`
 (last updated 18:39 UTC) with no active rules on `main`. The committed
 snapshots in
 [`.github/rulesets/observed/`](https://github.com/aisecnomad/Project-Nexus/tree/main/.github/rulesets/observed)
-record the 04:28 UTC state.
+recorded that 04:28 UTC state until they were refreshed from the 2026-10-10
+readback described below.
 On 2026-10-03 (19:06 UTC), both rulesets read back active again. The review/CI
 ruleset still omitted `CI gate` and application bindings on its three required
 checks, and still had `require_last_push_approval` and
@@ -725,6 +727,33 @@ approval, adds linear history and deletion protection, and still lists the
 administrator role and three integrations as `always` bypass actors. The
 weekly audit keeps failing until the reviewed payloads are applied.
 
+On 2026-10-10 (administrator readback; `Protect main` updated 15:53:38 UTC,
+`Require CI and CodeQL` updated 15:53:51 UTC), both rulesets read back
+`enforcement: active` in complete responses that included `bypass_actors`.
+`Require CI and CodeQL` now requires `test (3.11)`, `test (3.12)`, `analyze`
+and `CI gate`, each bound to the GitHub Actions application (15368) under the
+strict up-to-date policy; one approving review with stale reviews dismissed,
+last-push approval, review-thread resolution and extra approval for
+unattributed changes; CodeQL and code-quality gating; Copilot code review;
+signed commits; and deletion and force-push protection. `Protect main` now
+requires one approving review with stale dismissal, last-push approval and
+thread resolution, and keeps linear history, deletion and force-push
+protection, CodeQL gating and signed commits. Both rulesets list the same
+four `always` bypass actors: the repository administrator role
+(`RepositoryRole` 5) and integrations 1144995, 1236702 and 2875373. The
+integrations were not resolved to application names during the readback.
+`python -m tools.governance_check` on the review/CI readback fails with
+`bypass_actors_not_empty`; on the `Protect main` readback it reports
+`bypass_actors_not_empty, status_checks_required`, the second code because
+that ruleset carries no status-check rule and the committed payload does not
+add one. `python -m tools.governance.rulesets verify` against each committed
+`.update.json` reports `readback differs from reviewed payload:
+bypass_actors` and nothing else. The merge gate is therefore not yet enforced
+against a repository administrator, who can merge without the non-author
+approval. Removing the bypass actors and a readback showing
+`bypass_actors: []` remain outstanding. The committed observed snapshots
+record this readback.
+
 Classic branch protection is not readable through the app
 integration. Read and retain the current configuration before changing it,
 and compare it against the [versioned merge policy](operations/merge-policy.md):
@@ -733,9 +762,11 @@ with a fixed diagnostic code. The policy file is not applied automatically and
 does not describe the live state; a repository administrator applies it under
 **Settings → Rules → Rulesets**.
 
-Do not claim that the full merge gate is enforced until readback confirms
-`CI gate` is required. If the API connection lacks administration access, use
-an authorized administrator session rather than weakening the rules.
+Do not claim that the full merge gate is enforced until a readback shows
+`CI gate` required and `bypass_actors: []`. The 2026-10-10 readback meets the
+first condition and not the second. If the API connection lacks
+administration access, use an authorized administrator session rather than
+weakening the rules.
 
 Whatever the ruleset's state, the history is unchanged: the repository has a
 single maintainer, and no change merged to `main` through 2026-10-02 (including
@@ -803,7 +834,8 @@ The [two-ruleset payload helper](https://github.com/aisecnomad/Project-Nexus/tre
 additionally prepares `Protect main` and `Require CI and CodeQL` together,
 removing bypass actors from both. The observed snapshots and proposed PUT
 bodies are in [.github/rulesets](https://github.com/aisecnomad/Project-Nexus/tree/main/.github/rulesets).
-The committed observed snapshots capture disabled rulesets. Refresh
+The committed observed snapshots capture the 2026-10-10 readback: active
+rulesets that still list four `always` bypass actors. Refresh
 those observations and regenerate the bodies before applying them; the files
 are preparation, not evidence of active enforcement. After administrator PUTs,
 compare each fresh full API response against its exact approved body:

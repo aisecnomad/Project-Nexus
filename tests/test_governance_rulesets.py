@@ -180,7 +180,10 @@ def test_plan_refuses_duplicate_rules_or_missing_existing_status_contexts() -> N
     with pytest.raises(ValueError, match="duplicate"):
         prepare_payload(source, ruleset_id=23913372)
     source = _snapshot()
-    _rule(source, "required_status_checks")["parameters"]["required_status_checks"].pop()
+    # The 2026-10-10 snapshot already lists `CI gate`, which the plan may add;
+    # removing an existing CodeQL context is what must be refused.
+    required = _rule(source, "required_status_checks")["parameters"]["required_status_checks"]
+    required[:] = [check for check in required if check["context"] != "analyze"]
     with pytest.raises(ValueError, match="existing CI or CodeQL"):
         prepare_payload(source, ruleset_id=23913372)
 
@@ -307,7 +310,9 @@ def test_cli_prepares_new_file_but_refuses_overwrite_or_ambiguous_json(tmp_path:
     assert result.returncode != 0 and not output.exists()
 
 
-def test_cli_verify_is_nonzero_for_the_observed_disabled_ruleset(tmp_path: Path) -> None:
+def test_cli_verify_is_nonzero_for_the_observed_ruleset_with_bypass_actors(tmp_path: Path) -> None:
+    """The 2026-10-10 observed snapshot is active and carries the policy's rules,
+    but lists four `always` bypass actors; verify must still exit nonzero."""
     result = subprocess.run(
         [
             sys.executable,
@@ -327,6 +332,7 @@ def test_cli_verify_is_nonzero_for_the_observed_disabled_ruleset(tmp_path: Path)
         text=True,
     )
     assert result.returncode != 0 and "readback differs" in result.stderr
+    assert "bypass_actors" in result.stderr
 
 
 def test_observation_digest_binds_the_single_inspected_snapshot(

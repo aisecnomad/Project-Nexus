@@ -11,13 +11,13 @@ The detailed [review and merge policy](https://github.com/aisecnomad/Project-Nex
 is authoritative. The merge policy requires one approving
 review from someone with write access, an up-to-date branch and passing
 `CI gate`, `test (3.11)`, `test (3.12)` and `analyze` checks before a pull request can
-merge, and dismissal of stale approvals after a new push. The October 2 readback
-found the `CI gate` context missing from the disabled ruleset; the source's
-settings-patch generator adds it and tightens the supplied settings to the
-versioned minimum policy while retaining additional protections.
-Ruleset enforcement has been
-switched on and off several times since 2026-09; a disabled ruleset blocks
-nothing. The
+merge, and dismissal of stale approvals after a new push. The 2026-10-10
+administrator readback found both `main` rulesets active, with `CI gate`
+required, every required check bound to GitHub Actions, and last-push approval
+and review-thread resolution on. Both rulesets also listed four `always`
+bypass actors, which the versioned policy forbids. Ruleset enforcement has
+been switched on and off several times since 2026-09; a disabled ruleset
+blocks nothing, and an enabled one blocks nothing for a bypass actor. The
 author cannot approve their own change; the single maintainer therefore needs a
 second eligible human reviewer for changes they author. AI-assisted review is
 advisory, not an approval. Independent human review is also required before any
@@ -26,19 +26,22 @@ tagged release.
 Repository settings may change. Consult the
 [live repository rules](https://github.com/aisecnomad/Project-Nexus/rules) and the
 [verification commands](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/production.md#merge-gate-and-review-status)
-before relying on enforcement. The review/CI ruleset has no configured bypass
-actors; the separate `Protect main` ruleset may differ. A ruleset only blocks
-anything while it is enabled. The [versioned policy and verification procedure](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/operations/merge-policy.md)
-require the complete CI gate and final-push approval; applying that policy needs
-repository administration access. Do not weaken it, bypass
-review or checks, or count a green workflow as an independent review. The release-evidence
-workflow reads the live ruleset back and verifies it before building a
-candidate; a prepared settings update is not evidence that an administrator
-applied it. Proposed updates for both existing rulesets, including removal of
-`Protect main` bypass actors, are prepared under
+before relying on enforcement. The versioned policy requires no bypass actors.
+The 2026-10-10 readback listed four `always` bypass actors on both rulesets,
+the repository administrator role and three integrations, so an administrator
+can merge without the non-author approval until they are removed. A ruleset
+only blocks anything while it is enabled. The [versioned policy and verification procedure](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/operations/merge-policy.md)
+require the complete CI gate, final-push approval and an empty bypass list;
+applying that policy needs repository administration access. Do not weaken it,
+bypass review or checks, or count a green workflow as an independent review.
+The release-evidence workflow reads the live ruleset back and verifies it
+before building a candidate; a prepared settings update is not evidence that
+an administrator applied it. Proposed updates for both existing rulesets,
+including removal of the bypass actors, are prepared under
 [.github/rulesets](https://github.com/aisecnomad/Project-Nexus/tree/main/.github/rulesets).
-Both remained disabled at the implementation readback; merge does not activate
-those files.
+The observed snapshots there record the 2026-10-10 readback, on which
+`tools.governance_check` fails with `bypass_actors_not_empty`; merging those
+files does not activate them.
 
 ## Roles
 
