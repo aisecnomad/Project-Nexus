@@ -5,6 +5,18 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## Unreleased
 
+### AI-assisted review gate
+
+- Add a deterministic, fail-closed AI Review Gate with read-only preflight,
+  base-commit-only synthesis, and narrowly scoped review/check publication.
+  Missing or malformed specialist evidence blocks the gate. AI cannot approve
+  or merge; human/CODEOWNER review and branch protections remain required.
+  This is not independent human review and does not authorize a release.
+- The gate's evidence is committed by the pull request's author, so it can
+  block a change but never pass one: with no blocking finding the check
+  concludes `neutral` (`advisory_only`), never `success`. Do not make it a
+  required check; GitHub counts `neutral` as passing.
+
 ### Redaction on CPython 3.12.0 to 3.12.3
 
 - Fixed: on CPython 3.12.0 to 3.12.3, redacting a long single line could

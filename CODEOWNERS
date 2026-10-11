@@ -2,6 +2,8 @@
 * @aisecnomad
 
 /.github/ @aisecnomad
+/tools/ai_review/ @aisecnomad
+/docs/security/ai-review-gate.md @aisecnomad
 /shadowscan/utils/ @aisecnomad
 /SECURITY.md @aisecnomad
 /docs/production.md @aisecnomad
