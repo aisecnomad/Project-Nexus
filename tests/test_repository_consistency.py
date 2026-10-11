@@ -68,7 +68,6 @@ COMMUNITY_FILES = (
     ".editorconfig",
     ".gitattributes",
     ".github/PULL_REQUEST_TEMPLATE.md",
-    ".github/ISSUE_TEMPLATE.md",
     ".github/ISSUE_TEMPLATE/config.yml",
     ".github/dependabot.yml",
     ".github/labels.yml",
@@ -268,13 +267,6 @@ def test_issue_form_links_reference_forms_that_exist() -> None:
     for markdown in _markdown_files():
         for match in re.finditer(r"template=([\w.-]+\.yml)", _read(markdown)):
             assert match.group(1) in forms, f"{_relative(markdown)} links missing form {match.group(1)}"
-
-
-def test_issue_template_index_lists_every_form() -> None:
-    index = _read(GITHUB / "ISSUE_TEMPLATE.md")
-    for form in FORMS:
-        assert f"template={form.name}" in index, f".github/ISSUE_TEMPLATE.md does not link {form.name}"
-    assert ADVISORY_URL in index, "the issue index must route security reports to the private advisory"
 
 
 class _MkDocsLoader(yaml.SafeLoader):

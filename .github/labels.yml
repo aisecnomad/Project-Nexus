@@ -68,6 +68,18 @@
   color: "c5def5"
   description: Cloud connectors (AWS, GCP, Azure, OCI).
 
+- name: "surface: endpoint"
+  color: "c5def5"
+  description: Endpoint connectors (workstation host, MCP, model and eBPF inventories).
+
+- name: "surface: network"
+  color: "c5def5"
+  description: Network connector (DNS, TLS and flow logs).
+
+- name: "surface: runtime"
+  color: "c5def5"
+  description: Runtime connector (process exports).
+
 # Status
 - name: "good first issue"
   color: "7057ff"
