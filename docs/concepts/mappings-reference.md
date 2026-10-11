@@ -56,7 +56,6 @@ Amended by Regulation (EU) 2026/1744 (reported by secondary sources; the Officia
 | `eu-ai-act-2024:Art.12` | Record-keeping |
 | `eu-ai-act-2024:Art.14` | Human oversight |
 | `eu-ai-act-2024:Art.15` | Accuracy, robustness and cybersecurity |
-| `eu-ai-act-2024:Art.26` | Obligations of deployers of high-risk AI systems |
 | `eu-ai-act-2024:Art.50` | Transparency obligations |
 
 ### `iso-iec-42001-2023`

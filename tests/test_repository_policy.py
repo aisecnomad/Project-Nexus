@@ -2425,3 +2425,41 @@ def test_kubernetes_drift_cronjob_never_overlaps_and_mounts_inputs_read_only() -
     if shutil.which("sh"):
         checked = subprocess.run(["sh", "-n"], input=script, text=True, capture_output=True, timeout=30)
         assert checked.returncode == 0, checked.stderr
+
+
+# Consumer workflows under examples/ are copied into other repositories, so
+# their pins follow the same rules as this repository's workflows.
+EXAMPLE_WORKFLOWS = sorted((ROOT / "examples").glob("github-action-*.yml"))
+_PINNED_USES = re.compile(r"^\s*(?:-\s+)?uses:\s*(?P<action>[\w.-]+/[\w./-]+@[0-9a-f]{40})(?P<rest>.*)$")
+# The reviewed release the commit was taken from: `# v7.0.1`, `# 2.3.45`.
+_VERSION_COMMENT = re.compile(r"^\s+#\s*v?\d+(?:\.\d+)*\s*$")
+
+
+@pytest.mark.parametrize("path", [*WORKFLOWS, *EXAMPLE_WORKFLOWS], ids=lambda path: path.name)
+def test_pinned_actions_carry_a_version_comment(path: Path) -> None:
+    """A bare commit pin cannot be reviewed against a release; the comment names it."""
+    missing = []
+    for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        match = _PINNED_USES.match(line)
+        if match and not _VERSION_COMMENT.match(match.group("rest")):
+            missing.append(f"{path.name}:{number}: {match.group('action')}")
+    assert not missing, "name the reviewed release after each pin, as `# vX.Y.Z`: " + ", ".join(missing)
+
+
+@pytest.mark.parametrize(
+    ("line", "ok"),
+    [
+        ("      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1", True),
+        ("        uses: checkmarx/ast-github-action@882c03f380f4bdddae2d068540cbd73efe0796ac # 2.3.45", True),
+        ("      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1", False),
+        ("      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # latest", False),
+        ("      - uses: ./.github/workflows/dco.yml", False),
+    ],
+)
+def test_version_comment_check_recognises_pins(line: str, ok: bool) -> None:
+    match = _PINNED_USES.match(line)
+    if line.endswith("dco.yml"):
+        assert match is None
+    else:
+        assert match is not None
+        assert bool(_VERSION_COMMENT.match(match.group("rest"))) is ok

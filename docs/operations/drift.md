@@ -62,9 +62,9 @@ level rises. The two flags can be combined.
 
 `coverage` is accepted in `--fail-on-drift` but never produces exit 2: a
 comparison with any coverage drift is incomplete and exits 3 whatever the
-selected classes. Fleet reports set `shadow: true` for findings without an
-inventory, so comparing a fleet report with a single-host report shows shadow
-changes as governance drift.
+selected classes. A fleet report keeps `shadow: null` for a finding no source
+assessed against an inventory, so comparing it with a single-host report that
+had one shows the assessment appearing or disappearing as governance drift.
 
 ### Output
 
