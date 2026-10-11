@@ -368,7 +368,9 @@ the loader drops before analysis (an invalid JSON line, a provider error record,
 a file skipped by a limit), and any registry record or publisher whose name
 carries the number of a project other than the one it was listed in: it is
 dropped with a warning, so it cannot claim the other project's registry identity
-or name a skill's publisher.
+or name a skill's publisher. A skill's `publisher` is resolved only among the
+publishers listed in the skill's own project; any other keeps the publisher id
+from the skill's record and no tier.
 
 **What is kept.** Items are reduced when collected, so a record dump replays what
 live analysis saw; analysis bounds the text fields of a replayed record to the

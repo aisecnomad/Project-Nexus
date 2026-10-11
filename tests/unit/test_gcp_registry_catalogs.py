@@ -1138,6 +1138,29 @@ def test_publishers_speak_only_for_the_project_they_were_listed_in(index, tmp_pa
     assert skill.metadata["publisher_tier"] == "PRIVATE"
 
 
+def test_a_skill_names_only_a_publisher_listed_in_its_own_project(index, tmp_path):
+    # Another project lists a publisher under a number this scan does not know, and acme-ml's
+    # skill names a publisher of exactly that name: the skill binds no publisher of another project.
+    publisher = "projects/555/locations/global/publishers/acme"
+    other = {
+        "_kind": "agent-registry-publisher",
+        "_project": "sandbox-dev",
+        "_location": "global",
+        "_api_version": "v1alpha",
+        "name": publisher,
+        "displayName": "Security Team (verified)",
+        "publisherTier": "FIRST_PARTY",
+    }
+    skill = next(record for record in fixture_records() if record["_kind"] == "agent-registry-skill")
+    skill = {**skill, "name": f"projects/{N}/locations/global/skills/acme-triage", "publisher": publisher}
+    result = scan(index, write_records(tmp_path, [*fixture_records(), other, skill]))
+    assert result.complete
+    finding = by_resource(result.findings)[skill["name"]]
+    # Neither the display name nor the tier of the other project's publisher: only the id it named.
+    assert finding.metadata[RECORD_KEY]["publisher"] == "acme"
+    assert finding.metadata["publisher_tier"] is None
+
+
 def test_project_numbers_tell_whose_name_a_segment_is():
     numbers = gcp_registry.ProjectNumbers()
     assert numbers.names(P, "555") is None

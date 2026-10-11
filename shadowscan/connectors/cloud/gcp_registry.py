@@ -796,8 +796,9 @@ class RegistryCatalogs:
         self._observed: list[tuple[Reference, _Observed]] = []
         self._identities: dict[str, list[str]] = {}
         self._observed_urls: dict[str, list[str]] = {}
-        # Publisher name -> (display name, tier), and each publisher with the project it was listed in.
-        self._publishers: dict[str, tuple[str, str | None]] = {}
+        # (project listed in, publisher name) -> (display name, tier): a skill names only a
+        # publisher of its own project. Each listed publisher keeps its name's project segment.
+        self._publishers: dict[tuple[str, str], tuple[str, str | None]] = {}
         self._listed_publishers: list[tuple[str, str, str, tuple[str, str | None]]] = []
         self._deferred: list[tuple[Finding, RecordEntry]] = []
         # Projects with an Agent Registry record whose runtime references this scan cannot resolve
@@ -912,7 +913,7 @@ class RegistryCatalogs:
         if self.foreign:
             self.taint()
         self._deferred = kept
-        self._publishers = {name: publisher for name, _, _, publisher in publishers}
+        self._publishers = {(project, name): publisher for name, project, _, publisher in publishers}
         canonical: dict[tuple[str, str, str, str], _Observed] = {}
         literal: dict[str, _Observed] = {}
         for reference, item in self._observed:
@@ -1012,7 +1013,9 @@ class RegistryCatalogs:
         if entry.updated_at:
             record["updated_at"] = entry.updated_at
         if entry.publisher:
-            display, tier = self._publishers.get(entry.publisher, (entry.publisher.rsplit("/", 1)[-1], None))
+            # Only a publisher listed in the skill's own project names it, as with bindings.
+            fallback = (entry.publisher.rsplit("/", 1)[-1], None)
+            display, tier = self._publishers.get((entry.project, entry.publisher), fallback)
             record["publisher"] = display
             finding.metadata["publisher_tier"] = tier
         if entry.registry == AR_REGISTRY:
