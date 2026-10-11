@@ -406,7 +406,9 @@ signature override opt-in. JWT CLI verification additionally accepts
 `--expected-issuer` and repeatable `--jwt-algorithm`.
 
 The shared HTTP transport enforces destination policy at connection time and
-retains TLS hostname checks. HTTP proxies are unsupported; environment proxies
+retains TLS hostname checks. A well-known NAT64 address (`64:ff9b::/96`, what
+a DNS64 resolver returns on an IPv6-only runner) is judged by the IPv4 address
+it embeds; the local-use prefix `64:ff9b:1::/48` is always refused. HTTP proxies are unsupported; environment proxies
 are ignored. Cloud SDK and Git transport behavior remains separate. Do not assume
 that the shared client's policy controls every network connection in the process.
 Inject only trusted `requests.Session` implementations. Calls to the shared

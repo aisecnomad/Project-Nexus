@@ -27,6 +27,14 @@ summarizes each release for people who install and operate ShadowScan.
   keep the SHA-256 checksum, which detects damage, not tampering.
 - Incremental Git fingerprinting reads `git` output through the bounded
   metadata reader, so repository-controlled refs cannot exhaust memory.
+- The HTTP destination policy judges a well-known NAT64 address
+  (`64:ff9b::/96`) by the IPv4 address it embeds, so IPv6-only runners
+  behind DNS64 can reach public APIs. NAT64 forms of private, loopback,
+  link-local and metadata addresses stay refused, as does the local-use
+  prefix `64:ff9b:1::/48`.
+- `shadowscan merge` sets the fleet `finished_at` to the latest source time
+  compared as an instant, not the lexically largest string. A source value
+  that is not an offset-aware ISO 8601 time is ignored.
 
 ### Integration review corrections (#178)
 

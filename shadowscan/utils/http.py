@@ -308,8 +308,16 @@ def reset_request_deadline(token: contextvars.Token[tuple[float | None, threadin
     _request_limits.reset(token)
 
 
+# RFC 6052 well-known NAT64 prefix. A DNS64 resolver maps every IPv4 name into it, so
+# IPv6-only runners reach public APIs only through it. The address is judged by the IPv4
+# address the translator connects to. The local-use 64:ff9b:1::/48 prefix stays blocked.
+_NAT64_WELL_KNOWN = ipaddress.ip_network("64:ff9b::/96")
+
+
 def _blocked_ip(addr: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
     if isinstance(addr, ipaddress.IPv6Address):
+        if addr in _NAT64_WELL_KNOWN:
+            return _blocked_ip(ipaddress.IPv4Address(int(addr) & 0xFFFFFFFF))
         embedded = addr.ipv4_mapped or addr.sixtofour
         if embedded is not None and _blocked_ip(embedded):
             return True

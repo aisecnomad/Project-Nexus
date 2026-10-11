@@ -645,7 +645,11 @@ def _utcnow() -> datetime:
 
 def _started_at(report: dict[str, Any]) -> datetime | None:
     """The report's ``started_at`` as a timezone-aware time; None when missing or unparseable."""
-    value = report.get("started_at")
+    return _moment(report.get("started_at"))
+
+
+def _moment(value: Any) -> datetime | None:
+    """A report time as a timezone-aware datetime; None when not an offset-aware ISO 8601 string."""
     if not isinstance(value, str):
         return None
     try:

@@ -411,3 +411,16 @@ def test_fleet_of_fleets_stays_undated():
     inner = merge_reports([_source("host-a.json", NOW), undated]).to_dict()
     outer = merge_reports([("fleet-1.json", inner), _source("host-c.json", NOW)]).to_dict()
     assert outer["started_at"] is None
+
+
+def test_fleet_finish_is_the_latest_instant_and_ignores_malformed_times():
+    # Source reports are untrusted: "9999" or a later-looking string with an earlier
+    # offset must not win a lexical comparison.
+    tokyo_end = datetime(2026, 10, 1, 18, 0, tzinfo=timezone(timedelta(hours=9)))  # 09:00Z
+    london_end = datetime(2026, 10, 1, 8, 0, tzinfo=UTC)
+    a, b, c = (_source(name, NOW) for name in ("host-a.json", "host-b.json", "host-c.json"))
+    a[1]["finished_at"] = london_end.isoformat()
+    b[1]["finished_at"] = tokyo_end.isoformat()
+    c[1]["finished_at"] = "9999-not-a-time"
+    fleet = merge_reports([a, b, c]).to_dict()
+    assert fleet["finished_at"] == tokyo_end.isoformat()

@@ -837,9 +837,14 @@ def test_get_json_callback_never_sees_a_rejected_response(failed):
         ("64:ff9b::7f00:1", True),
         ("fd00:ec2::254", True),
         ("100.64.0.1", True),
+        ("64:ff9b::a00:1", True),
+        # Local-use NAT64 is site-specific and stays blocked whatever it embeds.
+        ("64:ff9b:1::808:808", True),
         # Ordinary public addresses remain reachable.
         ("8.8.8.8", False),
         ("2606:4700:4700::1111", False),
+        # The well-known NAT64 form of a public address is how IPv6-only DNS64 runners reach it.
+        ("64:ff9b::808:808", False),
     ],
 )
 def test_destination_policy_address_table(address, blocked):
