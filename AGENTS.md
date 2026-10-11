@@ -40,6 +40,8 @@ Run `make check` or the commands in CONTRIBUTING.md. Pull requests must keep:
 - pytest coverage ≥ 80% aggregate
 - per-connector coverage ≥ 75%
 - `python -m shadowscan.signatures.validate`
+- `python -m shadowscan.mappings.validate`
+- `make secrets` (no hardcoded credentials in tracked files)
 - pip-audit clean
 - evaluation corpus with no unexplained regressions
 
@@ -52,6 +54,10 @@ Run `make check` or the commands in CONTRIBUTING.md. Pull requests must keep:
   `docs/connectors/reference.md` (`make connector-reference`).
 - Signature work: YAML packs + validate + `make evaluate`. See
   `docs/signatures.md`.
+- Mapping work: catalogs under `shadowscan/mappings/data/`,
+  `python -m shadowscan.mappings.validate`, and a regenerated
+  `docs/concepts/mappings-reference.md` (`make mapping-reference`). See
+  `docs/concepts/mappings.md`.
 - Rollout, finding identity, or credential-policy changes also update
   `CHANGELOG.md` (Unreleased) and `docs/production.md`.
 

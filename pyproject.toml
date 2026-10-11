@@ -75,7 +75,9 @@ shadowscan = [
 [tool.ruff]
 line-length = 110
 target-version = "py311"
-exclude = ["tests/fixtures", "examples"]
+# archive/ holds retained review artifacts; pre-commit's ruff hooks pass
+# --force-exclude, so this keeps them from being rewritten.
+exclude = ["tests/fixtures", "examples", "archive"]
 
 [tool.ruff.lint]
 # BLE: a broad `except` that does not re-raise is flagged; an intentional one

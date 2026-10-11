@@ -39,12 +39,14 @@ theme:
     repo: fontawesome/brands/github
 
 # Keep links to repository files absolute, so the rendered site and GitHub
-# Markdown resolve them consistently. Fail strict builds for broken site links.
+# Markdown resolve them consistently. Fail strict builds for broken site links
+# and for anchors that no heading produces (anchors: mkdocs >= 1.6).
 validation:
   links:
     not_found: warn
     unrecognized_links: warn
     absolute_links: warn
+    anchors: warn
   nav:
     omitted_files: info
 

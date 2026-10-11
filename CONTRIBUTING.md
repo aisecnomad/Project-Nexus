@@ -137,7 +137,8 @@ exact supported Python matrix and dependency pins.
 CI measures coverage on one Linux job (Python 3.11) and runs the same full
 suite untraced on the others; `pyproject.toml` enables branch coverage.
 
-Ruff enforces a 110-column line length outside `tests/`, flags loop
+Ruff enforces a 110-column line length outside `tests/`,
+`tools/benchmark/*_cases.py` and `benchmarks/*/corpus.py`, flags loop
 variables captured by closures (B023), flags a broad `except` that does not
 re-raise (BLE), and rejects `noqa` directives that suppress nothing (RUF100).
 Suppress an intentional broad `except` with `# noqa: BLE001 - <reason>`; a

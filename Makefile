@@ -177,7 +177,7 @@ policy: ## Check workflow and issue-form safety policies
 
 .PHONY: clean
 clean: ## Remove build artifacts and caches
-	rm -rf dist build site *.egg-info .mypy_cache .pytest_cache .ruff_cache .coverage htmlcov
+	rm -rf dist build site *.egg-info .mypy_cache .pytest_cache .ruff_cache .hypothesis .coverage coverage.xml htmlcov
 	rm -f shadowscan.sarif
 	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
 
