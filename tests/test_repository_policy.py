@@ -40,6 +40,7 @@ FORMS = sorted(path for path in (GITHUB / "ISSUE_TEMPLATE").glob("*.yml") if pat
 ACTION_PIN = re.compile(r"[\w.-]+/[\w.-]+(?:/[\w./-]+)?@[0-9a-f]{40}")
 # Privileges belong only to the job that needs them, never to every workflow.
 WRITE_SCOPES = {
+    ("ai-review-gate.yml", "orchestrator"): {"pull-requests", "checks"},
     ("codeql.yml", "analyze"): {"security-events"},
     # Optional third-party scanners that upload SARIF to code scanning.
     ("checkmarx-one.yml", "build"): {"security-events"},
