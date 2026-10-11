@@ -407,6 +407,11 @@ class GcpConnector(BaseConnector):
         template = []
         for previous, segment in zip(["", *segments], segments, strict=False):
             value, colon, method = segment.partition(":")
+            if previous == "projects" and colon and "." in value:
+                # A domain-scoped project id (example.com:my-project) carries a colon of its own;
+                # a plain project id never contains a dot, and a custom method never does.
+                rest, colon, method = method.partition(":")
+                value = f"{value}:{rest}"
             if previous == "projects":
                 project, segment = value, "{project}" + colon + method
             elif previous == "locations":

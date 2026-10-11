@@ -974,6 +974,27 @@ def test_gcp_request_templates(index):
     )
 
 
+def test_gcp_domain_scoped_project_request_templates(index):
+    project = "example.com:my-project"
+    configured = GcpConnector(ConnectorContext(config={"projects": [project]}, index=index))
+    base = f"https://cloudresourcemanager.googleapis.com/v1/projects/{project}"
+    # The id's own colon is not a custom method: the template keeps no part of the id.
+    assert configured._scope_operation(base) == (
+        "cloudresourcemanager",
+        "/v1/projects/{project}",
+        project,
+        True,
+    )
+    assert configured._scope_operation(f"{base}:getIamPolicy") == (
+        "cloudresourcemanager",
+        "/v1/projects/{project}:getIamPolicy",
+        project,
+        True,
+    )
+    services = f"https://serviceusage.googleapis.com/v1/projects/{project}/services"
+    assert configured._scope_operation(services)[1:3] == ("/v1/projects/{project}/services", project)
+
+
 # ------------------------------------------------------------- cloud.azure
 def _arm(monkeypatch, *, subscription: Any = None, listing: Any = None) -> list[str]:
     calls: list[str] = []
