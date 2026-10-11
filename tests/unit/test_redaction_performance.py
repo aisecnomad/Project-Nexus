@@ -293,3 +293,28 @@ for shape in shapes:
     except SanitizationLimitError:
         pass  # a nesting limit fails closed, quickly
 """)
+
+
+def test_quadratic_tokenizer_versions_pay_for_each_line_copy(monkeypatch):
+    """CPython 3.12.0 to 3.12.3 copy the whole line into every token.
+
+    Forced on here so every interpreter runs that path: a hostile long line
+    must end in the fail-closed limit quickly, and ordinary text still redacts.
+    """
+    import time
+
+    from shadowscan.utils import redaction_statements
+    from shadowscan.utils.redaction import SanitizationLimitError
+
+    monkeypatch.setattr(redaction_statements, "_TOKEN_COPIES_LINE", True)
+    started = time.perf_counter()
+    with pytest.raises(SanitizationLimitError):
+        sanitize_text("cookie=a, " * 40_000)
+    assert time.perf_counter() - started < 30.0
+    assert sanitize_text(f'api_key = "{SECRET}"\nmodel = "x"') == f'api_key = "{REDACTED}"\nmodel = "x"'
+
+
+def test_only_the_quadratic_tokenizer_versions_charge_line_copies():
+    from shadowscan.utils.redaction_statements import _TOKEN_COPIES_LINE
+
+    assert _TOKEN_COPIES_LINE is ((3, 12) <= sys.version_info[:3] < (3, 12, 4))
