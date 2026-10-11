@@ -60,6 +60,20 @@ summarizes each release for people who install and operate ShadowScan.
   render budget and a linear-time history budget.
   They use synthetic reports and do not establish acceptance on a live fleet.
 
+### Redaction on CPython 3.12.0 to 3.12.3
+
+- Fixed: on CPython 3.12.0 to 3.12.3, redacting a long single line could
+  take quadratic time. Those versions' `tokenize` builds a new copy of the
+  whole physical line for every token; 400,000 characters of `cookie=a, `
+  took 16 to 19 seconds against 0.1 on 3.12.4, 3.11 or 3.13, and
+  `test_hostile_repetitive_input_is_matched_in_linear_time` failed there. CI
+  runs a later 3.12, so it never showed. Ubuntu 24.04 ships 3.12.3.
+- On the affected versions only, each token's line copy is charged to the
+  Python assignment work budget, so a hostile line now ends in
+  `SanitizationLimitError`: the finding is omitted and the scan is incomplete
+  (exit 3) instead of stalling. A regression test forces that path on every
+  interpreter. Use Python 3.12.4 or later to avoid these limit errors.
+
 ### Integration review corrections (#178)
 
 - Add optional Checkmarx One (#179) and Semgrep (#180) scan workflows that

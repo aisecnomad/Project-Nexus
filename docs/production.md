@@ -192,7 +192,11 @@ three interpreters. Linux x86_64 is the only validated deployment target for
 this full runtime/cloud lock. The macOS 3.11 and 3.13 CI jobs install
 `requirements-ci.lock` and this runtime lock from the same published wheel
 hashes and run the full test suite, which validates development use there;
-the coverage floors are enforced on Linux Python 3.11. A macOS deployment still
+the coverage floors are enforced on Linux Python 3.11. Use CPython 3.12.4 or
+later rather than 3.12.0 to 3.12.3: their `tokenize` is quadratic on a long
+line, so redaction there charges each token's line copy to its work budget and
+a file with a very long line can leave a scan incomplete (exit 3). Ubuntu 24.04
+ships 3.12.3. A macOS deployment still
 needs its own wheel,
 container and acceptance evidence. Windows is not
 supported at all, because the confined file reader
