@@ -2,6 +2,12 @@ name: AI review
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
+    # Only a pull request that carries evidence has anything to review. Without
+    # this filter every other pull request failed closed on absent evidence, and
+    # the first pull request to add the gate failed because its base ref had no
+    # gate modules yet.
+    paths:
+      - ".github/ai-review/**"
 permissions:
   contents: read
 concurrency:

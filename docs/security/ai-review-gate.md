@@ -9,10 +9,11 @@ The specialist persona files under `.github/agents/` still require maintainer
 installation. Role instructions below define their required behavior.
 
 The workflow executes the **exact PR base SHA**, including
-`tools.ai_review.github_gate` and `tools.ai_review.synthesize`. First merge the
-reviewed infrastructure; it then runs on subsequent PRs.
-On the bootstrap PR, a base without these modules cannot execute the gate;
-that failure must not be represented as acceptance.
+`tools.ai_review.github_gate` and `tools.ai_review.synthesize`, and runs only
+for a pull request whose changed files include `.github/ai-review/**`: a pull
+request without evidence has nothing to review and gets no check, which is not
+acceptance. Once the reviewed infrastructure is on `main`, the next pull
+request that carries evidence runs the gate from that base.
 
 **The gate can block a change but never pass one.** Its evidence is committed
 to the pull request by the pull request's author, who can also edit the
@@ -25,8 +26,9 @@ result is not a review.
 
 ## Architecture and trust boundary
 
-1. A `pull_request` workflow (opened, synchronize, reopened, ready_for_review)
-   checks out trusted base code and a separate sparse head evidence checkout.
+1. A `pull_request` workflow (opened, synchronize, reopened, ready_for_review;
+   paths `.github/ai-review/**`) checks out trusted base code and a separate
+   sparse head evidence checkout.
 2. Read-only preflight fetches complete diff and labels through the GitHub API,
    validates evidence, classifies risk, and executes deterministic synthesis.
 3. The orchestrator runs even after preflight fails. It independently repeats
