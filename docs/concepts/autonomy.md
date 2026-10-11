@@ -223,7 +223,9 @@ count) adds a
 gate from the client's other settings at `some-actions`, because the unread
 file could loosen it. Endpoint replay that drops a malformed approval or
 posture entry, or skips a malformed settings record, also keeps the gate at
-`some-actions`.
+`some-actions`, and so does a `code.github` or `code.gitlab` API snapshot
+whose tree listing was truncated or held entries naming no path: a settings
+file nothing lists could loosen any gate in that repository.
 
 ## Per-surface evidence
 

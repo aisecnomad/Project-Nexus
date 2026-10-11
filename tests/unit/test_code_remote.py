@@ -1116,6 +1116,51 @@ def test_api_snapshot_with_an_lfs_pointer_is_incomplete_coverage(tmp_path, index
     ]
 
 
+def _api_connector_listing_a_settings_file(index, cls, gated: bytes, damage: str | None):
+    """An API-mode connector whose tree lists one gated settings.json, with the listing damaged or not."""
+    if cls is GitHubConnector:
+        entry = {"path": ".claude/settings.json", "type": "blob", "sha": _sha(gated), "size": len(gated)}
+        tree = {"sha": COMMIT, "tree": [entry]}
+        if damage == "truncated":
+            tree["truncated"] = True
+        if damage == "malformed-entry":
+            tree["tree"].append("not-an-entry")
+        blobs = {_sha(gated): {"encoding": "base64", "content": base64.b64encode(gated).decode()}}
+        return _github_api(index, tree, blobs)
+    entries = [{"path": ".claude/settings.json", "type": "blob", "id": _sha(gated)}]
+    if damage == "malformed-entry":
+        entries.insert(0, {"type": "blob"})
+    return _gitlab_api(index, entries, gated)
+
+
+@pytest.mark.parametrize(
+    "cls,damage",
+    [
+        (GitHubConnector, None),
+        (GitHubConnector, "truncated"),
+        (GitHubConnector, "malformed-entry"),
+        (GitLabConnector, None),
+        (GitLabConnector, "malformed-entry"),
+    ],
+)
+def test_api_tree_listing_cut_short_keeps_every_gate_partial(tmp_path, index, cls, damage):
+    # Regression: a truncated tree listing, or one holding an entry that names no path, warned that
+    # coverage was partial but left the fetched settings.json to claim an every-action gate. A
+    # settings file lost to the cut-short listing cannot be named, so no gate of that repository may
+    # cover every action.
+    gated = json.dumps({"permissions": {"defaultMode": "default"}}).encode()
+    connector = _api_connector_listing_a_settings_file(index, cls, gated, damage)
+    repo = _record()
+    dest = connector._fetch_via_api(repo, str(tmp_path))
+    assert Path(dest, ".claude", "settings.json").read_bytes() == gated
+    assert repo["_unread_settings"] == [] and repo["_tree_incomplete"] is (damage is not None)
+    [claude] = [f for f in connector._scan_local(repo, dest) if "approval_gate" in f.metadata]
+    gate = claude.metadata["approval_gate"]
+    assert gate["scope"] == ("every-action" if damage is None else "some-actions")
+    assert [s["file"] for s in gate["settings"]] == [".claude/settings.json"]
+    assert connector.ctx.stats.incomplete is (damage is not None)
+
+
 @pytest.mark.parametrize("cls", PROVIDERS)
 def test_strict_coverage_makes_an_api_lfs_pointer_an_error(tmp_path, index, monkeypatch, cls):
     stats = _api_snapshot_with_a_pointer(tmp_path, index, monkeypatch, cls, strict_coverage=True)

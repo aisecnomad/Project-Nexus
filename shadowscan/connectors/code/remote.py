@@ -470,6 +470,7 @@ class RemoteRepositoryConnector(BaseConnector):
         fs.ctx.stats = self.ctx.stats
         unread = repo.get("_unread_settings")
         fs.unread_settings = [p for p in unread if isinstance(p, str)] if isinstance(unread, list) else []
+        fs.tree_listing_incomplete = repo.get("_tree_incomplete") is True
         # Share the diagnostic budget so repositories cannot each fill 1000 entries.
         fs.ctx._diagnostic_counts = self.ctx._diagnostic_counts
         if isinstance(snapshot, dict) and snapshot.get("capture_method") == "git-clone":
@@ -661,11 +662,16 @@ class RemoteRepositoryConnector(BaseConnector):
         tmp: str,
         where: str = "",
         tree_paths: Iterable[str] = (),
+        tree_complete: bool = True,
     ) -> tuple[str, int]:
         """Download the selected tree entries and write only verified bytes.
 
         Returns the checkout directory and the number of files written.
         *where* qualifies per-file warnings (for example ``" in owner/name"``).
+        *tree_paths* are every entry the listing named and *tree_complete* is
+        False when that listing was cut short or held entries it could not name:
+        the delegated filesystem scan then keeps every approval gate of the tree
+        at ``some-actions``, because a settings file nothing lists could loosen it.
         """
         dest = os.path.join(tmp, "repo")
         os.makedirs(dest, exist_ok=True)
@@ -714,4 +720,5 @@ class RemoteRepositoryConnector(BaseConnector):
         # that a fetched one sets; the filesystem scan records it as unreadable.
         unread = sorted({p for p in tree_paths if posture_client(p) is not None} - written_paths)
         repo["_unread_settings"] = unread
+        repo["_tree_incomplete"] = not tree_complete
         return dest, written

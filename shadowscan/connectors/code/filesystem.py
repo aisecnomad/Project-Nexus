@@ -2054,6 +2054,10 @@ class FilesystemConnector(BaseConnector):
         # Settings files of the scanned tree that a remote API snapshot did not include (set by
         # the code.github / code.gitlab connectors that delegate to this one).
         self.unread_settings: list[str] = []
+        # Whether the remote API listing of the tree was cut short or held entries it could not
+        # name: settings files may exist that nothing lists, so no approval gate of this tree can
+        # claim every action (``record_approval(complete=False)``).
+        self.tree_listing_incomplete = False
         self._checked_submodules: set[tuple[Path, str]] = set()
         self._gitlink_roots: set[Path] = set()
         # Oversize files under test paths skipped with a warning (include_tests false).
@@ -5137,7 +5141,9 @@ class FilesystemConnector(BaseConnector):
         posture = proj.posture.get(sig_id, [])
         if posture:
             record_posture(f, posture)
-        record_approval(f, proj.approvals.get(sig_id, []))
+        # A tree whose listing was cut short may hold a settings file nothing names: no gate of
+        # it can claim every action.
+        record_approval(f, proj.approvals.get(sig_id, []), complete=not self.tree_listing_incomplete)
         defs = [d for d in proj.agent_defs if any(d["file"] == x for x in files)]
         if defs:
             f.metadata["agent_definitions"] = defs
