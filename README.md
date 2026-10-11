@@ -25,7 +25,7 @@ $ shadowscan scan -c examples/shadowscan.offline.yaml --max-rows 5
 
 ╭──────────────────────────────── ShadowScan ────────────────────────────────╮
 │ 133 findings  •  129 shadow (inventory: 4 registered agents)               │
-│ critical 16  high 62  medium 55  •  cloud 30 identity 19 endpoint 18 …     │
+│ critical 16  high 63  medium 54  •  cloud 30 identity 19 endpoint 18 …     │
 ╰────────────────────────────────────────────────────────────────────────────╯
  CRITICAL 100  SHADOW  code      mcp-server   MCP configuration: .mcp.json
  CRITICAL 100  SHADOW  saas      bot-app      GitHub App installed: claude
