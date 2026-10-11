@@ -8,6 +8,12 @@ has the full upgrade steps.
 
 ## Unreleased
 
+On Python 3.12.0 to 3.12.3 (Ubuntu 24.04 ships 3.12.3), a file with a very
+long line no longer stalls redaction: the affected finding is omitted and the
+scan reports incomplete (exit 3). Python's own tokenizer is quadratic on long
+lines in those versions. Run ShadowScan on 3.11, 3.12.4 or later, or 3.13 to
+avoid these incomplete scans.
+
 Changes to `code.filesystem` made after scanning 326 public repositories. Reports from
 earlier builds can differ: some repositories that ended incomplete (exit 3) now finish,
 a few files that were skipped are analyzed (so a repository can gain findings, including
